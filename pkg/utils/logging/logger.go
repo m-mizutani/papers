@@ -1,0 +1,119 @@
+package logging
+
+import (
+	"fmt"
+	"io"
+	"log/slog"
+	"sync"
+
+	"github.com/fatih/color"
+	"github.com/m-mizutani/clog"
+	"github.com/m-mizutani/clog/hooks"
+	"github.com/m-mizutani/masq"
+	"github.com/mattn/go-isatty"
+)
+
+type Format int
+
+const (
+	FormatConsole Format = iota + 1
+	FormatJSON
+)
+
+var (
+	defaultLogger = slog.Default()
+	loggerMutex   sync.Mutex
+)
+
+func Default() *slog.Logger {
+	return defaultLogger
+}
+
+func Quiet() {
+	loggerMutex.Lock()
+	defaultLogger = slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	loggerMutex.Unlock()
+}
+
+// isTerminal reports whether w is a TTY so clog can emit ANSI colors only
+// when output won't be captured by a pipe or file. Any writer that exposes
+// Fd() uintptr (e.g. *os.File or thin wrappers around it) is supported.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(interface{ Fd() uintptr })
+	if !ok {
+		return false
+	}
+	fd := f.Fd()
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+}
+
+// RedactOptions returns this project's redaction policy: the `masq:"secret"`
+// struct tag, the `secret_` field prefix, and the Authorization field name (a
+// header map key cannot carry a struct tag).
+//
+// It is exported because the logger is no longer the only consumer. The agent
+// runtime renders a failed tool call's goerr values into the message the model
+// is given (pkg/agent/kernel, toolErrorValuesMiddleware), which sends them to
+// the LLM provider — so it has to redact by the same policy. Two independently
+// maintained lists would drift, and the half that drifts is the one nobody
+// notices until a value is already at a third party.
+func RedactOptions() []masq.Option {
+	return []masq.Option{
+		masq.WithTag("secret"),
+		masq.WithFieldPrefix("secret_"),
+		masq.WithFieldName("Authorization"),
+	}
+}
+
+func New(w io.Writer, level slog.Level, format Format, stacktrace bool) *slog.Logger {
+	filter := masq.New(RedactOptions()...)
+
+	attrHook := hooks.GoErr(hooks.WithStackTrace(stacktrace))
+
+	var handler slog.Handler
+	switch format {
+	case FormatConsole:
+		handler = clog.New(
+			clog.WithWriter(w),
+			clog.WithLevel(level),
+			clog.WithReplaceAttr(filter),
+			clog.WithAttrHook(attrHook),
+			clog.WithColor(isTerminal(w)),
+			clog.WithColorMap(&clog.ColorMap{
+				Level: map[slog.Level]*color.Color{
+					slog.LevelDebug: color.New(color.FgGreen, color.Bold),
+					slog.LevelInfo:  color.New(color.FgCyan, color.Bold),
+					slog.LevelWarn:  color.New(color.FgYellow, color.Bold),
+					slog.LevelError: color.New(color.FgRed, color.Bold),
+				},
+				LevelDefault: color.New(color.FgBlue, color.Bold),
+				Time:         color.New(color.FgWhite),
+				Message:      color.New(color.FgHiWhite),
+				AttrKey:      color.New(color.FgHiCyan),
+				AttrValue:    color.New(color.FgHiWhite),
+			}),
+		)
+
+	case FormatJSON:
+		handler = slog.NewJSONHandler(w, &slog.HandlerOptions{
+			AddSource:   true,
+			Level:       level,
+			ReplaceAttr: filter,
+		})
+
+	default:
+		panic("Unsupported log format: " + fmt.Sprintf("%d", format))
+	}
+
+	return slog.New(handler)
+}
+
+func SetDefault(logger *slog.Logger) {
+	loggerMutex.Lock()
+	defaultLogger = logger
+	loggerMutex.Unlock()
+}
+
+func ErrAttr(err error) slog.Attr { return slog.Any("error", err) }

@@ -13,9 +13,7 @@
 
 # Code coverage profiles and other test artifacts
 *.out
-coverage.html
-coverage.txt
-coverage.xml
+coverage.*
 *.coverprofile
 profile.cov
 
@@ -32,3 +30,36 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+/tmp
+# eval and other tooling may write a tmp/ dir from a subdirectory cwd; ignore them anywhere
+tmp/
+/.cckiro
+
+# Claude Code scheduled task lock (per-worktree runtime state)
+.claude/scheduled_tasks.lock
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Frontend build output
+frontend/dist/*
+!frontend/dist/.gitkeep
+
+# Playwright test artifacts
+frontend/test-results/
+frontend/playwright-report/
+frontend/playwright/.cache/
+
+# Pull request screenshot captures (.claude/skills/capture-screenshots)
+frontend/pr-screenshots/
+
+# Logs
+*.log
+
+
+
+# papers binary
+/papers
+*.tsbuildinfo

@@ -1,0 +1,40 @@
+# https://taskfile.dev
+version: "3"
+
+tasks:
+  build:frontend:
+    desc: Build the Web UI into frontend/dist (embedded by go:embed)
+    dir: frontend
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm build
+
+  build:
+    desc: Build the frontend and the papers binary
+    cmds:
+      - task: build:frontend
+      - go build -o papers .
+
+  dev:server:
+    desc: Run the server without authentication and with the in-memory repository
+    cmds:
+      - go run . serve --no-authn --ws-origin localhost:5173
+
+  dev:frontend:
+    desc: Run the Vite dev server (proxies /api and /mcp to :8080)
+    dir: frontend
+    cmds:
+      - pnpm dev
+
+  test:
+    desc: Run Go and frontend tests
+    cmds:
+      - go vet ./...
+      - go test ./...
+      - task: test:frontend
+
+  test:frontend:
+    dir: frontend
+    cmds:
+      - pnpm lint
+      - pnpm test
