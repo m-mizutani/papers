@@ -1,6 +1,6 @@
 // Package firestore implements interfaces.Repository on Cloud Firestore.
 //
-// Layout (see docs/schema.md for the rationale):
+// Layout (see docs/design.html for the rationale):
 //
 //	users/{userID}
 //	emails/{base64url(lower(email))}                      -> {UserID}

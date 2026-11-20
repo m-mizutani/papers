@@ -12,8 +12,8 @@ where. Writes are last-writer-wins per block, and overwrites are recorded.
 - Google sign-in with papers-issued user IDs, workspaces, groups and
   fine-grained roles (workspace roles, per-paper restrictions, token scopes)
 
-See [docs/design.md](docs/design.md) for the architecture and
-[docs/schema.md](docs/schema.md) for the Firestore schema.
+See [docs/design.html](docs/design.html) for the architecture and the
+Firestore schema (also published as a claude.ai artifact).
 
 ## Run locally
 
@@ -59,7 +59,7 @@ UI and pass it as a bearer token (the UI shows the exact command).
 | `--enable-mcp` | `true` | Serve `/mcp` |
 | `--ws-origin` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` | `memory` | `firestore` or `memory` (development only) |
-| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore database (see [docs/schema.md](docs/schema.md) for indexes and TTL) |
+| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore database (see [docs/design.html](docs/design.html) for indexes and TTL) |
 | `--paper-touch-interval` | `1m` | How stale a paper's "updated" time may get before a commit refreshes it |
 
 All flags also read `PAPERS_*` environment variables (see `papers serve --help`).

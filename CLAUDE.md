@@ -9,7 +9,7 @@ papers is an AI-native collaborative knowledge canvas (Go backend + React
 frontend). A **paper** is an ordered list of **blocks**; every change is a
 **commit**; humans hold **soft locks** on the block they edit; writes are
 last-writer-wins per block. AI agents use the REST API and the MCP endpoint.
-Read `docs/design.md` before changing the data model or the realtime protocol.
+Read `docs/design.html` before changing the data model or the realtime protocol.
 
 ## Commands
 
@@ -25,11 +25,17 @@ Read `docs/design.md` before changing the data model or the realtime protocol.
 - `pkg/controller/http/` – chi router: REST (`api.go`), auth (`auth.go`), WebSocket (`live.go`), MCP (`mcp.go`), embedded SPA
 - `pkg/domain/model/` – entities, roles and authorization (`principal.go`), fractional order keys (`order.go`)
 - `pkg/domain/interfaces/` – ports: `Repository` (incl. `WatchPaper`), `PaperTx`, `IdentityProvider`
-- `pkg/repository/firestore/` – production backend (schema: `docs/schema.md`); `pkg/repository/memory/` – dev/tests. Contract tests live in `pkg/repository/*_test.go` and run against both (Firestore when `TEST_FIRESTORE_PROJECT_ID` is set, see `task test:firestore`)
+- `pkg/repository/firestore/` – production backend (schema: `docs/design.html#schema`); `pkg/repository/memory/` – dev/tests. Contract tests live in `pkg/repository/*_test.go` and run against both (Firestore when `TEST_FIRESTORE_PROJECT_ID` is set, see `task test:firestore`)
 - `pkg/service/google/` – Google OIDC
 - `pkg/usecase/` – application logic; every method takes the principal and enforces authorization
 - `pkg/usecase/markdown/` – Markdown <-> blocks
 - `frontend/` – React + Vite + TypeScript, embedded via `frontend/static.go`
+
+## Design documents (MANDATORY)
+
+- Every design document in this project is written as a **self-contained HTML page** and published as a claude.ai **artifact**. Never write designs as Markdown.
+- `docs/design.html` is the single source of truth for the overall design. Update it (and republish the artifact) whenever a decision, the data model, the schema, the protocol or the API changes. New topic-specific designs go in `docs/<topic>.html` and are published the same way.
+- Follow the artifact page rules: one HTML file, inline CSS/JS, diagrams as inline SVG (no Mermaid), light and dark themes, readable on phones. Put decisions first, with dates, and keep an "open questions" section.
 
 ## Rules (inherited from hecatoncheires)
 
@@ -43,7 +49,7 @@ Read `docs/design.md` before changing the data model or the realtime protocol.
 ### Stateless, multi-instance design
 - The server runs as several Cloud Run instances. Never keep cross-request state in memory. Per-connection state (one WebSocket) is fine.
 - Realtime fan-out comes from the storage change feed (`Repository.WatchPaper`, Firestore listeners). Do not add an application-level pub/sub. Events carry resulting state and must stay idempotent to apply.
-- Never write the paper record on every commit (Firestore sustains about one write per second per document); history lives on blocks. See `docs/schema.md`.
+- Never write the paper record on every commit (Firestore sustains about one write per second per document); history lives on blocks. See `docs/design.html#schema`.
 
 ### Repository write discipline
 - Persist models as-is; no field-by-field copies, no mirror structs, no timestamps stamped in the repository (the use case owns them).

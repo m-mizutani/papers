@@ -32,7 +32,7 @@ type Config struct {
 	MaxOpsPerCommit int
 	// PaperTouchInterval is how stale a paper's UpdatedAt may get before a
 	// commit refreshes it. Refreshing on every commit would make the paper
-	// record a write hotspot (see docs/schema.md).
+	// record a write hotspot (see docs/design.html).
 	PaperTouchInterval time.Duration
 }
 

@@ -19,7 +19,7 @@ type PaperAccess struct {
 
 // Paper is a canvas made of blocks. A paper has no global revision
 // counter: every block carries its own version history, which keeps a busy
-// paper from funnelling all writes through one record (see docs/schema.md).
+// paper from funnelling all writes through one record (see docs/design.html).
 // UpdatedAt / UpdatedBy are refreshed at most once per touch interval.
 type Paper struct {
 	ID          PaperID     `json:"id"`
