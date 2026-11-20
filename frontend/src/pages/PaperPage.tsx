@@ -10,6 +10,7 @@ import { HistoryPanel } from '../components/HistoryPanel'
 import { SharePanel } from '../components/SharePanel'
 import { detectShortcut } from '../components/shortcuts'
 import { useTranslation } from '../i18n'
+import { isDemo } from '../utils/demo'
 import { isEnter } from '../utils/keyboard'
 
 const RECENT_MS = 4000
@@ -309,9 +310,11 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
         <span className="spacer" />
         <button type="button" className="btn btn-quiet" onClick={() => setPanel(panel === 'history' ? null : 'history')}>{t('history')}</button>
         {role === 'owner' && <button type="button" className="btn btn-quiet" onClick={() => setPanel(panel === 'share' ? null : 'share')}>{t('share')}</button>}
-        <a className="btn btn-quiet" href={api.markdownURL(ws, paperId)} download={`${state.paper.title || 'paper'}.md`}>{t('exportMarkdown')}</a>
-        {role === 'owner' && <button type="button" className="btn btn-quiet btn-danger" onClick={() => void deletePaper()}>{t('deletePaper')}</button>}
+        {!isDemo && <a className="btn btn-quiet" href={api.markdownURL(ws, paperId)} download={`${state.paper.title || 'paper'}.md`}>{t('exportMarkdown')}</a>}
+        {role === 'owner' && !isDemo && <button type="button" className="btn btn-quiet btn-danger" onClick={() => void deletePaper()}>{t('deletePaper')}</button>}
       </div>
+
+      {isDemo && canEdit && <div className="notice demo-hint">{t('demoHint')}</div>}
 
       {notice && (
         <div className="notice" role="status">

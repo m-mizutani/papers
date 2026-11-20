@@ -72,7 +72,7 @@ export function Sidebar({ me, workspaces, papers, current, onWorkspacesChanged }
       )}
 
       <div className="sidebar-foot">
-        {me.no_authn && <span className="dev-banner">{t('devMode')}</span>}
+        {me.no_authn && <span className="dev-banner">{me.demo ? t('demoMode') : t('devMode')}</span>}
         <NavLink className="nav-item" to="/settings/tokens">{t('tokens')}</NavLink>
         <div className="me">
           {me.user.avatar_url ? <img className="avatar" src={me.user.avatar_url} alt="" referrerPolicy="no-referrer" /> : <span className="avatar" aria-hidden />}

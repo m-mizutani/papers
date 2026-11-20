@@ -100,5 +100,7 @@ export const en: Record<MsgKey, string> = {
   settings: 'Settings',
   manageMembers: 'Members',
   updated: 'Updated {when}',
+  demoMode: 'Demo: data lives in this tab and resets on reload',
+  demoHint: 'Alice (a person) and Claude (an AI agent) edit this paper every few seconds. Click a block to edit it: they will see your lock and leave that block alone.',
   error: 'Something went wrong: {message}',
 }

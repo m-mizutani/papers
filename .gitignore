@@ -63,3 +63,4 @@ frontend/pr-screenshots/
 # papers binary
 /papers
 *.tsbuildinfo
+frontend/dist-demo/

@@ -179,4 +179,5 @@ export interface Me {
   user: User
   system_admin: boolean
   no_authn: boolean
+  demo?: boolean
 }

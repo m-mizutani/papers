@@ -100,5 +100,7 @@ export const ja: Record<MsgKey, string> = {
   settings: '設定',
   manageMembers: 'メンバー',
   updated: '{when} に更新',
+  demoMode: 'デモ: データはこのタブの中だけにあり、再読み込みで元に戻ります',
+  demoHint: 'Alice（人間）と Claude（AI エージェント）が数秒おきにこのペーパーを編集します。ブロックをクリックして編集すると、2 人にはあなたのロックが見え、そのブロックには手を出しません。',
   error: 'エラーが発生しました: {message}',
 }

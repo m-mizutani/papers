@@ -98,6 +98,8 @@ export const keys = {
   settings: 'settings',
   manageMembers: 'manageMembers',
   updated: 'updated',
+  demoMode: 'demoMode',
+  demoHint: 'demoHint',
   error: 'error',
 } as const
 

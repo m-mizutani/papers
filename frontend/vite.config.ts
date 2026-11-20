@@ -4,8 +4,10 @@ import react from '@vitejs/plugin-react'
 
 // In development the Go server runs on :8080 (`papers serve --no-authn
 // --ws-origin localhost:5173`) and Vite proxies API, WebSocket and MCP calls.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // The demo build runs from any path (it is hosted as a static page).
+  base: mode === 'demo' ? './' : '/',
   server: {
     port: 5173,
     proxy: {
@@ -14,12 +16,12 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
-    emptyOutDir: false,
+    outDir: mode === 'demo' ? 'dist-demo' : 'dist',
+    emptyOutDir: mode === 'demo',
     chunkSizeWarningLimit: 2000,
   },
   test: {
     environment: 'jsdom',
     globals: true,
   },
-})
+}))

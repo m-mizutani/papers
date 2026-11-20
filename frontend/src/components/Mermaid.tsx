@@ -1,10 +1,19 @@
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from '../i18n'
 
+import { isDemo } from '../utils/demo'
+
+type MermaidModule = { default: typeof import('mermaid').default }
+
+// The demo is a single static page, so it loads Mermaid from a CDN instead
+// of shipping it.
+const MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs'
+
 let mermaidPromise: Promise<typeof import('mermaid').default> | undefined
 
 function loadMermaid() {
-  mermaidPromise ??= import('mermaid').then((m) => {
+  const mod: Promise<MermaidModule> = isDemo ? import(/* @vite-ignore */ MERMAID_CDN) : import('mermaid')
+  mermaidPromise ??= mod.then((m) => {
     m.default.initialize({
       startOnLoad: false,
       securityLevel: 'strict',

@@ -310,7 +310,7 @@ export function BlockView({ block, ctx }: { block: Block; ctx: BlockContext }) {
         </button>
       )}
       {!human && <div className="ai-note">{t('aiOnlyBlock')}</div>}
-      {ctx.canEdit && !editing && <Tools block={block} ctx={ctx} />}
+      {ctx.canEdit && !editing && !held && <Tools block={block} ctx={ctx} />}
     </div>
   )
 }

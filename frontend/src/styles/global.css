@@ -159,6 +159,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; gap: var(--spacing-md); align-items: center;
 }
 .notice .btn { margin-left: auto; }
+.notice.demo-hint { background: var(--agent-wash); border-left-color: var(--agent); }
 
 .sheet {
   max-width: var(--sheet-width); margin: 0 auto; background: var(--sheet); box-shadow: var(--shadow-sheet);
@@ -199,8 +200,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .held-badge.agent { background: var(--agent); }
 
 .block-tools {
-  position: absolute; right: var(--spacing-xs); top: 0.125rem; display: none; gap: 0.0625rem;
-  font-family: var(--font-ui);
+  position: absolute; right: var(--spacing-xxl); top: 0; transform: translateY(-60%); display: none; gap: 0.0625rem;
+  align-items: center; padding: 0.125rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sheet); font-family: var(--font-ui); z-index: 2;
 }
 .block:hover .block-tools, .block:focus-within .block-tools { display: flex; }
 .tool {
@@ -321,5 +323,5 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .block { margin: 0 calc(var(--spacing-lg) * -1); padding: 0.125rem var(--spacing-lg); }
   .block::before { left: calc(var(--spacing-lg) - var(--spacing-sm)); }
   .held-badge { right: var(--spacing-lg); }
-  .block-tools { position: static; display: flex; justify-content: flex-end; }
+  .block-tools { right: var(--spacing-lg); }
 }
