@@ -82,6 +82,10 @@ type applier struct {
 	order   []model.BlockID
 
 	titleChanged bool
+	// contentBytes is the content size of each block written so far; a
+	// block written twice in one commit counts once, at its last size.
+	contentBytes map[model.BlockID]int
+	totalBytes   int
 }
 
 func (a *applier) record(ch model.Change, after *model.Block) error {
@@ -186,6 +190,15 @@ func (a *applier) newBlock(id model.BlockID, t model.BlockType, content string, 
 }
 
 func (a *applier) put(b *model.Block) error {
+	if a.contentBytes == nil {
+		a.contentBytes = map[model.BlockID]int{}
+	}
+	total := a.totalBytes - a.contentBytes[b.ID] + len(b.Content)
+	if total > model.MaxCommitContentBytes {
+		return goerr.Wrap(model.ErrInvalidArgument, "commit writes too much content; split it",
+			goerr.V("bytes", total), goerr.V("max", model.MaxCommitContentBytes))
+	}
+	a.contentBytes[b.ID], a.totalBytes = len(b.Content), total
 	if err := a.tx.PutBlock(b); err != nil {
 		return goerr.Wrap(err, "failed to put block", goerr.V("block_id", b.ID))
 	}

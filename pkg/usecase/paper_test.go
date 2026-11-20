@@ -103,3 +103,40 @@ func TestSearchPapers(t *testing.T) {
 	_, err := e.uc.SearchPapers(ctx, owner, ws, " ", 10)
 	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 }
+
+func TestSearchPapersAccess(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	owner, viewer, guest := e.user(t, "owner"), e.user(t, "viewer"), e.user(t, "guest")
+	ws := e.workspace(t, owner, userBinding(viewer, model.RoleViewer))
+
+	open := gt.R1(e.uc.CreatePaper(ctx, owner, ws, usecase.CreatePaperInput{Title: "Rollback", Markdown: "rollback step one\n\nrollback step two"})).NoError(t)
+	secret := gt.R1(e.uc.CreatePaper(ctx, owner, ws, usecase.CreatePaperInput{Title: "Secret", Markdown: "rollback of the secret system", Restricted: true})).NoError(t)
+
+	// One hit per paper, even when the title and several blocks match.
+	ownerHits := gt.R1(e.uc.SearchPapers(ctx, owner, ws, "rollback", 10)).NoError(t)
+	gt.A(t, ownerHits).Length(2)
+	ids := []model.PaperID{ownerHits[0].Paper.ID, ownerHits[1].Paper.ID}
+	gt.A(t, ids).Has(open.Paper.ID)
+	gt.A(t, ids).Has(secret.Paper.ID)
+
+	// Restricted papers are hidden from workspace viewers.
+	viewerHits := gt.R1(e.uc.SearchPapers(ctx, viewer, ws, "rollback", 10)).NoError(t)
+	gt.A(t, viewerHits).Length(1)
+	gt.Equal(t, viewerHits[0].Paper.ID, open.Paper.ID)
+
+	// Outsiders learn nothing about the workspace.
+	_, err := e.uc.SearchPapers(ctx, guest, ws, "rollback", 10)
+	gt.True(t, errors.Is(err, model.ErrNotFound))
+
+	// A guest the secret paper is shared with finds only that paper.
+	access := model.PaperAccess{Restricted: true, Bindings: []model.RoleBinding{userBinding(guest, model.RoleViewer)}}
+	gt.R1(e.uc.UpdatePaperAccess(ctx, owner, ws, secret.Paper.ID, access)).NoError(t)
+	guestHits := gt.R1(e.uc.SearchPapers(ctx, guest, ws, "rollback", 10)).NoError(t)
+	gt.A(t, guestHits).Length(1)
+	gt.Equal(t, guestHits[0].Paper.ID, secret.Paper.ID)
+
+	// Deleted papers drop out of results.
+	gt.NoError(t, e.uc.DeletePaper(ctx, owner, ws, open.Paper.ID))
+	gt.A(t, gt.R1(e.uc.SearchPapers(ctx, viewer, ws, "rollback", 10)).NoError(t)).Length(0)
+}

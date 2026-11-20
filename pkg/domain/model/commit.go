@@ -47,10 +47,15 @@ type Commit struct {
 
 const (
 	MaxCommitMessageLength = 1024
-	// MaxChangesPerCommit keeps one commit within a single storage
-	// transaction: every block change writes the block and its version
-	// snapshot, and a transaction may write at most 500 records.
+	// MaxChangesPerCommit bounds the records one commit writes in a single
+	// storage transaction: every block change writes the block, its version
+	// snapshot and its search entry.
 	MaxChangesPerCommit = 240
+	// MaxCommitContentBytes bounds the block content one commit writes. The
+	// content is written twice (block and version) next to search entries
+	// of up to MaxSearchTextLength each, and the whole transaction must fit
+	// in one storage request (10 MiB on Firestore).
+	MaxCommitContentBytes = 3 * 1024 * 1024
 )
 
 func (c *Commit) Validate() error {

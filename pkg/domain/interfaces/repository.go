@@ -22,6 +22,7 @@ type Repository interface {
 	WorkspaceRepository
 	PaperRepository
 	LockRepository
+	SearchRepository
 	Close() error
 }
 
@@ -130,4 +131,20 @@ type LockRepository interface {
 	ReleaseLock(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, block model.BlockID, holderKey string) (bool, error)
 	// ListLocks returns the active locks of a paper.
 	ListLocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, now time.Time) ([]*model.BlockLock, error)
+}
+
+// SearchRepository finds paper titles and blocks by text. Implementations
+// keep the search entries themselves: an entry for the title of every paper
+// and for every block with searchable text (model.NewTitleSearchEntry,
+// model.NewBlockSearchEntry), written with the paper and its blocks in
+// CreatePaper and RunPaperTx, and removed by DeletePaper.
+// The use case layer never scans papers to search.
+type SearchRepository interface {
+	// Search returns the entries of one workspace that match every term of
+	// q, best match first, at most limit (1..model.MaxSearchLimit) entries.
+	// Matching follows model.SearchQuery.Matches; an implementation backed
+	// by a search engine may also match normalized forms of the terms.
+	// Access control is the caller's job: results include entries of
+	// restricted papers.
+	Search(ctx context.Context, ws model.WorkspaceID, q model.SearchQuery, limit int) ([]*model.SearchEntry, error)
 }

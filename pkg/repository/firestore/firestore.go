@@ -14,6 +14,12 @@
 //	  .../blocks/{blockID}/versions/{version}             immutable snapshots
 //	  .../commits/{commitID}
 //	  .../locks/{blockID}                                  TTL on ExpiresAt
+//	workspaces/{wsID}/search/{paperID}_{blockID|title}     search entries
+//
+// The database must be a Firestore Enterprise edition database in Native
+// mode: search uses the Search pipeline stage, and Enterprise creates no
+// index automatically, so every query here must be covered by an index in
+// RequiredIndexes (a query without one silently scans the collection).
 //
 // Models are persisted as-is (field names are the Go field names) and read
 // back with DataTo; there are no mirror structs.
@@ -52,8 +58,9 @@ const (
 )
 
 type Repository struct {
-	client      *firestore.Client
-	eventBuffer int
+	client         *firestore.Client
+	eventBuffer    int
+	searchLanguage string
 }
 
 var _ interfaces.Repository = (*Repository)(nil)
@@ -63,6 +70,10 @@ type Option func(*Repository)
 // WithEventBuffer sets how many events a watcher may lag behind before its
 // watch is closed (default 256).
 func WithEventBuffer(n int) Option { return func(r *Repository) { r.eventBuffer = n } }
+
+// WithSearchLanguage sets the BCP-47 language code of search queries, such
+// as "ja". Empty (the default) lets Firestore detect it.
+func WithSearchLanguage(code string) Option { return func(r *Repository) { r.searchLanguage = code } }
 
 func New(ctx context.Context, projectID, databaseID string, opts ...Option) (*Repository, error) {
 	if projectID == "" {

@@ -19,6 +19,7 @@ type Repository struct {
 	projectID   string
 	databaseID  string
 	eventBuffer int
+	searchLang  string
 }
 
 func (x *Repository) Flags() []cli.Flag {
@@ -35,6 +36,10 @@ func (x *Repository) Flags() []cli.Flag {
 			Name: "firestore-database-id", Category: "repository", Usage: "Firestore database ID",
 			Value: "(default)", Sources: cli.EnvVars("PAPERS_FIRESTORE_DATABASE_ID"), Destination: &x.databaseID,
 		},
+		&cli.StringFlag{
+			Name: "firestore-search-language", Category: "repository", Usage: "BCP-47 language code of search queries (e.g. ja); empty lets Firestore detect it",
+			Sources: cli.EnvVars("PAPERS_FIRESTORE_SEARCH_LANGUAGE"), Destination: &x.searchLang,
+		},
 		&cli.IntFlag{
 			Name: "event-buffer", Category: "repository", Usage: "Realtime events a watcher may lag behind before it is told to reload",
 			Value: 256, Sources: cli.EnvVars("PAPERS_EVENT_BUFFER"), Destination: &x.eventBuffer,
@@ -47,6 +52,7 @@ func (x Repository) LogValue() slog.Value {
 		slog.String("backend", x.backend),
 		slog.String("firestore_project_id", x.projectID),
 		slog.String("firestore_database_id", x.databaseID),
+		slog.String("firestore_search_language", x.searchLang),
 	)
 }
 
@@ -62,7 +68,8 @@ func (x *Repository) Configure(ctx context.Context) (interfaces.Repository, erro
 		if x.projectID == "" {
 			return nil, goerr.New("--firestore-project-id is required for the firestore backend")
 		}
-		repo, err := firestore.New(ctx, x.projectID, x.databaseID, firestore.WithEventBuffer(x.eventBuffer))
+		repo, err := firestore.New(ctx, x.projectID, x.databaseID,
+			firestore.WithEventBuffer(x.eventBuffer), firestore.WithSearchLanguage(x.searchLang))
 		if err != nil {
 			return nil, err
 		}

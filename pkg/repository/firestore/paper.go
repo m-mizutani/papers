@@ -40,7 +40,13 @@ func (r *Repository) CreatePaper(ctx context.Context, paper *model.Paper) error 
 	if err := validID(string(paper.WorkspaceID)); err != nil {
 		return err
 	}
-	if _, err := r.paperDoc(paper.WorkspaceID, paper.ID).Create(ctx, paper); err != nil {
+	err := r.client.RunTransaction(ctx, func(_ context.Context, tx *firestore.Transaction) error {
+		if err := tx.Create(r.paperDoc(paper.WorkspaceID, paper.ID), paper); err != nil {
+			return err
+		}
+		return stageSearchEntry(tx, r.searchDoc(paper.WorkspaceID, paper.ID, ""), model.NewTitleSearchEntry(paper))
+	}, firestore.MaxAttempts(1))
+	if err != nil {
 		if isAlreadyExists(err) {
 			return goerr.Wrap(model.ErrAlreadyExists, "paper already exists", goerr.V("id", paper.ID))
 		}
@@ -106,6 +112,10 @@ func (r *Repository) DeletePaper(ctx context.Context, ws model.WorkspaceID, id m
 	if _, err := doc.Delete(ctx); err != nil {
 		return goerr.Wrap(err, "failed to delete paper")
 	}
+	searchRefs, err := r.paperSearchRefs(ctx, ws, id)
+	if err != nil {
+		return err
+	}
 
 	bw := r.client.BulkWriter(ctx)
 	var jobs []*firestore.BulkWriterJob
@@ -134,9 +144,16 @@ func (r *Repository) DeletePaper(ctx context.Context, ws model.WorkspaceID, id m
 		}
 		return nil
 	}
-	err := sweep(doc.Collection(colBlocks), func(block *firestore.DocumentRef) error {
-		return sweep(block.Collection(colVersions), nil)
-	})
+	for _, ref := range searchRefs {
+		if err = del(ref); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = sweep(doc.Collection(colBlocks), func(block *firestore.DocumentRef) error {
+			return sweep(block.Collection(colVersions), nil)
+		})
+	}
 	if err == nil {
 		err = sweep(doc.Collection(colCommits), nil)
 	}
@@ -394,6 +411,9 @@ func (t *fsTx) flush() error {
 		if err := t.tx.Delete(blocks.Doc(string(id))); err != nil {
 			return goerr.Wrap(err, "failed to stage block delete")
 		}
+		if err := stageSearchEntry(t.tx, t.r.searchDoc(t.ws, t.paperID, id), nil); err != nil {
+			return err
+		}
 	}
 	for id, b := range t.puts {
 		if err := t.tx.Set(blocks.Doc(string(id)), b); err != nil {
@@ -405,6 +425,9 @@ func (t *fsTx) flush() error {
 		if err := t.tx.Create(t.r.versionDoc(t.ws, t.paperID, id, b.Version), b); err != nil {
 			return goerr.Wrap(err, "failed to stage block version")
 		}
+		if err := stageSearchEntry(t.tx, t.r.searchDoc(t.ws, t.paperID, id), model.NewBlockSearchEntry(b)); err != nil {
+			return err
+		}
 	}
 	for _, c := range t.commits {
 		if err := t.tx.Create(t.r.commitsCol(t.ws, t.paperID).Doc(string(c.ID)), c); err != nil {
@@ -414,6 +437,9 @@ func (t *fsTx) flush() error {
 	if t.paperW {
 		if err := t.tx.Set(t.r.paperDoc(t.ws, t.paperID), t.paper); err != nil {
 			return goerr.Wrap(err, "failed to stage paper write")
+		}
+		if err := stageSearchEntry(t.tx, t.r.searchDoc(t.ws, t.paperID, ""), model.NewTitleSearchEntry(t.paper)); err != nil {
+			return err
 		}
 	}
 	return nil

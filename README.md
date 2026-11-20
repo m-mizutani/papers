@@ -59,7 +59,8 @@ UI and pass it as a bearer token (the UI shows the exact command).
 | `--enable-mcp` | `true` | Serve `/mcp` |
 | `--ws-origin` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` | `memory` | `firestore` or `memory` (development only) |
-| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore database (see [docs/design.html](docs/design.html) for indexes and TTL) |
+| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore setup` once to create its indexes and TTL policies |
+| `--firestore-search-language` | (detect) | BCP-47 language code of search queries, such as `ja` |
 | `--paper-touch-interval` | `1m` | How stale a paper's "updated" time may get before a commit refreshes it |
 
 All flags also read `PAPERS_*` environment variables (see `papers serve --help`).

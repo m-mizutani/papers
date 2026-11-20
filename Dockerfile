@@ -8,7 +8,7 @@ COPY frontend/ ./
 RUN pnpm run build
 
 # Go build stage
-FROM golang:1.24-alpine AS build-go
+FROM golang:1.26-alpine AS build-go
 ENV CGO_ENABLED=0
 ARG BUILD_VERSION=dev
 RUN apk add --no-cache git

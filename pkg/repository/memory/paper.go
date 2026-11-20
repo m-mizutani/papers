@@ -28,7 +28,9 @@ func (r *Repository) CreatePaper(_ context.Context, paper *model.Paper) error {
 		blocks:   map[model.BlockID]*model.Block{},
 		versions: map[model.BlockID][]*model.Block{},
 		locks:    map[model.BlockID]*model.BlockLock{},
+		search:   map[model.BlockID]*model.SearchEntry{},
 	}
+	r.papers[key].indexTitle()
 	return nil
 }
 
@@ -350,16 +352,19 @@ func (r *Repository) RunPaperTx(_ context.Context, ws model.WorkspaceID, paper m
 			continue
 		}
 		delete(d.blocks, id)
+		delete(d.search, id)
 		r.emit(key, &model.Event{Type: model.EventBlockDeleted, BlockID: id})
 	}
 	for id, b := range tx.puts {
 		d.blocks[id] = b
 		d.versions[id] = append(d.versions[id], clone(b))
+		d.indexBlock(b)
 		r.emit(key, &model.Event{Type: model.EventBlockPut, Block: clone(b)})
 	}
 	d.commits = append(d.commits, tx.commits...)
 	if tx.paperW {
 		d.paper = tx.paper
+		d.indexTitle()
 		r.emit(key, &model.Event{Type: model.EventPaperUpdated, Paper: clone(tx.paper)})
 	}
 	return nil

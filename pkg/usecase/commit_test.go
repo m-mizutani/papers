@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -355,4 +356,27 @@ func TestCommitRespectsSoftLocks(t *testing.T) {
 	// expired locks no longer block
 	pe.clock.Advance(31 * time.Second)
 	gt.R1(pe.uc.Commit(ctx, pe.owner, pe.ws, pe.paper, usecase.CommitInput{Ops: []usecase.Op{{Kind: usecase.OpDelete, BlockID: id}}})).NoError(t)
+}
+
+func TestCommitContentBudget(t *testing.T) {
+	pe := newPaperEnv(t)
+	big := strings.Repeat("x", model.MaxContentLength)
+	n := model.MaxCommitContentBytes/model.MaxContentLength + 1
+	var ops []usecase.Op
+	for range n {
+		ops = append(ops, insertOp(big, nil))
+	}
+	_, err := pe.uc.Commit(context.Background(), pe.editor, pe.ws, pe.paper, usecase.CommitInput{Ops: ops})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+
+	// Rewriting the same block counts its last size only.
+	r := pe.commit(t, pe.editor, insertOp(big, nil))
+	id := r.Commit.Changes[0].BlockID
+	var updates []usecase.Op
+	for i := range n {
+		content := strings.Repeat(string(rune('a'+i)), model.MaxContentLength)
+		updates = append(updates, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr(content)})
+	}
+	r = pe.commit(t, pe.editor, updates...)
+	gt.A(t, r.Commit.Changes).Length(n)
 }

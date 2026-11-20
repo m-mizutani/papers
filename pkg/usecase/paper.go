@@ -1,8 +1,8 @@
 package usecase
 
 import (
-	"cmp"
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -206,44 +206,77 @@ func snippet(text string, at, length int) string {
 	return s
 }
 
-// SearchPapers does a case-insensitive substring search over titles and
-// block contents of the papers the caller can read. It scans; a deployment
-// with many papers needs a search index behind this method.
+// SearchPapers finds papers of a workspace by title and block text through
+// the repository's search index, and returns at most limit hits, one per
+// paper, best match first. Only papers the caller can read are returned.
+// Hidden (restricted) papers are filtered after the index lookup, so a
+// workspace with many restricted matches may return fewer than limit hits.
 func (u *UseCases) SearchPapers(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, query string, limit int) ([]*SearchHit, error) {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return nil, goerr.Wrap(model.ErrInvalidArgument, "query is required")
-	}
-	summaries, err := u.ListPapers(ctx, p, wsID)
+	q, err := model.ParseSearchQuery(query)
 	if err != nil {
 		return nil, err
 	}
-	var hits []*SearchHit
-	for _, s := range summaries {
-		if limit > 0 && len(hits) >= limit {
+	if limit < 1 || limit > model.MaxSearchLimit {
+		limit = model.MaxSearchLimit
+	}
+	if err := requirePrincipal(p); err != nil {
+		return nil, err
+	}
+	ws, err := u.repo.GetWorkspace(ctx, wsID)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to get workspace", goerr.V("workspace_id", wsID))
+	}
+	// Fetch more entries than hits: several entries can belong to one
+	// paper, and some papers may not be readable by the caller.
+	entries, err := u.repo.Search(ctx, wsID, q, min(limit*searchOverfetch, model.MaxSearchLimit))
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to search", goerr.V("workspace_id", wsID))
+	}
+	hits := []*SearchHit{}
+	seen := map[model.PaperID]bool{}
+	for _, e := range entries {
+		if len(hits) >= limit {
 			break
 		}
-		if idx := strings.Index(strings.ToLower(s.Paper.Title), q); idx >= 0 {
-			hits = append(hits, &SearchHit{Paper: s.Paper, Snippet: s.Paper.Title})
+		if seen[e.PaperID] {
 			continue
 		}
-		blocks, err := u.repo.ListBlocks(ctx, wsID, s.Paper.ID)
+		seen[e.PaperID] = true
+		paper, err := u.repo.GetPaper(ctx, wsID, e.PaperID)
+		if errors.Is(err, model.ErrNotFound) {
+			continue // deleted after the index lookup
+		}
 		if err != nil {
-			return nil, goerr.Wrap(err, "failed to list blocks", goerr.V("paper_id", s.Paper.ID))
+			return nil, goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", e.PaperID))
 		}
-		for _, b := range blocks {
-			lower := strings.ToLower(b.Content)
-			if idx := strings.Index(lower, q); idx >= 0 && len(lower) == len(b.Content) {
-				hits = append(hits, &SearchHit{Paper: s.Paper, BlockID: b.ID, Snippet: snippet(b.Content, idx, len(q))})
-				break
-			} else if idx >= 0 {
-				// Lower-casing changed byte lengths; fall back to a
-				// head-of-block snippet rather than slicing at a wrong offset.
-				hits = append(hits, &SearchHit{Paper: s.Paper, BlockID: b.ID, Snippet: snippet(b.Content, 0, 0)})
-				break
-			}
+		if !p.PaperRole(ws, paper).AtLeast(model.RoleViewer) {
+			continue
 		}
+		hits = append(hits, &SearchHit{Paper: paper, BlockID: e.BlockID, Snippet: termSnippet(e.Text, q.Terms)})
 	}
-	slices.SortStableFunc(hits, func(a, b *SearchHit) int { return cmp.Compare(b.Paper.UpdatedAt.Unix(), a.Paper.UpdatedAt.Unix()) })
+	// Without a workspace role, a caller with no visible hit learns nothing,
+	// as in ListPapers.
+	if len(hits) == 0 && !p.WorkspaceRole(ws).AtLeast(model.RoleViewer) {
+		return nil, denied(model.RoleNone, "workspace", wsID)
+	}
 	return hits, nil
+}
+
+const searchOverfetch = 3
+
+// termSnippet cuts the text around the first occurrence of any term.
+func termSnippet(text string, terms []string) string {
+	lower := strings.ToLower(text)
+	for _, t := range terms {
+		lt := strings.ToLower(t)
+		idx := strings.Index(lower, lt)
+		if idx < 0 {
+			continue
+		}
+		if len(lower) == len(text) {
+			return snippet(text, idx, len(lt))
+		}
+		break // lower-casing changed byte offsets; use the head
+	}
+	return snippet(text, 0, 0)
 }

@@ -40,7 +40,7 @@ tasks:
       - task: test:frontend
 
   test:firestore:
-    desc: Run the repository contract tests against a Firestore emulator in Docker
+    desc: Run the repository contract tests against a Firestore emulator in Docker (search tests need a real Enterprise database, see docs/design.html)
     cmds:
       - |
         docker rm -f papers-firestore-emulator >/dev/null 2>&1 || true
