@@ -102,8 +102,9 @@ func TestLiveConnection(t *testing.T) {
 
 	// alice commits with her connection id; bob receives the commit
 	alice.expect("POST", base+"/commits", map[string]any{"connection_id": hello.ConnectionID, "ops": []map[string]any{{"op": "update", "block_id": block, "content": "live!"}}}, http.StatusOK, nil)
-	ev = readEvent(t, bc, model.EventCommit)
-	gt.Equal(t, ev.Commit.Changes[0].After.Content, "live!")
+	ev = readEvent(t, bc, model.EventBlockPut)
+	gt.Equal(t, ev.Block.ID, block)
+	gt.Equal(t, ev.Block.Content, "live!")
 
 	write(t, ac, map[string]any{"type": "heartbeat"})
 

@@ -9,7 +9,8 @@ import (
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-// Repository is the persistence port. Every Get* returns an error wrapping
+// Repository is the persistence port, including the realtime change feed
+// (WatchPaper), since the storage itself is the source of change events. Every Get* returns an error wrapping
 // model.ErrNotFound when the entity does not exist. Every Put* validates the
 // entity before writing and stores it as-is (no field-by-field copy, no
 // timestamp stamping: the caller owns CreatedAt / UpdatedAt).
@@ -62,38 +63,57 @@ type WorkspaceRepository interface {
 }
 
 type PaperRepository interface {
-	// CreatePaper stores a new paper (revision 0, no blocks). It fails with
+	// CreatePaper stores a new paper with no blocks. It fails with
 	// model.ErrAlreadyExists if the ID is taken.
 	CreatePaper(ctx context.Context, paper *model.Paper) error
 	GetPaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error)
 	ListPapers(ctx context.Context, ws model.WorkspaceID) ([]*model.Paper, error)
 	// UpdatePaperAccess replaces the access settings of an existing paper.
 	UpdatePaperAccess(ctx context.Context, ws model.WorkspaceID, id model.PaperID, access model.PaperAccess, updatedBy model.Actor, updatedAt time.Time) (*model.Paper, error)
-	// DeletePaper removes the paper with its blocks, commits and locks.
+	// DeletePaper removes the paper with its blocks, block versions, commits
+	// and locks.
 	DeletePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error
 
 	GetBlock(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID) (*model.Block, error)
-	// ListBlocks returns every block of a paper, ordered by (ParentID, Order).
+	// ListBlocks returns every block of a paper, ordered by (ParentID, Order, ID).
 	ListBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error)
-	// ListCommits returns commits with Seq > afterSeq in ascending Seq order,
-	// at most limit of them.
-	ListCommits(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, afterSeq int64, limit int) ([]*model.Commit, error)
+	// GetBlockVersion returns the snapshot of a block at a version. Snapshots
+	// outlive the block, so a deleted block's history stays readable.
+	GetBlockVersion(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, version int64) (*model.Block, error)
+	// ListBlockVersions returns a block's snapshots, newest first.
+	ListBlockVersions(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, limit int) ([]*model.Block, error)
+	// ListCommits returns commits newest first. A non-empty before returns
+	// the commits older than that commit (pagination cursor).
+	ListCommits(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, before model.CommitID, limit int) ([]*model.Commit, error)
 
 	// RunPaperTx runs fn in a transaction scoped to one paper. Writes staged
 	// through tx become visible atomically when fn returns nil and are
 	// discarded otherwise. Implementations may retry fn on contention, so fn
 	// must not have side effects outside tx.
 	RunPaperTx(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, fn func(tx PaperTx) error) error
+
+	// WatchPaper streams the paper's changes (blocks, locks, the paper
+	// record) from the moment it returns until ctx is done. The channel is
+	// closed when the watch ends; it is also closed early if the watcher
+	// falls behind, in which case the caller must reload the paper.
+	WatchPaper(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error)
 }
 
 // PaperTx is the view of one paper inside RunPaperTx. Reads observe writes
-// staged earlier in the same transaction.
+// staged earlier in the same transaction. Sibling order ties are broken by
+// block ID everywhere.
 type PaperTx interface {
 	Paper() *model.Paper
 	GetBlock(id model.BlockID) (*model.Block, error)
-	// Children returns the blocks whose ParentID is parent, ordered by Order.
-	// parent "" selects top-level blocks.
+	// FirstAfter returns the first child of parent whose Order is strictly
+	// greater than order ("" = the first child), or nil if there is none.
+	FirstAfter(parent model.BlockID, order string) (*model.Block, error)
+	// Last returns the last child of parent, or nil if it has none.
+	Last(parent model.BlockID) (*model.Block, error)
+	// Children returns all children of parent ordered by Order. Use it only
+	// for containers with bounded children (table cells).
 	Children(parent model.BlockID) ([]*model.Block, error)
+	// PutBlock stores the block and a snapshot of it under its Version.
 	PutBlock(block *model.Block) error
 	DeleteBlock(id model.BlockID) error
 	PutPaper(paper *model.Paper) error

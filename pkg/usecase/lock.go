@@ -31,7 +31,6 @@ func (u *UseCases) AcquireLock(ctx context.Context, p *model.Principal, wsID mod
 	if err != nil {
 		return got, err
 	}
-	u.publish(ctx, &model.Event{Type: model.EventLock, WorkspaceID: wsID, PaperID: paperID, Lock: got})
 	return got, nil
 }
 
@@ -41,12 +40,8 @@ func (u *UseCases) ReleaseLock(ctx context.Context, p *model.Principal, wsID mod
 	if err := requirePrincipal(p); err != nil {
 		return err
 	}
-	released, err := u.repo.ReleaseLock(ctx, wsID, paperID, blockID, holderKey)
-	if err != nil {
+	if _, err := u.repo.ReleaseLock(ctx, wsID, paperID, blockID, holderKey); err != nil {
 		return goerr.Wrap(err, "failed to release lock")
-	}
-	if released {
-		u.publish(ctx, &model.Event{Type: model.EventUnlock, WorkspaceID: wsID, PaperID: paperID, BlockID: blockID, HolderKey: holderKey})
 	}
 	return nil
 }
@@ -55,16 +50,17 @@ func (u *UseCases) ReleaseLock(ctx context.Context, p *model.Principal, wsID mod
 // how often to heartbeat.
 func (u *UseCases) LockTTL() int64 { return u.cfg.LockTTL.Milliseconds() }
 
-// Subscribe opens a realtime subscription to a paper for a reader.
-func (u *UseCases) Subscribe(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, paperID model.PaperID) (<-chan *model.Event, func(), error) {
+// Watch opens a realtime change feed of a paper for a reader. The channel
+// closes when ctx ends or when the watcher must reload the paper.
+func (u *UseCases) Watch(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, paperID model.PaperID) (<-chan *model.Event, error) {
 	if _, _, _, err := u.paperFor(ctx, p, wsID, paperID, model.RoleViewer); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	ch, cancel, err := u.bus.Subscribe(ctx, wsID, paperID)
+	ch, err := u.repo.WatchPaper(ctx, wsID, paperID)
 	if err != nil {
-		return nil, nil, goerr.Wrap(err, "failed to subscribe")
+		return nil, goerr.Wrap(err, "failed to watch paper")
 	}
-	return ch, cancel, nil
+	return ch, nil
 }
 
 // CanRead re-checks read access; long-lived subscriptions call it when the

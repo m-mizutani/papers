@@ -67,7 +67,7 @@ export function seed() {
     const blocks = build(ws, id, specs, by)
     const last = blocks.reduce((a, b) => (a.updated_at > b.updated_at ? a : b))
     const p: Paper = {
-      id, workspace_id: ws, title, revision: 1, access: { restricted: false, bindings: [] },
+      id, workspace_id: ws, title, access: { restricted: false, bindings: [] },
       created_by: by, created_at: new Date(t0).toISOString(), updated_by: last.updated_by, updated_at: last.updated_at,
     }
     return { paper: p, blocks }

@@ -43,7 +43,6 @@ export interface Paper {
   id: string
   workspace_id: string
   title: string
-  revision: number
   access: PaperAccess
   created_by: Actor
   created_at: string
@@ -115,8 +114,8 @@ export type ChangeKind = 'insert' | 'update' | 'delete' | 'move' | 'set_title'
 export interface Change {
   kind: ChangeKind
   block_id?: string
-  before?: Block
-  after?: Block
+  from_version?: number
+  to_version?: number
   overwrote_version?: number
   title_before?: string
   title_after?: string
@@ -124,7 +123,6 @@ export interface Change {
 
 export interface Commit {
   id: string
-  seq: number
   actor: Actor
   message?: string
   changes: Change[]
@@ -148,13 +146,21 @@ export type Op =
   | { op: 'insert_markdown'; markdown: string; after?: string }
 
 export interface PaperEvent {
-  type: 'commit' | 'lock' | 'unlock' | 'paper_deleted' | 'access_changed'
+  type: 'block_put' | 'block_deleted' | 'paper_updated' | 'paper_deleted' | 'lock' | 'unlock'
   workspace_id: string
   paper_id: string
-  commit?: Commit
+  block?: Block
+  paper?: Paper
   lock?: BlockLock
   block_id?: string
   holder_key?: string
+}
+
+export interface CommitResult {
+  commit: Commit | null
+  paper: Paper
+  blocks: Block[]
+  deleted: string[]
 }
 
 export interface Group {

@@ -60,6 +60,11 @@ type CommitResult struct {
 	// Commit is nil when the operations changed nothing.
 	Commit *model.Commit
 	Paper  *model.Paper
+	// Blocks are the resulting states of inserted / updated / moved blocks,
+	// and Deleted the IDs of removed blocks, so the caller can apply the
+	// commit without waiting for change events.
+	Blocks  []*model.Block
+	Deleted []model.BlockID
 }
 
 type applier struct {
@@ -71,6 +76,26 @@ type applier struct {
 	holder  string
 	force   bool
 	changes []model.Change
+	// touched tracks the final state per block for the result: nil means
+	// deleted.
+	touched map[model.BlockID]*model.Block
+	order   []model.BlockID
+
+	titleChanged bool
+}
+
+func (a *applier) record(ch model.Change, after *model.Block) error {
+	if len(a.changes) >= model.MaxChangesPerCommit {
+		return goerr.Wrap(model.ErrInvalidArgument, "commit changes too many blocks; split it", goerr.V("max", model.MaxChangesPerCommit))
+	}
+	a.changes = append(a.changes, ch)
+	if _, ok := a.touched[ch.BlockID]; !ok && ch.BlockID != "" {
+		a.order = append(a.order, ch.BlockID)
+	}
+	if ch.BlockID != "" {
+		a.touched[ch.BlockID] = after
+	}
+	return nil
 }
 
 func (a *applier) checkLock(id model.BlockID) error {
@@ -85,45 +110,70 @@ func (a *applier) checkLock(id model.BlockID) error {
 		goerr.V("block_id", id), goerr.V("holder", l.Holder.Name), goerr.V("expires_at", l.ExpiresAt))
 }
 
-// orderAfter computes the order key for a top-level block placed per after,
-// ignoring the block self (when moving).
+// orderAfter computes the order key for a top-level block placed per
+// after. self is the block being moved, if any; it is skipped as a
+// neighbour.
 func (a *applier) orderAfter(after *model.BlockID, self model.BlockID) (string, error) {
-	all, err := a.tx.Children("")
-	if err != nil {
-		return "", goerr.Wrap(err, "failed to list blocks")
-	}
-	siblings := make([]*model.Block, 0, len(all))
-	for _, b := range all {
-		if b.ID != self {
-			siblings = append(siblings, b)
+	// next returns the first top-level block after order, skipping self.
+	next := func(order string) (*model.Block, error) {
+		for {
+			b, err := a.tx.FirstAfter("", order)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to find next block")
+			}
+			if b == nil || b.ID != self {
+				return b, nil
+			}
+			order = b.Order
 		}
+	}
+	upper := func(b *model.Block) string {
+		if b == nil {
+			return ""
+		}
+		return b.Order
 	}
 
 	switch {
 	case after == nil:
+		last, err := a.tx.Last("")
+		if err != nil {
+			return "", goerr.Wrap(err, "failed to find last block")
+		}
+		if last != nil && last.ID == self {
+			// Moving the last block to the end: find the one before it.
+			children, err := a.tx.Children("")
+			if err != nil {
+				return "", goerr.Wrap(err, "failed to list blocks")
+			}
+			last = nil
+			for _, c := range children {
+				if c.ID != self {
+					last = c
+				}
+			}
+		}
 		lo := ""
-		if n := len(siblings); n > 0 {
-			lo = siblings[n-1].Order
+		if last != nil {
+			lo = last.Order
 		}
 		return model.KeyBetween(lo, "")
 	case *after == "":
-		hi := ""
-		if len(siblings) > 0 {
-			hi = siblings[0].Order
+		first, err := next("")
+		if err != nil {
+			return "", err
 		}
-		return model.KeyBetween("", hi)
+		return model.KeyBetween("", upper(first))
 	default:
-		for i, s := range siblings {
-			if s.ID != *after {
-				continue
-			}
-			hi := ""
-			if i+1 < len(siblings) {
-				hi = siblings[i+1].Order
-			}
-			return model.KeyBetween(s.Order, hi)
+		anchor, err := a.tx.GetBlock(*after)
+		if err != nil || anchor.ParentID != "" {
+			return "", goerr.Wrap(model.ErrInvalidArgument, "anchor block not found among top-level blocks", goerr.V("after", *after))
 		}
-		return "", goerr.Wrap(model.ErrInvalidArgument, "anchor block not found among top-level blocks", goerr.V("after", *after))
+		following, err := next(anchor.Order)
+		if err != nil {
+			return "", err
+		}
+		return model.KeyBetween(anchor.Order, upper(following))
 	}
 }
 
@@ -164,7 +214,9 @@ func (a *applier) syncCells(table *model.Block, contents [][]string) error {
 			if err := a.tx.DeleteBlock(c.ID); err != nil {
 				return goerr.Wrap(err, "failed to delete table cell")
 			}
-			a.changes = append(a.changes, model.Change{Kind: model.ChangeDelete, BlockID: c.ID, Before: c})
+			if err := a.record(model.Change{Kind: model.ChangeDelete, BlockID: c.ID, FromVersion: c.Version}, nil); err != nil {
+				return err
+			}
 			continue
 		}
 		existing[p] = true
@@ -182,7 +234,9 @@ func (a *applier) syncCells(table *model.Block, contents [][]string) error {
 			if err := a.put(cell); err != nil {
 				return err
 			}
-			a.changes = append(a.changes, model.Change{Kind: model.ChangeInsert, BlockID: cell.ID, After: cell})
+			if err := a.record(model.Change{Kind: model.ChangeInsert, BlockID: cell.ID, ToVersion: 1}, cell); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -200,7 +254,9 @@ func (a *applier) deleteChildren(parent *model.Block) error {
 		if err := a.tx.DeleteBlock(c.ID); err != nil {
 			return goerr.Wrap(err, "failed to delete child block")
 		}
-		a.changes = append(a.changes, model.Change{Kind: model.ChangeDelete, BlockID: c.ID, Before: c})
+		if err := a.record(model.Change{Kind: model.ChangeDelete, BlockID: c.ID, FromVersion: c.Version}, nil); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -254,7 +310,9 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 	if err := a.put(b); err != nil {
 		return "", err
 	}
-	a.changes = append(a.changes, model.Change{Kind: model.ChangeInsert, BlockID: id, After: b.Clone()})
+	if err := a.record(model.Change{Kind: model.ChangeInsert, BlockID: id, ToVersion: 1}, b.Clone()); err != nil {
+		return "", err
+	}
 	if b.Type == model.BlockTable {
 		if err := a.syncCells(b, op.Cells); err != nil {
 			return "", err
@@ -325,11 +383,13 @@ func (a *applier) update(op Op) error {
 	if err := a.put(b); err != nil {
 		return err
 	}
-	ch := model.Change{Kind: model.ChangeUpdate, BlockID: b.ID, Before: before, After: b.Clone()}
+	ch := model.Change{Kind: model.ChangeUpdate, BlockID: b.ID, FromVersion: before.Version, ToVersion: b.Version}
 	if op.BaseVersion > 0 && op.BaseVersion < before.Version {
 		ch.OverwroteVersion = before.Version
 	}
-	a.changes = append(a.changes, ch)
+	if err := a.record(ch, b.Clone()); err != nil {
+		return err
+	}
 
 	if b.Type == model.BlockTable {
 		if err := a.syncCells(b, nil); err != nil {
@@ -358,8 +418,7 @@ func (a *applier) delete(op Op) error {
 	if err := a.tx.DeleteBlock(b.ID); err != nil {
 		return goerr.Wrap(err, "failed to delete block")
 	}
-	a.changes = append(a.changes, model.Change{Kind: model.ChangeDelete, BlockID: b.ID, Before: b})
-	return nil
+	return a.record(model.Change{Kind: model.ChangeDelete, BlockID: b.ID, FromVersion: b.Version}, nil)
 }
 
 func (a *applier) move(op Op) error {
@@ -388,8 +447,7 @@ func (a *applier) move(op Op) error {
 	if err := a.put(b); err != nil {
 		return err
 	}
-	a.changes = append(a.changes, model.Change{Kind: model.ChangeMove, BlockID: b.ID, Before: before, After: b.Clone()})
-	return nil
+	return a.record(model.Change{Kind: model.ChangeMove, BlockID: b.ID, FromVersion: before.Version, ToVersion: b.Version}, b.Clone())
 }
 
 func (a *applier) setTitle(op Op) error {
@@ -403,8 +461,11 @@ func (a *applier) setTitle(op Op) error {
 	if title == a.paper.Title {
 		return nil
 	}
-	a.changes = append(a.changes, model.Change{Kind: model.ChangeSetTitle, TitleBefore: a.paper.Title, TitleAfter: title})
+	if err := a.record(model.Change{Kind: model.ChangeSetTitle, TitleBefore: a.paper.Title, TitleAfter: title}, nil); err != nil {
+		return err
+	}
 	a.paper.Title = title
+	a.titleChanged = true
 	return nil
 }
 
@@ -448,9 +509,10 @@ func (a *applier) apply(op Op) error {
 }
 
 // Commit applies operations to a paper atomically and records them as one
-// commit. Concurrent writers are serialised by the paper transaction; the
-// last writer wins on a block, and an overwrite of a newer version than the
-// writer based its edit on is recorded in the change.
+// commit. Each changed block gets a new version (with a stored snapshot);
+// the last writer wins on a block, and an overwrite of a newer version than
+// the writer based its edit on is recorded in the change. Watchers learn
+// about the result from the repository's change feed.
 func (u *UseCases) Commit(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, paperID model.PaperID, in CommitInput) (*CommitResult, error) {
 	if _, _, _, err := u.paperFor(ctx, p, wsID, paperID, model.RoleEditor); err != nil {
 		return nil, err
@@ -481,7 +543,7 @@ func (u *UseCases) Commit(ctx context.Context, p *model.Principal, wsID model.Wo
 
 	var result CommitResult
 	err = u.repo.RunPaperTx(ctx, wsID, paperID, func(tx interfaces.PaperTx) error {
-		a := &applier{tx: tx, paper: tx.Paper(), actor: p.Actor(), now: now, locks: locks, holder: holder, force: in.Force}
+		a := &applier{tx: tx, paper: tx.Paper(), actor: p.Actor(), now: now, locks: locks, holder: holder, force: in.Force, touched: map[model.BlockID]*model.Block{}}
 		for i, op := range in.Ops {
 			if err := a.apply(op); err != nil {
 				return goerr.Wrap(err, fmt.Sprintf("op #%d (%s) failed", i, op.Kind), goerr.V("index", i))
@@ -491,27 +553,34 @@ func (u *UseCases) Commit(ctx context.Context, p *model.Principal, wsID model.Wo
 		if len(a.changes) == 0 {
 			return nil
 		}
-		a.paper.Revision++
-		a.paper.UpdatedBy = a.actor
-		a.paper.UpdatedAt = now
-		if err := tx.PutPaper(a.paper); err != nil {
-			return goerr.Wrap(err, "failed to update paper")
+		// The paper record is written only when its title changes or its
+		// UpdatedAt has gone stale, so busy papers do not contend on it.
+		if a.titleChanged || now.Sub(a.paper.UpdatedAt) >= u.cfg.PaperTouchInterval {
+			a.paper.UpdatedBy = a.actor
+			a.paper.UpdatedAt = now
+			if err := tx.PutPaper(a.paper); err != nil {
+				return goerr.Wrap(err, "failed to update paper")
+			}
 		}
 		c := &model.Commit{
-			ID: model.NewCommitID(), WorkspaceID: wsID, PaperID: paperID, Seq: a.paper.Revision,
+			ID: model.NewCommitID(), WorkspaceID: wsID, PaperID: paperID,
 			Actor: a.actor, Message: strings.TrimSpace(in.Message), Changes: a.changes, CreatedAt: now,
 		}
 		if err := tx.AddCommit(c); err != nil {
 			return goerr.Wrap(err, "failed to add commit")
 		}
 		result.Commit = c
+		for _, id := range a.order {
+			if b := a.touched[id]; b != nil {
+				result.Blocks = append(result.Blocks, b)
+			} else {
+				result.Deleted = append(result.Deleted, id)
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if result.Commit != nil {
-		u.publish(ctx, &model.Event{Type: model.EventCommit, WorkspaceID: wsID, PaperID: paperID, Commit: result.Commit})
 	}
 	return &result, nil
 }

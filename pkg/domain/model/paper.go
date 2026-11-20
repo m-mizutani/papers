@@ -17,13 +17,14 @@ type PaperAccess struct {
 	Bindings   []RoleBinding `json:"bindings"`
 }
 
-// Paper is a canvas made of blocks. Its content is the result of applying
-// every commit in order; Revision is the sequence number of the latest one.
+// Paper is a canvas made of blocks. A paper has no global revision
+// counter: every block carries its own version history, which keeps a busy
+// paper from funnelling all writes through one record (see docs/schema.md).
+// UpdatedAt / UpdatedBy are refreshed at most once per touch interval.
 type Paper struct {
 	ID          PaperID     `json:"id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
 	Title       string      `json:"title"`
-	Revision    int64       `json:"revision"`
 	Access      PaperAccess `json:"access"`
 	CreatedBy   Actor       `json:"created_by"`
 	CreatedAt   time.Time   `json:"created_at"`
@@ -55,9 +56,6 @@ func (p *Paper) Validate() error {
 	}
 	if err := p.UpdatedBy.Validate(); err != nil {
 		return goerr.Wrap(err, "invalid paper updater")
-	}
-	if p.Revision < 0 {
-		return goerr.Wrap(ErrInvalidArgument, "revision must not be negative")
 	}
 	return validateBindings(p.Access.Bindings)
 }

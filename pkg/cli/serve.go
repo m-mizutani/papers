@@ -44,7 +44,7 @@ func cmdServe() *cli.Command {
 			logger := logging.Default()
 			logger.Info("Configuration", "server", server, "auth", auth, "repository", repo)
 
-			repository, bus, err := repo.Configure(ctx)
+			repository, err := repo.Configure(ctx)
 			if err != nil {
 				return err
 			}
@@ -54,7 +54,7 @@ func cmdServe() *cli.Command {
 				}
 			}()
 
-			uc, err := usecase.New(repository, bus, server.UseCaseConfig())
+			uc, err := usecase.New(repository, server.UseCaseConfig())
 			if err != nil {
 				return goerr.Wrap(err, "failed to build use cases")
 			}

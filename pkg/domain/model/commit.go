@@ -17,14 +17,15 @@ const (
 	ChangeSetTitle ChangeKind = "set_title"
 )
 
-// Change records the effect of one operation. Before / After are full block
-// snapshots so the history can be replayed or reverted without the original
-// request.
+// Change records the effect of one operation on one block. The block
+// contents live in the block's version history: FromVersion is the version
+// before the change (0 for an insert) and ToVersion the version after it (0
+// for a delete), so a commit stays small however large the blocks are.
 type Change struct {
-	Kind    ChangeKind `json:"kind"`
-	BlockID BlockID    `json:"block_id,omitempty"`
-	Before  *Block     `json:"before,omitempty"`
-	After   *Block     `json:"after,omitempty"`
+	Kind        ChangeKind `json:"kind"`
+	BlockID     BlockID    `json:"block_id,omitempty"`
+	FromVersion int64      `json:"from_version,omitempty"`
+	ToVersion   int64      `json:"to_version,omitempty"`
 	// OverwroteVersion is set when the writer based its edit on a version
 	// older than the one it replaced (last-writer-wins overwrite).
 	OverwroteVersion int64  `json:"overwrote_version,omitempty"`
@@ -32,33 +33,38 @@ type Change struct {
 	TitleAfter       string `json:"title_after,omitempty"`
 }
 
-// Commit is one atomic set of changes to a paper. The sequence of commits of
-// a paper is its full history; Seq equals the paper revision it produced.
+// Commit is one atomic set of changes to a paper. Commits of a paper are
+// ordered by CreatedAt (ties broken by ID, which is time ordered too).
 type Commit struct {
 	ID          CommitID    `json:"id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
 	PaperID     PaperID     `json:"paper_id"`
-	Seq         int64       `json:"seq"`
 	Actor       Actor       `json:"actor"`
 	Message     string      `json:"message,omitempty"`
 	Changes     []Change    `json:"changes"`
 	CreatedAt   time.Time   `json:"created_at"`
 }
 
-const MaxCommitMessageLength = 1024
+const (
+	MaxCommitMessageLength = 1024
+	// MaxChangesPerCommit keeps one commit within a single storage
+	// transaction: every block change writes the block and its version
+	// snapshot, and a transaction may write at most 500 records.
+	MaxChangesPerCommit = 240
+)
 
 func (c *Commit) Validate() error {
 	if c.ID == "" || c.WorkspaceID == "" || c.PaperID == "" {
 		return goerr.Wrap(ErrInvalidArgument, "commit id, workspace id and paper id are required")
-	}
-	if c.Seq < 1 {
-		return goerr.Wrap(ErrInvalidArgument, "commit seq must be positive")
 	}
 	if err := c.Actor.Validate(); err != nil {
 		return goerr.Wrap(err, "invalid commit actor")
 	}
 	if len(c.Changes) == 0 {
 		return goerr.Wrap(ErrInvalidArgument, "commit has no changes")
+	}
+	if len(c.Changes) > MaxChangesPerCommit {
+		return goerr.Wrap(ErrInvalidArgument, "commit has too many changes", goerr.V("count", len(c.Changes)), goerr.V("max", MaxChangesPerCommit))
 	}
 	if len(c.Message) > MaxCommitMessageLength {
 		return goerr.Wrap(ErrInvalidArgument, "commit message is too long")

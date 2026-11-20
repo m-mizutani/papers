@@ -21,11 +21,10 @@ func TestCreatePaperWithMarkdown(t *testing.T) {
 
 	view := gt.R1(e.uc.CreatePaper(ctx, owner, ws, usecase.CreatePaperInput{Title: "Plan", Markdown: "# Goal\n\n- a\n- b"})).NoError(t)
 	gt.Equal(t, view.Paper.Title, "Plan")
-	gt.Equal(t, view.Paper.Revision, int64(1))
 	gt.Equal(t, view.Role, model.RoleOwner)
 	gt.A(t, view.Blocks).Length(3)
 
-	commits := gt.R1(e.uc.ListCommits(ctx, owner, ws, view.Paper.ID, 0, 0)).NoError(t)
+	commits := gt.R1(e.uc.ListCommits(ctx, owner, ws, view.Paper.ID, "", 0)).NoError(t)
 	gt.A(t, commits).Length(1)
 	gt.Equal(t, commits[0].Message, "Initial content")
 

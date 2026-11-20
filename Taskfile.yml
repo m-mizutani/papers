@@ -20,6 +20,12 @@ tasks:
     cmds:
       - go run . serve --no-authn --ws-origin localhost:5173
 
+  demo:
+    desc: Build the in-browser demo (no backend) into frontend/dist-demo
+    dir: frontend
+    cmds:
+      - pnpm build:demo
+
   dev:frontend:
     desc: Run the Vite dev server (proxies /api and /mcp to :8080)
     dir: frontend
@@ -32,6 +38,21 @@ tasks:
       - go vet ./...
       - go test ./...
       - task: test:frontend
+
+  test:firestore:
+    desc: Run the repository contract tests against a Firestore emulator in Docker
+    cmds:
+      - |
+        docker rm -f papers-firestore-emulator >/dev/null 2>&1 || true
+        docker run -d --name papers-firestore-emulator -p 28615:28615 \
+          google/cloud-sdk:emulators gcloud emulators firestore start --host-port=0.0.0.0:28615
+        trap 'docker rm -f papers-firestore-emulator >/dev/null 2>&1' EXIT
+        i=0
+        until curl -s http://127.0.0.1:28615/ >/dev/null 2>&1; do
+          i=$((i+1)); [ "$i" -ge 90 ] && { echo "emulator did not start" >&2; exit 1; }
+          sleep 1
+        done
+        FIRESTORE_EMULATOR_HOST=127.0.0.1:28615 TEST_FIRESTORE_PROJECT_ID=papers-test go test ./pkg/repository/... -count=1
 
   test:frontend:
     dir: frontend

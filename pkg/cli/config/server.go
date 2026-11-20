@@ -21,6 +21,7 @@ type Server struct {
 	lockTTL           time.Duration
 	workspaceCreation string
 	maxOpsPerCommit   int
+	paperTouch        time.Duration
 }
 
 func (x *Server) Flags() []cli.Flag {
@@ -53,7 +54,12 @@ func (x *Server) Flags() []cli.Flag {
 		},
 		&cli.IntFlag{
 			Name: "max-ops-per-commit", Category: "editing", Usage: "Upper bound of operations in one commit",
-			Value: 500, Sources: cli.EnvVars("PAPERS_MAX_OPS_PER_COMMIT"), Destination: &x.maxOpsPerCommit,
+			Value: 200, Sources: cli.EnvVars("PAPERS_MAX_OPS_PER_COMMIT"), Destination: &x.maxOpsPerCommit,
+		},
+		&cli.DurationFlag{
+			Name: "paper-touch-interval", Category: "editing",
+			Usage: "Minimum interval between refreshes of a paper's updated time by commits (keeps the paper record off the write hot path)",
+			Value: time.Minute, Sources: cli.EnvVars("PAPERS_PAPER_TOUCH_INTERVAL"), Destination: &x.paperTouch,
 		},
 	}
 }
@@ -76,9 +82,10 @@ func (x *Server) WebSocketOrigins() []string { return x.wsOrigins }
 
 func (x *Server) UseCaseConfig() usecase.Config {
 	return usecase.Config{
-		LockTTL:           x.lockTTL,
-		WorkspaceCreation: usecase.WorkspaceCreation(x.workspaceCreation),
-		MaxOpsPerCommit:   x.maxOpsPerCommit,
+		LockTTL:            x.lockTTL,
+		WorkspaceCreation:  usecase.WorkspaceCreation(x.workspaceCreation),
+		MaxOpsPerCommit:    x.maxOpsPerCommit,
+		PaperTouchInterval: x.paperTouch,
 	}
 }
 

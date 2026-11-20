@@ -44,6 +44,7 @@ func (s *Server) routeAPI(r chi.Router) {
 			r.Get("/commits", s.handleListCommits)
 			r.Post("/commits", s.handleCommit)
 			r.Get("/markdown", s.handleMarkdown)
+			r.Get("/blocks/{block}/versions", s.handleBlockVersions)
 			r.Put("/blocks/{block}/lock", s.handleLock)
 			r.Delete("/blocks/{block}/lock", s.handleUnlock)
 			r.Get("/live", s.handleLive)
@@ -381,26 +382,28 @@ func (s *Server) handleUpdateAccess(w http.ResponseWriter, r *http.Request) {
 	writeJSON(r.Context(), w, http.StatusOK, p)
 }
 
+func parseLimit(r *http.Request) (int, error) {
+	v := r.URL.Query().Get("limit")
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, goerr.Wrap(model.ErrInvalidArgument, "invalid limit")
+	}
+	return n, nil
+}
+
+// handleListCommits returns commits newest first. Pass the last commit ID
+// of a page as ?before= to get the next (older) page.
 func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	after, limit := int64(0), 0
-	if v := q.Get("after"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			writeError(r.Context(), w, goerr.Wrap(model.ErrInvalidArgument, "invalid after"))
-			return
-		}
-		after = n
+	limit, err := parseLimit(r)
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
 	}
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			writeError(r.Context(), w, goerr.Wrap(model.ErrInvalidArgument, "invalid limit"))
-			return
-		}
-		limit = n
-	}
-	commits, err := s.uc.ListCommits(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), after, limit)
+	before := model.CommitID(r.URL.Query().Get("before"))
+	commits, err := s.uc.ListCommits(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), before, limit)
 	if err != nil {
 		writeError(r.Context(), w, err)
 		return
@@ -411,6 +414,23 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"commits": commits})
 }
 
+func (s *Server) handleBlockVersions(w http.ResponseWriter, r *http.Request) {
+	limit, err := parseLimit(r)
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	vs, err := s.uc.ListBlockVersions(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), model.BlockID(chi.URLParam(r, "block")), limit)
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	if vs == nil {
+		vs = []*model.Block{}
+	}
+	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"versions": vs})
+}
+
 type commitRequest struct {
 	Ops          []usecase.Op `json:"ops"`
 	Message      string       `json:"message"`
@@ -419,8 +439,10 @@ type commitRequest struct {
 }
 
 type commitResponse struct {
-	Commit *model.Commit `json:"commit"`
-	Paper  *model.Paper  `json:"paper"`
+	Commit  *model.Commit   `json:"commit"`
+	Paper   *model.Paper    `json:"paper"`
+	Blocks  []*model.Block  `json:"blocks"`
+	Deleted []model.BlockID `json:"deleted"`
 }
 
 func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
@@ -436,7 +458,14 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 		writeError(r.Context(), w, err)
 		return
 	}
-	writeJSON(r.Context(), w, http.StatusOK, commitResponse{Commit: res.Commit, Paper: res.Paper})
+	resp := commitResponse{Commit: res.Commit, Paper: res.Paper, Blocks: res.Blocks, Deleted: res.Deleted}
+	if resp.Blocks == nil {
+		resp.Blocks = []*model.Block{}
+	}
+	if resp.Deleted == nil {
+		resp.Deleted = []model.BlockID{}
+	}
+	writeJSON(r.Context(), w, http.StatusOK, resp)
 }
 
 func (s *Server) handleMarkdown(w http.ResponseWriter, r *http.Request) {

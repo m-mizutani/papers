@@ -1,12 +1,12 @@
 # papers 設計メモ
 
-最終更新: 2026-11-20 / 初期実装時点
+最終更新: 2026-11-21 / Firestore スキーマ反映
 
 ## コンセプト
 
 - **paper** = 人間と AI が共存して知識を積み上げるキャンバス。Wiki / Notion に近いが、主な書き手は AI（API / MCP）で、人間は読む・直す・指示する側。
 - **block** = 編集とロックの単位。Markdown 相当（見出し・段落・リスト・ToDo・引用・コールアウト・コード・区切り線・画像・表）に加え、AI だけが書く **リッチブロック**（`mermaid` / `svg` / `html`）を持つ。人間の UI はリッチブロックを描画するだけで編集手段を持たない。
-- **commit** = 複数 op のアトミックな適用。paper のリビジョン = 最新 commit の `seq`。変更前後のブロックのスナップショットを残すので、履歴の閲覧と将来の revert ができる。
+- **commit** = 複数 op のアトミックな適用。各ブロックは自分のバージョン履歴（スナップショット）を持ち、commit は「どのブロックをどのバージョンからどのバージョンにしたか」を記録する。ペーパー全体のリビジョン番号は持たない。
 - **workspace** で paper を束ね、UI で切り替える。
 
 ## データモデル
@@ -15,7 +15,8 @@
 Workspace ─┬─ bindings: [RoleBinding]          (subject → role)
            └─ Paper ─┬─ access: {restricted, bindings}
                      ├─ Block (parent_id, order, type, content, props, version)
-                     ├─ Commit (seq, actor, message, changes[before/after])
+                     │    └─ versions/{n}  (snapshot per version, kept after delete)
+                     ├─ Commit (actor, message, changes[block, from→to version])
                      └─ BlockLock (block_id, holder_key, holder, expires_at)
 User ── Identity (provider, subject)   ※ user_id は papers が発行
 Group (members)      APIToken (kind: personal|agent, scope: read|write)
@@ -32,7 +33,7 @@ Group (members)      APIToken (kind: personal|agent, scope: read|write)
 | ソフトロック | ブロックをクリックすると WebSocket 経由でロック取得（TTL 30 秒、1/3 TTL ごとのハートビートで延長、切断で解放）。他者には「◯◯が編集中」と表示 |
 | 書き込み制御 | 他人がロック中のブロックへの commit は `409 locked`。`force: true` で上書き可能（UI の「それでも編集する」、MCP は「ユーザーが明示したときのみ」とガイド） |
 | 後勝ち | ロックを越えた書き込みは last-writer-wins。`base_version` が古いと `overwrote_version` を記録し、UI で通知・履歴に警告を表示 |
-| 配信 | commit / lock / unlock / access_changed を EventBus でペーパー購読者へ配信。クライアントは `seq` の飛びを検知したら再取得 |
+| 配信 | ブロック・ロック・ペーパーの変更を、ストレージの変更フィード（Firestore リスナー）から購読者へ配信。イベントは結果の状態を運び、クライアントはバージョン比較で冪等に適用する |
 
 ロック保持者は「接続」単位（`holder_key` = WebSocket の connection id、API ならトークン ID）。同じユーザーの別タブは別の保持者として扱う。
 
@@ -54,7 +55,7 @@ Group (members)      APIToken (kind: personal|agent, scope: read|write)
 
 - REST: `/api/v1/...`（ワークスペース、ペーパー、`POST .../commits`、履歴、ロック、Markdown 書き出し、検索、トークン、グループ）
 - WebSocket: `GET .../papers/{id}/live`（プロトコルは `pkg/controller/http/live.go` 冒頭のコメント）
-- MCP（Streamable HTTP, stateless）: `papers_guide` / `papers_list_workspaces` / `papers_list_papers` / `papers_search` / `papers_read_paper` / `papers_create_paper` / `papers_commit` / `papers_history`。
+- MCP（Streamable HTTP, stateless）: `papers_guide` / `papers_list_workspaces` / `papers_list_papers` / `papers_search` / `papers_read_paper` / `papers_create_paper` / `papers_commit` / `papers_history` / `papers_block_history`。
   `insert_markdown` op を使うと AI は Markdown 1 本で大量に書ける（```mermaid / ```svg / ```html フェンスはリッチブロック、GFM の表は表ブロックになる）。
 
 ## デプロイ: Cloud Run + LB と WebSocket
@@ -63,31 +64,23 @@ Group (members)      APIToken (kind: personal|agent, scope: read|write)
 
 - Cloud Run は WebSocket をサポートし、外部 HTTPS LB（サーバーレス NEG）経由でも動く。
 - 接続はリクエストタイムアウト（最大 60 分）で必ず切れる → `--timeout=3600` を設定し、クライアントは自動再接続＋再同期（実装済み：指数バックオフ、`hello` 受信時に再取得）。
-- session affinity はベストエフォート → 別インスタンスに繋がっても問題ないよう、状態はすべて共有バックエンド（DB + EventBus）に置く。**インスタンス間のイベント配信手段が必須**（下記 DB 選定とセット）。
+- session affinity はベストエフォート → 別インスタンスに繋がっても問題ないよう、状態はすべて共有バックエンドに置く。インスタンス間のイベント配信は Firestore のリスナーで行う（下記）。
 - WebSocket 接続中はインスタンスが課金対象（リクエスト中扱い）。`--concurrency` を大きめに、`--min-instances=1` 推奨。
 - Origin 検証はライブラリ側で Host と一致を確認。LB 経由でも Host は保持される。
 
-## リポジトリ（DB）選定 — 未決
+## リポジトリ（DB）: Firestore に決定
 
-インターフェース（`interfaces.Repository` / `PaperTx` / `EventBus`）は両方式で実装できる形にしてあり、現状はメモリ実装のみ。決める必要があるのは「どれを本番実装にするか」。
+2026-11-21 決定。KVS（Firestore）を前提にスキーマを組んだ。詳細は [schema.md](schema.md)。
 
-| 観点 | Firestore | AlloyDB（または Cloud SQL for PostgreSQL） |
-|---|---|---|
-| コスト | 従量課金・ゼロスケール。小〜中規模なら非常に安い | 常時起動。AlloyDB は最小構成でも月 $200 以上規模、Cloud SQL は小さいインスタンスならかなり安い |
-| トランザクション | ペーパー単位の read-modify-write は可能。ただし **1 ドキュメントへの持続書き込みは約 1 回/秒が目安**。現設計の `paper.revision` カウンタはホットドキュメントになりうる | 行ロックで高頻度の commit も問題なし |
-| リアルタイム配信 | **snapshot listener がそのまま EventBus になる**（各インスタンスが購読中ペーパーを listen） | `LISTEN/NOTIFY` で実装可能（インスタンスごとに常時接続が 1 本必要）。または Pub/Sub |
-| 検索・AI 連携 | 全文検索なし。ベクトル検索はあり | 全文検索（tsvector）、pgvector / ScaNN でセマンティック検索。「AI が知識を探す」用途に強い |
-| 一覧の認可フィルタ | アプリ側でフィルタ | 同上（RLS も選択肢） |
-| 運用 | ほぼ不要、hecatoncheires と同じ流儀で実装可能 | マイグレーション管理・接続管理が必要 |
+- 履歴の単位を「ブロック」にした。ブロックごとにバージョンとスナップショットを持ち、commit はそれを参照する。ペーパー全体のリビジョンカウンタは持たない（1 ドキュメントへの書き込み上限を避けるため）。
+- リアルタイム配信は Firestore のリスナーで行い、アプリ側の pub/sub は持たない。
+- 弱点は全文検索。これは別の仕組み（Vertex AI Search / ベクトル検索など）で補う。
 
-所感:
-- **小さく始めて安く運用したい** → Firestore。ただし commit 頻度を抑えるため、ブロック単位のバージョンを主にして paper 全体のカウンタを避ける（commit の順序を ULID + ブロックバージョンで扱う）などの調整が必要。
-- **「AI が知識を探して書く」ことを主機能に据える** → PostgreSQL 系。検索・ベクトル・集計がネイティブで、commit ログもリレーショナルに扱いやすい。最初は Cloud SQL、規模が出たら AlloyDB へ移行するのが現実的（ワイヤ互換）。
-- 個人的な推奨は **PostgreSQL 系（Cloud SQL から開始）**。理由は検索・ベクトルが製品の中心機能になりそうなこと、commit のホットスポット問題がないこと、`LISTEN/NOTIFY` で配信も完結すること。
+比較の経緯: PostgreSQL 系は検索と高頻度の書き込みに強いが常時コストがかかる。Firestore はゼロスケールで安く、リスナーでインスタンス間の配信が完結する。ホットスポットの問題はブロック単位の履歴にすることで回避できると判断した。
 
 ## 今後のタスク
 
-1. 本番リポジトリ実装（上記の決定後）と、それに対応する EventBus 実装。`runRepositoryTest` に追加すれば既存の契約テストがそのまま走る。
+1. Firestore エミュレータで契約テストを回す（`task test:firestore`）。本番プロジェクトにインデックスと TTL を設定する。
 2. 検索のインデックス化（現状は全走査）とセマンティック検索。
 3. Rego による組織ポリシーのフック。
 4. 履歴からの revert / 差分表示。

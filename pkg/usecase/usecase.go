@@ -13,7 +13,6 @@ import (
 
 	"github.com/m-mizutani/papers/pkg/domain/interfaces"
 	"github.com/m-mizutani/papers/pkg/domain/model"
-	"github.com/m-mizutani/papers/pkg/utils/errutil"
 )
 
 // WorkspaceCreation decides who may create workspaces.
@@ -31,6 +30,10 @@ type Config struct {
 	WorkspaceCreation WorkspaceCreation
 	// MaxOpsPerCommit bounds one commit request.
 	MaxOpsPerCommit int
+	// PaperTouchInterval is how stale a paper's UpdatedAt may get before a
+	// commit refreshes it. Refreshing on every commit would make the paper
+	// record a write hotspot (see docs/schema.md).
+	PaperTouchInterval time.Duration
 }
 
 func (c Config) validate() error {
@@ -45,13 +48,15 @@ func (c Config) validate() error {
 	if c.MaxOpsPerCommit <= 0 {
 		return goerr.New("max ops per commit must be positive")
 	}
+	if c.PaperTouchInterval < 0 {
+		return goerr.New("paper touch interval must not be negative")
+	}
 	return nil
 }
 
 // UseCases bundles the application services.
 type UseCases struct {
 	repo interfaces.Repository
-	bus  interfaces.EventBus
 	cfg  Config
 	now  func() time.Time
 }
@@ -63,26 +68,18 @@ func WithClock(now func() time.Time) Option {
 	return func(u *UseCases) { u.now = now }
 }
 
-func New(repo interfaces.Repository, bus interfaces.EventBus, cfg Config, opts ...Option) (*UseCases, error) {
-	if repo == nil || bus == nil {
-		return nil, goerr.New("repository and event bus are required")
+func New(repo interfaces.Repository, cfg Config, opts ...Option) (*UseCases, error) {
+	if repo == nil {
+		return nil, goerr.New("repository is required")
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	u := &UseCases{repo: repo, bus: bus, cfg: cfg, now: func() time.Time { return time.Now().UTC() }}
+	u := &UseCases{repo: repo, cfg: cfg, now: func() time.Time { return time.Now().UTC() }}
 	for _, opt := range opts {
 		opt(u)
 	}
 	return u, nil
-}
-
-// publish delivers an event best-effort: a failed publish never fails the
-// write that caused it, because subscribers resynchronise from commit seq.
-func (u *UseCases) publish(ctx context.Context, ev *model.Event) {
-	if err := u.bus.Publish(ctx, ev); err != nil {
-		errutil.Handle(ctx, goerr.Wrap(err, "failed to publish event", goerr.V("type", ev.Type), goerr.V("paper_id", ev.PaperID)), "failed to publish event")
-	}
 }
 
 func requirePrincipal(p *model.Principal) error {

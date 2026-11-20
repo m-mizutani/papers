@@ -102,5 +102,12 @@ export const en: Record<MsgKey, string> = {
   updated: 'Updated {when}',
   demoMode: 'Demo: data lives in this tab and resets on reload',
   demoHint: 'Alice (a person) and Claude (an AI agent) edit this paper every few seconds. Click a block to edit it: they will see your lock and leave that block alone.',
+  change_insert: 'Added',
+  change_update: 'Edited',
+  change_delete: 'Deleted',
+  change_move: 'Moved',
+  changeTitle: 'Renamed to “{title}”',
+  deletedBlock: '(deleted block)',
+  olderCommits: 'Show older changes',
   error: 'Something went wrong: {message}',
 }

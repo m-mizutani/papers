@@ -116,10 +116,13 @@ type BlockProps struct {
 }
 
 const (
-	MaxIndent        = 6
-	MaxHeadingLevel  = 3
-	MaxTableRows     = 200
-	MaxTableCols     = 26
+	MaxIndent       = 6
+	MaxHeadingLevel = 3
+	MaxTableRows    = 100
+	MaxTableCols    = 20
+	// MaxTableCells bounds rows x cols so that creating a table fits in
+	// one commit (see MaxChangesPerCommit).
+	MaxTableCells    = 200
 	MaxContentLength = 256 * 1024
 	MaxRichHeight    = 4000
 )
@@ -162,7 +165,7 @@ func (p BlockProps) validate(t BlockType) error {
 			return goerr.Wrap(ErrInvalidArgument, "indent out of range", goerr.V("indent", p.Indent))
 		}
 	case BlockTable:
-		if p.Rows < 1 || p.Rows > MaxTableRows || p.Cols < 1 || p.Cols > MaxTableCols {
+		if p.Rows < 1 || p.Rows > MaxTableRows || p.Cols < 1 || p.Cols > MaxTableCols || p.Rows*p.Cols > MaxTableCells {
 			return goerr.Wrap(ErrInvalidArgument, "table shape out of range", goerr.V("rows", p.Rows), goerr.V("cols", p.Cols))
 		}
 	case BlockTableCell:

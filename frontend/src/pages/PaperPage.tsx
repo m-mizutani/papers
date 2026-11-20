@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError, api } from '../api/client'
 import { LiveConnection } from '../api/live'
-import { actorLabel, applyCommit, applyLock, applyUnlock, initState, listNumbers, topLevel, type PaperState } from '../api/paperState'
-import type { Block, BlockLock, Commit, Op, PaperEvent } from '../api/types'
+import { actorLabel, applyBlocks, applyLock, applyPaper, applyUnlock, initState, listNumbers, topLevel, type PaperState } from '../api/paperState'
+import type { Block, BlockLock, Op, Paper, PaperEvent } from '../api/types'
 import { BlockView, type BlockContext, type EditingState } from '../components/BlockView'
 import { CONTINUING } from '../components/blockTypes'
 import { HistoryPanel } from '../components/HistoryPanel'
@@ -59,20 +59,19 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     }), RECENT_MS)
   }, [])
 
-  const receiveCommit = useCallback((commit: Commit, own: boolean) => {
+  // Applies resulting block states (from our own commit or the change
+  // feed). Changes made by others are highlighted for a moment.
+  const receive = useCallback((put: Block[], deleted: string[], paper: Paper | undefined, own: boolean) => {
     const cur = stateRef.current
     if (!cur) return
-    const { state: next, outcome } = applyCommit(cur, commit)
-    if (outcome === 'gap') {
-      void load()
-      return
-    }
-    if (outcome !== 'applied') return
+    let next = applyBlocks(cur, put, deleted)
+    if (paper) next = applyPaper(next, paper)
+    if (next === cur) return
     stateRef.current = next
     setState(next)
-    if (!editingRef.current) setTitle(next.paper.title)
-    if (!own) markRecent(commit.changes.map((c) => c.block_id ?? '').filter(Boolean))
-  }, [load, markRecent])
+    if (paper && !editingRef.current) setTitle(paper.title)
+    if (!own) markRecent(put.filter((b) => next.blocks.get(b.id) === b).map((b) => b.id))
+  }, [markRecent])
 
   // Initial load and live connection.
   useEffect(() => {
@@ -91,17 +90,20 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
         const cur = stateRef.current
         if (!cur) return
         switch (ev.type) {
-          case 'commit':
-            if (ev.commit) receiveCommit(ev.commit, false)
+          case 'block_put':
+            if (ev.block) receive([ev.block], [], undefined, false)
+            break
+          case 'block_deleted':
+            if (ev.block_id) receive([], [ev.block_id], undefined, false)
+            break
+          case 'paper_updated':
+            if (ev.paper) receive([], [], ev.paper, false)
             break
           case 'lock':
             if (ev.lock) setState((s) => (s ? applyLock(s, ev.lock as BlockLock) : s))
             break
           case 'unlock':
             if (ev.block_id) setState((s) => (s ? applyUnlock(s, ev.block_id as string, ev.holder_key ?? '') : s))
-            break
-          case 'access_changed':
-            void load()
             break
         }
       },
@@ -123,7 +125,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     })
     connRef.current = conn
     return () => conn.close()
-  }, [ws, paperId, load, receiveCommit, t])
+  }, [ws, paperId, load, receive, t])
 
   // Re-evaluate lock expiry.
   useEffect(() => {
@@ -135,7 +137,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     try {
       const res = await api.commit(ws, paperId, ops, { message, force, connectionId: myKeyRef.current })
       if (res.commit) {
-        receiveCommit(res.commit, true)
+        receive(res.blocks, res.deleted, res.paper, true)
         if (res.commit.changes.some((c) => (c.overwrote_version ?? 0) > 0)) setNotice(t('overwroteNotice'))
         onChanged()
       }
@@ -150,7 +152,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
       }
       return false
     }
-  }, [ws, paperId, receiveCommit, onChanged, t])
+  }, [ws, paperId, receive, onChanged, t])
 
   const startEdit = useCallback((b: Block, force = false) => {
     const prev = editingRef.current
@@ -305,7 +307,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     <>
       <div className="paper-bar">
         <span className={`status ${status === 'open' ? 'open' : ''}`}>{status === 'open' ? t('connectionOpen') : t('connectionLost')}</span>
-        <span>{t('revision', { n: state.paper.revision })}</span>
+        <span>{t('updated', { when: new Date(state.paper.updated_at).toLocaleString() })}</span>
         {!canEdit && <span>{t('readOnly')}</span>}
         <span className="spacer" />
         <button type="button" className="btn btn-quiet" onClick={() => setPanel(panel === 'history' ? null : 'history')}>{t('history')}</button>
@@ -345,7 +347,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
         )}
       </article>
 
-      {panel === 'history' && <HistoryPanel ws={ws} paper={paperId} revision={state.paper.revision} onClose={() => setPanel(null)} />}
+      {panel === 'history' && <HistoryPanel ws={ws} paper={paperId} state={state} onClose={() => setPanel(null)} />}
       {panel === 'share' && <SharePanel ws={ws} paper={state.paper} onClose={() => setPanel(null)} onSaved={() => void load()} />}
     </>
   )

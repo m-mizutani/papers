@@ -100,6 +100,13 @@ export const keys = {
   updated: 'updated',
   demoMode: 'demoMode',
   demoHint: 'demoHint',
+  change_insert: 'change_insert',
+  change_update: 'change_update',
+  change_delete: 'change_delete',
+  change_move: 'change_move',
+  changeTitle: 'changeTitle',
+  deletedBlock: 'deletedBlock',
+  olderCommits: 'olderCommits',
   error: 'error',
 } as const
 

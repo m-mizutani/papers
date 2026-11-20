@@ -1,8 +1,8 @@
-import type { Block, BlockLock, Commit, Paper } from './types'
+import type { Block, BlockLock, Paper } from './types'
 
-// Client-side model of an open paper. Commits arrive over the WebSocket in
-// sequence order; a gap means an event was missed and the caller must
-// reload the paper.
+// Client-side model of an open paper. Changes arrive as resulting states
+// (from a commit response or the change feed) and are applied
+// idempotently: a block older than the copy we hold, by version, is ignored.
 
 export interface PaperState {
   paper: Paper
@@ -18,37 +18,23 @@ export function initState(paper: Paper, blocks: Block[], locks: BlockLock[]): Pa
   }
 }
 
-export type CommitOutcome = 'applied' | 'stale' | 'gap'
-
-export function applyCommit(state: PaperState, commit: Commit): { state: PaperState; outcome: CommitOutcome } {
-  if (commit.seq <= state.paper.revision) return { state, outcome: 'stale' }
-  if (commit.seq !== state.paper.revision + 1) return { state, outcome: 'gap' }
-
-  const blocks = new Map(state.blocks)
-  let title = state.paper.title
-  for (const ch of commit.changes) {
-    switch (ch.kind) {
-      case 'insert':
-      case 'update':
-      case 'move':
-        if (ch.after) blocks.set(ch.after.id, ch.after)
-        break
-      case 'delete':
-        if (ch.block_id) blocks.delete(ch.block_id)
-        break
-      case 'set_title':
-        title = ch.title_after ?? title
-        break
-    }
+/** Applies block states and deletions. Returns the same object if nothing changed. */
+export function applyBlocks(state: PaperState, put: Block[], deleted: string[] = []): PaperState {
+  let blocks: Map<string, Block> | undefined
+  const writable = () => (blocks ??= new Map(state.blocks))
+  for (const b of put) {
+    const cur = (blocks ?? state.blocks).get(b.id)
+    if (cur && cur.version >= b.version) continue
+    writable().set(b.id, b)
   }
-  return {
-    state: {
-      ...state,
-      blocks,
-      paper: { ...state.paper, title, revision: commit.seq, updated_by: commit.actor, updated_at: commit.created_at },
-    },
-    outcome: 'applied',
+  for (const id of deleted) {
+    if ((blocks ?? state.blocks).has(id)) writable().delete(id)
   }
+  return blocks ? { ...state, blocks } : state
+}
+
+export function applyPaper(state: PaperState, paper: Paper): PaperState {
+  return { ...state, paper }
 }
 
 export function applyLock(state: PaperState, lock: BlockLock): PaperState {

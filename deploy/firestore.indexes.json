@@ -1,0 +1,32 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "blocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ParentID", "order": "ASCENDING" },
+        { "fieldPath": "Order", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "blocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ParentID", "order": "ASCENDING" },
+        { "fieldPath": "Order", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "blocks",
+      "fieldPath": "Content",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "versions",
+      "fieldPath": "Content",
+      "indexes": []
+    }
+  ]
+}

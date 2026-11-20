@@ -27,6 +27,7 @@ Model
 - Every change is a commit (an atomic list of ops). Read a paper before editing it and reference blocks by id.
 - Humans soft-lock the block they are editing. Writing to a locked block fails with "block is being edited"; wait, edit something else, or ask the user. Use force only when the user explicitly asks you to override.
 - Concurrent writes are last-writer-wins per block. Pass base_version (the version you read) on update so overwrites are recorded.
+- Every block keeps its own version history (papers_block_history); a paper's history is its list of commits (papers_history).
 
 Block types (type: props)
 - paragraph, quote: inline Markdown in content (**bold**, *italic*, ` + "`code`" + `, [link](url)).
@@ -109,7 +110,6 @@ type mcpWorkspaceIn struct {
 type mcpPaperSummary struct {
 	ID        model.PaperID `json:"id"`
 	Title     string        `json:"title"`
-	Revision  int64         `json:"revision"`
 	Role      model.Role    `json:"role"`
 	UpdatedAt string        `json:"updated_at"`
 	UpdatedBy string        `json:"updated_by"`
@@ -155,7 +155,6 @@ type mcpBlock struct {
 type mcpPaperOut struct {
 	ID       model.PaperID `json:"id"`
 	Title    string        `json:"title"`
-	Revision int64         `json:"revision"`
 	Role     model.Role    `json:"role"`
 	Blocks   []mcpBlock    `json:"blocks"`
 	Markdown string        `json:"markdown"`
@@ -177,8 +176,10 @@ type mcpCommitIn struct {
 }
 
 type mcpCommitOut struct {
-	Revision int64          `json:"revision"`
 	CommitID model.CommitID `json:"commit_id,omitempty"`
+	// Versions maps each changed block to its new version; pass it as
+	// base_version on the next update of that block.
+	Versions map[model.BlockID]int64 `json:"versions,omitempty"`
 	// Inserted lists the ids of blocks created by the commit, in order.
 	Inserted []model.BlockID `json:"inserted,omitempty"`
 	// Overwritten lists blocks whose newer version this commit replaced.
@@ -188,7 +189,7 @@ type mcpCommitOut struct {
 type mcpHistoryIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
 	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
-	After       int64             `json:"after,omitempty" jsonschema:"return commits with seq greater than this"`
+	Before      model.CommitID    `json:"before,omitempty" jsonschema:"commit id from the previous page; omit for the newest commits"`
 	Limit       int               `json:"limit,omitempty" jsonschema:"max commits (default 50)"`
 }
 
@@ -200,6 +201,26 @@ type mcpCommitSummary struct {
 	Message string          `json:"message,omitempty"`
 	Changes int             `json:"changes"`
 	At      string          `json:"at"`
+}
+
+type mcpBlockHistoryIn struct {
+	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
+	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
+	BlockID     model.BlockID     `json:"block_id" jsonschema:"block id"`
+	Limit       int               `json:"limit,omitempty" jsonschema:"max versions (default 200)"`
+}
+
+type mcpBlockVersion struct {
+	Version int64            `json:"version"`
+	Type    model.BlockType  `json:"type"`
+	Content string           `json:"content,omitempty"`
+	Props   model.BlockProps `json:"props"`
+	By      string           `json:"by"`
+	At      string           `json:"at"`
+}
+
+type mcpBlockHistoryOut struct {
+	Versions []mcpBlockVersion `json:"versions"`
 }
 
 type mcpHistoryOut struct {
@@ -246,7 +267,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			out := mcpPapersOut{Papers: []mcpPaperSummary{}}
 			for _, ps := range list {
 				out.Papers = append(out.Papers, mcpPaperSummary{
-					ID: ps.Paper.ID, Title: ps.Paper.Title, Revision: ps.Paper.Revision, Role: ps.Role,
+					ID: ps.Paper.ID, Title: ps.Paper.Title, Role: ps.Role,
 					UpdatedAt: ps.Paper.UpdatedAt.Format(timeLayout), UpdatedBy: actorLabel(ps.Paper.UpdatedBy),
 				})
 			}
@@ -280,7 +301,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			for _, l := range v.Locks {
 				editing[l.BlockID] = actorLabel(l.Holder)
 			}
-			out := mcpPaperOut{ID: v.Paper.ID, Title: v.Paper.Title, Revision: v.Paper.Revision, Role: v.Role, Blocks: []mcpBlock{}, Markdown: md}
+			out := mcpPaperOut{ID: v.Paper.ID, Title: v.Paper.Title, Role: v.Role, Blocks: []mcpBlock{}, Markdown: md}
 			for _, b := range v.Blocks {
 				out.Blocks = append(out.Blocks, mcpBlock{
 					ID: b.ID, ParentID: b.ParentID, Type: b.Type, Content: b.Content, Props: b.Props,
@@ -296,7 +317,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			if err != nil {
 				return mcpPaperSummary{}, err
 			}
-			return mcpPaperSummary{ID: v.Paper.ID, Title: v.Paper.Title, Revision: v.Paper.Revision, Role: v.Role,
+			return mcpPaperSummary{ID: v.Paper.ID, Title: v.Paper.Title, Role: v.Role,
 				UpdatedAt: v.Paper.UpdatedAt.Format(timeLayout), UpdatedBy: actorLabel(v.Paper.UpdatedBy)}, nil
 		})
 
@@ -306,34 +327,54 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			if err != nil {
 				return mcpCommitOut{}, err
 			}
-			out := mcpCommitOut{Revision: res.Paper.Revision}
-			if res.Commit != nil {
-				out.CommitID = res.Commit.ID
-				for _, ch := range res.Commit.Changes {
-					if ch.Kind == model.ChangeInsert && ch.After != nil && ch.After.ParentID == "" {
-						out.Inserted = append(out.Inserted, ch.BlockID)
-					}
-					if ch.OverwroteVersion > 0 {
-						out.Overwritten = append(out.Overwritten, ch.BlockID)
-					}
+			out := mcpCommitOut{}
+			if res.Commit == nil {
+				return out, nil
+			}
+			out.CommitID = res.Commit.ID
+			out.Versions = map[model.BlockID]int64{}
+			topLevel := map[model.BlockID]bool{}
+			for _, b := range res.Blocks {
+				out.Versions[b.ID] = b.Version
+				topLevel[b.ID] = b.ParentID == ""
+			}
+			for _, ch := range res.Commit.Changes {
+				if ch.Kind == model.ChangeInsert && topLevel[ch.BlockID] {
+					out.Inserted = append(out.Inserted, ch.BlockID)
+				}
+				if ch.OverwroteVersion > 0 {
+					out.Overwritten = append(out.Overwritten, ch.BlockID)
 				}
 			}
 			return out, nil
 		})
 
-	addTool(server, "papers_history", "List a paper's commits (who changed what, when).",
+	addTool(server, "papers_block_history", "List the versions of one block, newest first (also works for deleted blocks).",
+		func(ctx context.Context, p *model.Principal, in mcpBlockHistoryIn) (mcpBlockHistoryOut, error) {
+			vs, err := s.uc.ListBlockVersions(ctx, p, in.WorkspaceID, in.PaperID, in.BlockID, in.Limit)
+			if err != nil {
+				return mcpBlockHistoryOut{}, err
+			}
+			out := mcpBlockHistoryOut{Versions: []mcpBlockVersion{}}
+			for _, b := range vs {
+				out.Versions = append(out.Versions, mcpBlockVersion{Version: b.Version, Type: b.Type, Content: b.Content, Props: b.Props, By: actorLabel(b.UpdatedBy), At: b.UpdatedAt.Format(timeLayout)})
+			}
+			return out, nil
+		})
+
+	addTool(server, "papers_history", "List a paper's commits newest first (who changed what, when).",
 		func(ctx context.Context, p *model.Principal, in mcpHistoryIn) (mcpHistoryOut, error) {
 			limit := in.Limit
 			if limit <= 0 {
 				limit = 50
 			}
-			commits, err := s.uc.ListCommits(ctx, p, in.WorkspaceID, in.PaperID, in.After, limit)
+			commits, err := s.uc.ListCommits(ctx, p, in.WorkspaceID, in.PaperID, in.Before, limit)
 			if err != nil {
 				return mcpHistoryOut{}, err
 			}
 			out := mcpHistoryOut{Commits: []mcpCommitSummary{}}
 			for _, c := range commits {
-				out.Commits = append(out.Commits, mcpCommitSummary{Seq: c.Seq, ID: c.ID, Actor: actorLabel(c.Actor), Kind: c.Actor.Kind, Message: c.Message, Changes: len(c.Changes), At: c.CreatedAt.Format(timeLayout)})
+				out.Commits = append(out.Commits, mcpCommitSummary{ID: c.ID, Actor: actorLabel(c.Actor), Kind: c.Actor.Kind, Message: c.Message, Changes: len(c.Changes), At: c.CreatedAt.Format(timeLayout)})
 			}
 			return out, nil
 		})

@@ -57,7 +57,7 @@ func TestMCP(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_list_papers", "papers_search", "papers_read_paper", "papers_create_paper", "papers_commit", "papers_history"} {
+	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_list_papers", "papers_search", "papers_read_paper", "papers_create_paper", "papers_commit", "papers_history", "papers_block_history"} {
 		gt.True(t, names[n])
 	}
 
@@ -83,8 +83,8 @@ func TestMCP(t *testing.T) {
 	gt.A(t, rp.Blocks).Length(3)
 
 	type commitOut struct {
-		Revision int64           `json:"revision"`
-		Inserted []model.BlockID `json:"inserted"`
+		Inserted []model.BlockID         `json:"inserted"`
+		Versions map[model.BlockID]int64 `json:"versions"`
 	}
 	co, ok := callTool[commitOut](t, session, "papers_commit", map[string]any{
 		"workspace_id": ws, "paper_id": paper, "message": "add diagram",
@@ -92,7 +92,18 @@ func TestMCP(t *testing.T) {
 	})
 	gt.True(t, ok)
 	gt.A(t, co.Inserted).Length(2)
-	gt.Equal(t, co.Revision, int64(2))
+	gt.Equal(t, co.Versions[co.Inserted[0]], int64(1))
+
+	type blockHistOut struct {
+		Versions []struct {
+			Version int64  `json:"version"`
+			By      string `json:"by"`
+		} `json:"versions"`
+	}
+	bh, ok := callTool[blockHistOut](t, session, "papers_block_history", map[string]any{"workspace_id": ws, "paper_id": paper, "block_id": co.Inserted[0]})
+	gt.True(t, ok)
+	gt.A(t, bh.Versions).Length(1)
+	gt.Equal(t, bh.Versions[0].By, "t (for alice)")
 
 	// a human-held lock makes the agent's write fail with a readable error
 	alice.expect("PUT", "/api/v1/workspaces/"+string(ws)+"/papers/"+string(paper)+"/blocks/"+string(co.Inserted[0])+"/lock", map[string]string{"connection_id": "tab"}, http.StatusOK, nil)
@@ -111,7 +122,8 @@ func TestMCP(t *testing.T) {
 	h, ok := callTool[histOut](t, session, "papers_history", map[string]any{"workspace_id": ws, "paper_id": paper})
 	gt.True(t, ok)
 	gt.A(t, h.Commits).Length(2)
-	gt.Equal(t, h.Commits[1].Kind, model.ActorAgent)
+	gt.Equal(t, h.Commits[0].Kind, model.ActorAgent)
+	gt.Equal(t, h.Commits[1].Kind, model.ActorHuman)
 
 	type created struct {
 		ID model.PaperID `json:"id"`

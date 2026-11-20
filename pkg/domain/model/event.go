@@ -1,24 +1,29 @@
 package model
 
-// EventType is the kind of a realtime event delivered to paper subscribers.
+// EventType is the kind of a realtime event delivered to paper watchers.
+// Events describe resulting state (a block's new contents, a lock), not the
+// requests that produced it, so they can be read straight from a storage
+// change feed.
 type EventType string
 
 const (
-	EventCommit  EventType = "commit"
-	EventLock    EventType = "lock"
-	EventUnlock  EventType = "unlock"
-	EventDeleted EventType = "paper_deleted"
-	EventAccess  EventType = "access_changed"
+	EventBlockPut     EventType = "block_put"
+	EventBlockDeleted EventType = "block_deleted"
+	EventPaperUpdated EventType = "paper_updated"
+	EventPaperDeleted EventType = "paper_deleted"
+	EventLock         EventType = "lock"
+	EventUnlock       EventType = "unlock"
 )
 
-// Event is published to every subscriber of a paper, across instances.
+// Event is delivered to every watcher of a paper, across instances.
 type Event struct {
 	Type        EventType   `json:"type"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
 	PaperID     PaperID     `json:"paper_id"`
-	Commit      *Commit     `json:"commit,omitempty"`
+	Block       *Block      `json:"block,omitempty"`
+	Paper       *Paper      `json:"paper,omitempty"`
 	Lock        *BlockLock  `json:"lock,omitempty"`
-	// Unlock events identify the released lock.
+	// BlockID / HolderKey identify a deleted block or a released lock.
 	BlockID   BlockID `json:"block_id,omitempty"`
 	HolderKey string  `json:"holder_key,omitempty"`
 }

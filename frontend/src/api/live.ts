@@ -20,6 +20,7 @@ interface ServerMsg {
   reason?: string
 }
 
+// 'resync' is not final: the client reconnects and reloads.
 const FINAL_REASONS = new Set(['access revoked', 'paper deleted'])
 
 /**

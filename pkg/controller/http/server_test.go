@@ -54,8 +54,8 @@ var testUI = fstest.MapFS{
 
 func newTestServer(t *testing.T, devMode bool) *testServer {
 	t.Helper()
-	repo := memory.New()
-	uc := gt.R1(usecase.New(repo, memory.NewEventBus(64), usecase.Config{LockTTL: 30 * time.Second, WorkspaceCreation: usecase.WorkspaceCreationEveryone, MaxOpsPerCommit: 100})).NoError(t)
+	repo := memory.New(memory.WithEventBuffer(64))
+	uc := gt.R1(usecase.New(repo, usecase.Config{LockTTL: 30 * time.Second, WorkspaceCreation: usecase.WorkspaceCreationEveryone, MaxOpsPerCommit: 100, PaperTouchInterval: time.Minute})).NoError(t)
 	idp := &fakeIdP{claims: map[string]*model.ExternalClaims{}}
 	var auth *usecase.Auth
 	if devMode {

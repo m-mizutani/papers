@@ -102,5 +102,12 @@ export const ja: Record<MsgKey, string> = {
   updated: '{when} に更新',
   demoMode: 'デモ: データはこのタブの中だけにあり、再読み込みで元に戻ります',
   demoHint: 'Alice（人間）と Claude（AI エージェント）が数秒おきにこのペーパーを編集します。ブロックをクリックして編集すると、2 人にはあなたのロックが見え、そのブロックには手を出しません。',
+  change_insert: '追加',
+  change_update: '編集',
+  change_delete: '削除',
+  change_move: '移動',
+  changeTitle: 'タイトルを「{title}」に変更',
+  deletedBlock: '（削除されたブロック）',
+  olderCommits: 'さらに古い変更を表示',
   error: 'エラーが発生しました: {message}',
 }

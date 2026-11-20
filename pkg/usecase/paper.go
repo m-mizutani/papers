@@ -117,7 +117,6 @@ func (u *UseCases) DeletePaper(ctx context.Context, p *model.Principal, wsID mod
 	if err := u.repo.DeletePaper(ctx, wsID, id); err != nil {
 		return goerr.Wrap(err, "failed to delete paper")
 	}
-	u.publish(ctx, &model.Event{Type: model.EventDeleted, WorkspaceID: wsID, PaperID: id})
 	return nil
 }
 
@@ -132,25 +131,43 @@ func (u *UseCases) UpdatePaperAccess(ctx context.Context, p *model.Principal, ws
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to update paper access")
 	}
-	u.publish(ctx, &model.Event{Type: model.EventAccess, WorkspaceID: wsID, PaperID: id})
 	return paper, nil
 }
 
-// MaxCommitPage bounds one history page.
-const MaxCommitPage = 200
+// MaxHistoryPage bounds one page of commits or block versions.
+const MaxHistoryPage = 200
 
-func (u *UseCases) ListCommits(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID, afterSeq int64, limit int) ([]*model.Commit, error) {
+func pageSize(limit int) int {
+	if limit <= 0 || limit > MaxHistoryPage {
+		return MaxHistoryPage
+	}
+	return limit
+}
+
+// ListCommits returns the paper's commits newest first; before is the
+// pagination cursor (the last commit ID of the previous page).
+func (u *UseCases) ListCommits(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID, before model.CommitID, limit int) ([]*model.Commit, error) {
 	if _, _, _, err := u.paperFor(ctx, p, wsID, id, model.RoleViewer); err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > MaxCommitPage {
-		limit = MaxCommitPage
-	}
-	commits, err := u.repo.ListCommits(ctx, wsID, id, afterSeq, limit)
+	commits, err := u.repo.ListCommits(ctx, wsID, id, before, pageSize(limit))
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to list commits")
 	}
 	return commits, nil
+}
+
+// ListBlockVersions returns a block's history newest first. It works for
+// deleted blocks too, so a deletion can be inspected or undone.
+func (u *UseCases) ListBlockVersions(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID, block model.BlockID, limit int) ([]*model.Block, error) {
+	if _, _, _, err := u.paperFor(ctx, p, wsID, id, model.RoleViewer); err != nil {
+		return nil, err
+	}
+	vs, err := u.repo.ListBlockVersions(ctx, wsID, id, block, pageSize(limit))
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to list block versions")
+	}
+	return vs, nil
 }
 
 func (u *UseCases) ExportMarkdown(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID) (string, error) {

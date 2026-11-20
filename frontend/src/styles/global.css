@@ -288,6 +288,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .commit-meta { color: var(--ink-faint); font-size: var(--text-xs); }
 .commit-warn { color: var(--held); font-size: var(--text-xs); }
 .agent-tag { color: var(--agent); font-weight: 500; }
+.changes { list-style: none; margin: var(--spacing-xs) 0 0; padding: 0; }
+.change-link { border: 0; background: none; padding: 0.125rem 0; color: var(--ink-soft); cursor: pointer; text-align: left; font-size: var(--text-xs); }
+.change-link:hover { color: var(--ink); text-decoration: underline; }
+.versions { list-style: none; margin: var(--spacing-xs) 0 var(--spacing-sm); padding: 0 0 0 var(--spacing-sm); border-left: 1px solid var(--rule-strong); }
+.versions li { padding: var(--spacing-xs) 0; }
+.versions li.by-agent .commit-meta { color: var(--agent); }
+.version-text { font-family: var(--font-paper); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .binding { display: grid; grid-template-columns: 1fr auto auto; gap: var(--spacing-sm); align-items: center; padding: var(--spacing-xs) 0; border-bottom: 1px solid var(--rule); }
 .binding-add { display: grid; grid-template-columns: auto 1fr auto auto; gap: var(--spacing-xs); margin-top: var(--spacing-md); }

@@ -17,8 +17,9 @@ func TestLocks(t *testing.T) {
 	r := pe.commit(t, pe.editor, insertOp("x", nil))
 	id := r.Commit.Changes[0].BlockID
 
-	ch, cancel := gt.R2(pe.uc.Subscribe(ctx, pe.viewer, pe.ws, pe.paper)).NoError(t)
+	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	ch := gt.R1(pe.uc.Watch(wctx, pe.viewer, pe.ws, pe.paper)).NoError(t)
 
 	l := gt.R1(pe.uc.AcquireLock(ctx, pe.editor, pe.ws, pe.paper, id, "tab-1")).NoError(t)
 	gt.Equal(t, l.Holder.UserID, pe.editor.User.ID)
@@ -55,11 +56,11 @@ func TestLocks(t *testing.T) {
 	gt.Equal(t, pe.uc.LockTTL(), int64(30000))
 }
 
-func TestSubscribeAndCanRead(t *testing.T) {
+func TestWatchAndCanRead(t *testing.T) {
 	pe := newPaperEnv(t)
 	ctx := context.Background()
 	outsider := pe.user(t, "outsider")
-	_, _, err := pe.uc.Subscribe(ctx, outsider, pe.ws, pe.paper)
+	_, err := pe.uc.Watch(ctx, outsider, pe.ws, pe.paper)
 	gt.True(t, errors.Is(err, model.ErrNotFound))
 
 	gt.True(t, gt.R1(pe.uc.CanRead(ctx, pe.viewer, pe.ws, pe.paper)).NoError(t))

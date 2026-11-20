@@ -24,6 +24,7 @@ class HttpError extends Error {
 interface PaperData {
   paper: Paper
   blocks: Map<string, Block>
+  versions: Map<string, Block[]>
   commits: Commit[]
   locks: Map<string, BlockLock>
 }
@@ -37,7 +38,8 @@ for (const p of data.papers) {
   papers.set(p.paper.id, {
     paper: p.paper,
     blocks: new Map(p.blocks.map((b) => [b.id, b])),
-    commits: [{ id: `${p.paper.id}-c1`, seq: 1, actor: p.paper.created_by, message: 'Initial content', changes: p.blocks.map((b) => ({ kind: 'insert', block_id: b.id, after: b })), created_at: p.paper.created_at }],
+    versions: new Map(p.blocks.map((b) => [b.id, [b]])),
+    commits: [{ id: `${p.paper.id}-c1`, actor: p.paper.created_by, message: 'Initial content', changes: p.blocks.map((b) => ({ kind: 'insert', block_id: b.id, to_version: 1 })), created_at: p.paper.created_at }],
     locks: new Map(),
   })
 }
@@ -107,7 +109,13 @@ function normalize(type: BlockType, p: BlockProps): BlockProps {
   }
 }
 
-export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: string; force?: boolean; holder: string }): Commit | null {
+interface CommitOutcome {
+  commit: Commit | null
+  blocks: Block[]
+  deleted: string[]
+}
+
+export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: string; force?: boolean; holder: string }): CommitOutcome {
   const staged = new Map([...d.blocks].map(([k, v]) => [k, clone(v)]))
   const view: PaperData = { ...d, blocks: staged }
   const changes: Change[] = []
@@ -129,14 +137,14 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
       if ((c.props.row ?? 0) >= rows || (c.props.col ?? 0) >= cols) {
         checkLock(c.id)
         staged.delete(c.id)
-        changes.push({ kind: 'delete', block_id: c.id, before: c })
+        changes.push({ kind: 'delete', block_id: c.id, from_version: c.version })
       } else have.add(`${c.props.row}:${c.props.col}`)
     }
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       if (have.has(`${r}:${c}`)) continue
       const cell = mk(uid(), 'table_cell', cells?.[r]?.[c] ?? '', { row: r, col: c }, 'V', table.id)
       staged.set(cell.id, cell)
-      changes.push({ kind: 'insert', block_id: cell.id, after: clone(cell) })
+      changes.push({ kind: 'insert', block_id: cell.id, to_version: 1 })
     }
   }
   const get = (id: string) => {
@@ -155,7 +163,7 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         if (op.type === 'table' && !props.cols) props.cols = Math.max(2, ...(op.cells ?? []).map((r) => r.length))
         const b = mk(id, op.type, op.content ?? '', props, orderAfter(view, op.after))
         staged.set(id, b)
-        changes.push({ kind: 'insert', block_id: id, after: clone(b) })
+        changes.push({ kind: 'insert', block_id: id, to_version: 1 })
         if (b.type === 'table') syncCells(b, op.cells)
         break
       }
@@ -164,7 +172,7 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         checkLock(before.id)
         const b = clone(before)
         if (op.type && op.type !== b.type) {
-          if (b.type === 'table') for (const c of children(view, b.id)) { staged.delete(c.id); changes.push({ kind: 'delete', block_id: c.id, before: c }) }
+          if (b.type === 'table') for (const c of children(view, b.id)) { staged.delete(c.id); changes.push({ kind: 'delete', block_id: c.id, from_version: c.version }) }
           b.type = op.type
         }
         if (op.content !== undefined) b.content = op.content
@@ -177,23 +185,23 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         b.updated_at = at
         staged.set(b.id, b)
         const overwrote = op.base_version && op.base_version < before.version ? before.version : undefined
-        changes.push({ kind: 'update', block_id: b.id, before, after: clone(b), overwrote_version: overwrote })
+        changes.push({ kind: 'update', block_id: b.id, from_version: before.version, to_version: b.version, overwrote_version: overwrote })
         if (b.type === 'table') syncCells(b)
         break
       }
       case 'delete': {
         const b = get(op.block_id)
         checkLock(b.id)
-        for (const c of children(view, b.id)) { staged.delete(c.id); changes.push({ kind: 'delete', block_id: c.id, before: c }) }
+        for (const c of children(view, b.id)) { staged.delete(c.id); changes.push({ kind: 'delete', block_id: c.id, from_version: c.version }) }
         staged.delete(b.id)
-        changes.push({ kind: 'delete', block_id: b.id, before: b })
+        changes.push({ kind: 'delete', block_id: b.id, from_version: b.version })
         break
       }
       case 'move': {
         const before = get(op.block_id)
         const b = { ...clone(before), order: orderAfter(view, op.after, before.id), version: before.version + 1, updated_by: actor, updated_at: at }
         staged.set(b.id, b)
-        changes.push({ kind: 'move', block_id: b.id, before, after: clone(b) })
+        changes.push({ kind: 'move', block_id: b.id, from_version: before.version, to_version: b.version })
         break
       }
       case 'set_title':
@@ -206,13 +214,24 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         throw new HttpError(400, 'invalid_argument', 'this op is not available in the demo')
     }
   }
-  if (changes.length === 0) return null
+  if (changes.length === 0) return { commit: null, blocks: [], deleted: [] }
+  const put: Block[] = []
+  const deleted: string[] = []
+  for (const id of new Set(changes.map((c) => c.block_id).filter((x): x is string => !!x))) {
+    const b = staged.get(id)
+    if (b) {
+      put.push(b)
+      d.versions.set(id, [...(d.versions.get(id) ?? []), clone(b)])
+    } else if (d.blocks.has(id)) deleted.push(id)
+  }
   d.blocks = staged
-  d.paper = { ...d.paper, title, revision: d.paper.revision + 1, updated_by: actor, updated_at: at }
-  const c: Commit = { id: uid(), seq: d.paper.revision, actor, message: opts.message, changes, created_at: at }
+  d.paper = { ...d.paper, title, updated_by: actor, updated_at: at }
+  const c: Commit = { id: uid(), actor, message: opts.message, changes, created_at: at }
   d.commits.push(c)
-  publish(d, { type: 'commit', commit: c })
-  return c
+  for (const b of put) publish(d, { type: 'block_put', block: clone(b) })
+  for (const id of deleted) publish(d, { type: 'block_deleted', block_id: id })
+  publish(d, { type: 'paper_updated', paper: clone(d.paper) })
+  return { commit: c, blocks: put, deleted }
 }
 
 function lock(d: PaperData, blockId: string, holder: string, actor: Actor): { ok: boolean; lock?: BlockLock } {
@@ -277,8 +296,8 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
       if (method === 'POST') {
         const id = `p-${uid()}`
         const a = human(ME)
-        const paper: Paper = { id, workspace_id: ws, title: String(b.title ?? ''), revision: 0, access: { restricted: false, bindings: [] }, created_by: a, created_at: now(), updated_by: a, updated_at: now() }
-        papers.set(id, { paper, blocks: new Map(), commits: [], locks: new Map() })
+        const paper: Paper = { id, workspace_id: ws, title: String(b.title ?? ''), access: { restricted: false, bindings: [] }, created_by: a, created_at: now(), updated_by: a, updated_at: now() }
+        papers.set(id, { paper, blocks: new Map(), versions: new Map(), commits: [], locks: new Map() })
         return { status: 201, json: { paper, blocks: [], locks: [], role: 'owner', lock_ttl_ms: LOCK_TTL } }
       }
       const list = [...papers.values()].filter((d) => d.paper.workspace_id === ws).map((d) => ({ ...d.paper, role: paperRole(d.paper) }))
@@ -299,16 +318,22 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
       }
       if (rest === '/access') {
         d.paper = { ...d.paper, access: b as unknown as Paper['access'] }
-        publish(d, { type: 'access_changed' })
+        publish(d, { type: 'paper_updated', paper: clone(d.paper) })
         return { status: 200, json: d.paper }
       }
       if (rest === '/commits' && method === 'GET') {
-        const after = Number(url.searchParams.get('after') ?? 0)
-        return { status: 200, json: { commits: d.commits.filter((c) => c.seq > after) } }
+        const newest = [...d.commits].reverse()
+        const before = url.searchParams.get('before')
+        const start = before ? newest.findIndex((c) => c.id === before) + 1 : 0
+        return { status: 200, json: { commits: newest.slice(start, start + 50) } }
       }
       if (rest === '/commits' && method === 'POST') {
-        const c = commit(d, human(ME), (b.ops ?? []) as Op[], { message: String(b.message ?? ''), force: !!b.force, holder: String(b.connection_id ?? '') })
-        return { status: 200, json: { commit: c, paper: d.paper } }
+        const r = commit(d, human(ME), (b.ops ?? []) as Op[], { message: String(b.message ?? ''), force: !!b.force, holder: String(b.connection_id ?? '') })
+        return { status: 200, json: { ...r, paper: d.paper } }
+      }
+      const vm = rest.match(/^\/blocks\/([^/]+)\/versions$/)
+      if (vm) {
+        return { status: 200, json: { versions: [...(d.versions.get(vm[1] ?? '') ?? [])].reverse() } }
       }
     }
     throw new HttpError(404, 'not_found', `no demo route for ${method} ${p}`)

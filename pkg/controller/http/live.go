@@ -26,12 +26,14 @@ import (
 //   {"type":"hello","connection_id":"...","lock_ttl_ms":30000}
 //   {"type":"lock_result","block_id":"...","ok":true|false,"lock":{...}}
 //   {"type":"lock_lost","block_id":"...","lock":{...}}
-//   {"type":"event","event":{...}}      commit / lock / unlock / access_changed
-//   {"type":"closing","reason":"..."}
+//   {"type":"event","event":{...}}      block_put / block_deleted / paper_updated / lock / unlock
+//   {"type":"closing","reason":"..."}  "resync", "access revoked" or "paper deleted"
 //
-// A connection lives at most as long as the platform's request timeout
-// (Cloud Run: up to 60 minutes); clients reconnect and resynchronise from
-// the paper's revision.
+// Events carry resulting state, so applying them is idempotent (a block
+// event older than the client's copy, by Version, is ignored). The client
+// reloads the paper after every hello, which covers anything missed while
+// disconnected. A connection lives at most as long as the platform's request
+// timeout (Cloud Run: up to 60 minutes); clients then reconnect.
 
 const (
 	liveReadLimit    = 64 << 10
@@ -121,8 +123,9 @@ func (c *liveConn) releaseAll(ctx context.Context) {
 	}
 }
 
-// forward relays bus events to the client and closes the connection when
-// the reader loses access or the paper is deleted.
+// forward relays change events to the client and closes the connection
+// when the reader loses access, the paper is deleted, or the feed ended
+// early (the client then reconnects and reloads).
 func (c *liveConn) forward(ctx context.Context, events <-chan *model.Event) error {
 	for {
 		select {
@@ -130,15 +133,18 @@ func (c *liveConn) forward(ctx context.Context, events <-chan *model.Event) erro
 			return nil
 		case ev, ok := <-events:
 			if !ok {
-				return c.close(ctx, websocket.StatusGoingAway, "subscription ended")
+				if ctx.Err() != nil {
+					return nil
+				}
+				return c.close(ctx, websocket.StatusTryAgainLater, "resync")
 			}
 			if err := c.send(ctx, liveServerMsg{Type: "event", Event: ev}); err != nil {
 				return nil // the client is gone; the read loop ends the connection
 			}
 			switch ev.Type {
-			case model.EventDeleted:
+			case model.EventPaperDeleted:
 				return c.close(ctx, websocket.StatusNormalClosure, "paper deleted")
-			case model.EventAccess:
+			case model.EventPaperUpdated:
 				ok, err := c.s.uc.CanRead(ctx, c.p, c.ws, c.paper)
 				if err != nil {
 					return err
@@ -166,13 +172,16 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(ctx)
 	wsID, paperID := wsParam(r), paperParam(r)
 
-	// Authorize before upgrading so a denied client gets a plain HTTP error.
-	events, unsubscribe, err := s.uc.Subscribe(ctx, p, wsID, paperID)
+	// Authorize and start the change feed before upgrading, so a denied
+	// client gets a plain HTTP error and nothing written after the hello
+	// can be missed.
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	events, err := s.uc.Watch(watchCtx, p, wsID, paperID)
 	if err != nil {
 		writeError(ctx, w, err)
 		return
 	}
-	defer unsubscribe()
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.wsOrigins})
 	if err != nil {

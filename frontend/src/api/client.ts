@@ -1,4 +1,4 @@
-import type { ApiToken, Block, BlockLock, Commit, Group, Me, Op, Paper, PaperAccess, PaperView, RoleBinding, User, Workspace } from './types'
+import type { ApiToken, Block, BlockLock, Commit, CommitResult, Group, Me, Op, Paper, PaperAccess, PaperView, RoleBinding, User, Workspace } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -67,10 +67,12 @@ export const api = {
   getPaper: (ws: string, paper: string) => request<PaperView>('GET', paperPath(ws, paper)),
   deletePaper: (ws: string, paper: string) => request<void>('DELETE', paperPath(ws, paper)),
   updateAccess: (ws: string, paper: string, access: PaperAccess) => request<Paper>('PUT', `${paperPath(ws, paper)}/access`, access),
-  commits: (ws: string, paper: string, after = 0) =>
-    request<{ commits: Commit[] }>('GET', `${paperPath(ws, paper)}/commits?after=${after}`).then((r) => r.commits),
+  commits: (ws: string, paper: string, before = '') =>
+    request<{ commits: Commit[] }>('GET', `${paperPath(ws, paper)}/commits?limit=50${before ? `&before=${encodeURIComponent(before)}` : ''}`).then((r) => r.commits),
+  blockVersions: (ws: string, paper: string, block: string) =>
+    request<{ versions: Block[] }>('GET', `${paperPath(ws, paper)}/blocks/${encodeURIComponent(block)}/versions?limit=50`).then((r) => r.versions),
   commit: (ws: string, paper: string, ops: Op[], opts: { message?: string; force?: boolean; connectionId?: string } = {}) =>
-    request<{ commit: Commit | null; paper: Paper }>('POST', `${paperPath(ws, paper)}/commits`, {
+    request<CommitResult>('POST', `${paperPath(ws, paper)}/commits`, {
       ops,
       message: opts.message ?? '',
       force: opts.force ?? false,

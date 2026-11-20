@@ -27,8 +27,10 @@ type paperViewResp struct {
 }
 
 type commitResp struct {
-	Commit *model.Commit `json:"commit"`
-	Paper  model.Paper   `json:"paper"`
+	Commit  *model.Commit   `json:"commit"`
+	Paper   model.Paper     `json:"paper"`
+	Blocks  []model.Block   `json:"blocks"`
+	Deleted []model.BlockID `json:"deleted"`
 }
 
 func setupPaper(t *testing.T, ts *testServer) (*client, *client, model.WorkspaceID, model.PaperID) {
@@ -83,17 +85,31 @@ func TestPaperAPI(t *testing.T) {
 			{"op": "insert", "type": "callout", "content": "Be careful", "props": map[string]any{"icon": "⚠️"}, "after": first.ID},
 		},
 	}, http.StatusOK, &cr)
-	gt.Equal(t, cr.Paper.Revision, int64(2))
 	gt.A(t, cr.Commit.Changes).Length(2)
+	gt.A(t, cr.Blocks).Length(2)
+	gt.Equal(t, cr.Blocks[0].Content, "Procedure")
+	gt.Equal(t, cr.Blocks[0].Version, int64(2))
+	gt.A(t, cr.Deleted).Length(0)
+
+	// block history
+	var versions struct {
+		Versions []model.Block `json:"versions"`
+	}
+	bob.expect("GET", base+"/blocks/"+string(first.ID)+"/versions", nil, http.StatusOK, &versions)
+	gt.A(t, versions.Versions).Length(2)
+	gt.Equal(t, versions.Versions[1].Content, "Steps")
+	bob.expect("GET", base+"/blocks/"+string(first.ID)+"/versions?limit=0", nil, http.StatusBadRequest, nil)
 
 	// history
 	var hist struct {
 		Commits []model.Commit `json:"commits"`
 	}
-	alice.expect("GET", base+"/commits?after=1", nil, http.StatusOK, &hist)
+	alice.expect("GET", base+"/commits?limit=1", nil, http.StatusOK, &hist)
 	gt.A(t, hist.Commits).Length(1)
 	gt.Equal(t, hist.Commits[0].Actor.Name, "bob")
-	alice.expect("GET", base+"/commits?after=-1", nil, http.StatusBadRequest, nil)
+	alice.expect("GET", base+"/commits?before="+string(hist.Commits[0].ID), nil, http.StatusOK, &hist)
+	gt.A(t, hist.Commits).Length(1)
+	gt.Equal(t, hist.Commits[0].Message, "Initial content")
 	alice.expect("GET", base+"/commits?limit=x", nil, http.StatusBadRequest, nil)
 
 	// markdown export

@@ -63,8 +63,7 @@ func insertOp(content string, after *model.BlockID) usecase.Op {
 func TestCommitInsertPositions(t *testing.T) {
 	pe := newPaperEnv(t)
 	r := pe.commit(t, pe.editor, insertOp("b", nil), insertOp("d", nil))
-	gt.Equal(t, r.Commit.Seq, int64(1))
-	gt.Equal(t, r.Paper.Revision, int64(1))
+	gt.A(t, r.Blocks).Length(2)
 	gt.Equal(t, r.Commit.Actor.Kind, model.ActorHuman)
 	gt.Equal(t, r.Commit.Actor.UserID, pe.editor.User.ID)
 	bID := r.Commit.Changes[0].BlockID
@@ -100,13 +99,16 @@ func TestCommitUpdateAndLastWriterWins(t *testing.T) {
 
 	// owner edits based on version 1
 	r = pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("owner"), BaseVersion: 1})
-	gt.Equal(t, r.Commit.Changes[0].After.Version, int64(2))
+	gt.Equal(t, r.Blocks[0].Version, int64(2))
+	gt.Equal(t, r.Commit.Changes[0].FromVersion, int64(1))
+	gt.Equal(t, r.Commit.Changes[0].ToVersion, int64(2))
 	gt.Equal(t, r.Commit.Changes[0].OverwroteVersion, int64(0))
 
 	// editor also edits based on version 1: last writer wins, overwrite recorded
 	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("editor"), BaseVersion: 1})
 	gt.Equal(t, r.Commit.Changes[0].OverwroteVersion, int64(2))
-	gt.Equal(t, r.Commit.Changes[0].Before.Content, "owner")
+	prev := gt.R1(pe.repo.GetBlockVersion(context.Background(), pe.ws, pe.paper, id, r.Commit.Changes[0].FromVersion)).NoError(t)
+	gt.Equal(t, prev.Content, "owner")
 	gt.Equal(t, pe.blocks(t)[0].Content, "editor")
 	gt.Equal(t, pe.blocks(t)[0].Version, int64(3))
 	gt.Equal(t, pe.blocks(t)[0].UpdatedBy.UserID, pe.editor.User.ID)
@@ -115,20 +117,25 @@ func TestCommitUpdateAndLastWriterWins(t *testing.T) {
 	// a no-op update produces no commit
 	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("editor")})
 	gt.Nil(t, r.Commit)
-	gt.Equal(t, r.Paper.Revision, int64(3))
+
+	// the whole history is kept per block
+	versions := gt.R1(pe.uc.ListBlockVersions(context.Background(), pe.viewer, pe.ws, pe.paper, id, 0)).NoError(t)
+	gt.Equal(t, len(versions), 3)
+	gt.Equal(t, versions[0].Content, "editor")
+	gt.Equal(t, versions[2].Content, "v1")
 }
 
 func TestCommitTypeChangeNormalizesProps(t *testing.T) {
 	pe := newPaperEnv(t)
 	r := pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockCode), Content: ptr("x"), Props: &model.BlockProps{Language: "go", Level: 2}})
-	b := r.Commit.Changes[0].After
+	b := r.Blocks[0]
 	gt.Equal(t, b.Props, model.BlockProps{Language: "go"})
 
 	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: b.ID, Type: ptr(model.BlockHeading)})
-	gt.Equal(t, r.Commit.Changes[0].After.Props, model.BlockProps{Level: 1})
+	gt.Equal(t, r.Blocks[0].Props, model.BlockProps{Level: 1})
 
 	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: b.ID, Type: ptr(model.BlockDivider)})
-	gt.Equal(t, r.Commit.Changes[0].After.Content, "")
+	gt.Equal(t, r.Blocks[0].Content, "")
 }
 
 func TestCommitDeleteAndMove(t *testing.T) {
@@ -160,8 +167,8 @@ func TestCommitIsAtomic(t *testing.T) {
 	}})
 	gt.Error(t, err)
 	gt.A(t, pe.blocks(t)).Length(0)
-	view := gt.R1(pe.uc.GetPaper(context.Background(), pe.owner, pe.ws, pe.paper)).NoError(t)
-	gt.Equal(t, view.Paper.Revision, int64(0))
+	commits := gt.R1(pe.uc.ListCommits(context.Background(), pe.owner, pe.ws, pe.paper, "", 0)).NoError(t)
+	gt.A(t, commits).Length(0)
 }
 
 func TestCommitSetTitle(t *testing.T) {
@@ -178,7 +185,7 @@ func TestCommitSetTitle(t *testing.T) {
 func TestCommitTables(t *testing.T) {
 	pe := newPaperEnv(t)
 	r := pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockTable), Props: &model.BlockProps{HeaderRow: true}, Cells: [][]string{{"k", "v"}, {"a", "1"}}})
-	table := r.Commit.Changes[0].After
+	table := r.Blocks[0]
 	gt.Equal(t, table.Props, model.BlockProps{Rows: 2, Cols: 2, HeaderRow: true})
 	gt.A(t, r.Commit.Changes).Length(5) // table + 4 cells
 
@@ -216,8 +223,13 @@ func TestCommitTables(t *testing.T) {
 	}
 
 	// deleting the table removes its cells
-	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpDelete, BlockID: table.ID})
+	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpDelete, BlockID: table.ID})
 	gt.A(t, pe.blocks(t)).Length(0)
+	gt.A(t, r.Deleted).Length(4)
+
+	// tables beyond the cell budget are refused
+	_, err := pe.uc.Commit(context.Background(), pe.editor, pe.ws, pe.paper, usecase.CommitInput{Ops: []usecase.Op{{Kind: usecase.OpInsert, Type: ptr(model.BlockTable), Props: &model.BlockProps{Rows: 20, Cols: 20}}}})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 }
 
 func TestCommitInsertMarkdown(t *testing.T) {
@@ -271,18 +283,54 @@ func TestCommitLimits(t *testing.T) {
 	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 }
 
-func TestCommitPublishesEvent(t *testing.T) {
+func TestCommitIsVisibleToWatchers(t *testing.T) {
 	pe := newPaperEnv(t)
-	ch, cancel := gt.R2(pe.uc.Subscribe(context.Background(), pe.viewer, pe.ws, pe.paper)).NoError(t)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	pe.commit(t, pe.editor, insertOp("x", nil))
+	ch := gt.R1(pe.uc.Watch(ctx, pe.viewer, pe.ws, pe.paper)).NoError(t)
+	r := pe.commit(t, pe.editor, insertOp("x", nil))
 	select {
 	case ev := <-ch:
-		gt.Equal(t, ev.Type, model.EventCommit)
-		gt.Equal(t, ev.Commit.Seq, int64(1))
+		gt.Equal(t, ev.Type, model.EventBlockPut)
+		gt.Equal(t, ev.Block.ID, r.Blocks[0].ID)
 	case <-time.After(5 * time.Second):
 		t.Fatal("no event")
 	}
+}
+
+func TestCommitTouchesPaperSparingly(t *testing.T) {
+	pe := newPaperEnv(t)
+	ctx := context.Background()
+	created := gt.R1(pe.uc.GetPaper(ctx, pe.owner, pe.ws, pe.paper)).NoError(t).Paper.UpdatedAt
+
+	pe.commit(t, pe.editor, insertOp("x", nil))
+	p := gt.R1(pe.uc.GetPaper(ctx, pe.owner, pe.ws, pe.paper)).NoError(t).Paper
+	gt.Equal(t, p.UpdatedAt, created) // within the touch interval
+
+	pe.clock.Advance(2 * time.Minute)
+	pe.commit(t, pe.editor, insertOp("y", nil))
+	p = gt.R1(pe.uc.GetPaper(ctx, pe.owner, pe.ws, pe.paper)).NoError(t).Paper
+	gt.Equal(t, p.UpdatedAt, pe.clock.Now())
+	gt.Equal(t, p.UpdatedBy.UserID, pe.editor.User.ID)
+
+	// a title change always writes the paper
+	pe.clock.Advance(time.Second)
+	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpSetTitle, Title: ptr("Renamed")})
+	p = gt.R1(pe.uc.GetPaper(ctx, pe.owner, pe.ws, pe.paper)).NoError(t).Paper
+	gt.Equal(t, p.Title, "Renamed")
+	gt.Equal(t, p.UpdatedAt, pe.clock.Now())
+}
+
+func TestCommitMoveToEnd(t *testing.T) {
+	pe := newPaperEnv(t)
+	r := pe.commit(t, pe.editor, insertOp("a", nil), insertOp("b", nil))
+	a, b := r.Blocks[0].ID, r.Blocks[1].ID
+	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpMove, BlockID: a})
+	gt.Equal(t, contents(pe.blocks(t)), []string{"b", "a"})
+	// moving the last block to the end is a no-op
+	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpMove, BlockID: a})
+	gt.Nil(t, r.Commit)
+	_ = b
 }
 
 func TestCommitRespectsSoftLocks(t *testing.T) {

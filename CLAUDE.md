@@ -24,8 +24,8 @@ Read `docs/design.md` before changing the data model or the realtime protocol.
 - `pkg/cli/` – CLI (urfave/cli v3) and configuration (`config/`)
 - `pkg/controller/http/` – chi router: REST (`api.go`), auth (`auth.go`), WebSocket (`live.go`), MCP (`mcp.go`), embedded SPA
 - `pkg/domain/model/` – entities, roles and authorization (`principal.go`), fractional order keys (`order.go`)
-- `pkg/domain/interfaces/` – ports: `Repository`, `PaperTx`, `EventBus`, `IdentityProvider`
-- `pkg/repository/memory/` – in-memory backend (dev/tests). Contract tests live in `pkg/repository/*_test.go`
+- `pkg/domain/interfaces/` – ports: `Repository` (incl. `WatchPaper`), `PaperTx`, `IdentityProvider`
+- `pkg/repository/firestore/` – production backend (schema: `docs/schema.md`); `pkg/repository/memory/` – dev/tests. Contract tests live in `pkg/repository/*_test.go` and run against both (Firestore when `TEST_FIRESTORE_PROJECT_ID` is set, see `task test:firestore`)
 - `pkg/service/google/` – Google OIDC
 - `pkg/usecase/` – application logic; every method takes the principal and enforces authorization
 - `pkg/usecase/markdown/` – Markdown <-> blocks
@@ -42,7 +42,8 @@ Read `docs/design.md` before changing the data model or the realtime protocol.
 
 ### Stateless, multi-instance design
 - The server runs as several Cloud Run instances. Never keep cross-request state in memory. Per-connection state (one WebSocket) is fine.
-- Realtime fan-out goes through `interfaces.EventBus`; the memory bus is single-instance only.
+- Realtime fan-out comes from the storage change feed (`Repository.WatchPaper`, Firestore listeners). Do not add an application-level pub/sub. Events carry resulting state and must stay idempotent to apply.
+- Never write the paper record on every commit (Firestore sustains about one write per second per document); history lives on blocks. See `docs/schema.md`.
 
 ### Repository write discipline
 - Persist models as-is; no field-by-field copies, no mirror structs, no timestamps stamped in the repository (the use case owns them).
