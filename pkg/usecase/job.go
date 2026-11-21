@@ -15,7 +15,7 @@ import (
 	"github.com/m-mizutani/papers/pkg/utils/logging"
 )
 
-// Background jobs (docs/model.html "裏の処理", docs/design.html "#jobs").
+// Background jobs (docs/model.html#job, docs/design.html#jobs).
 // Work proportional to the size of a subtree runs as a job: a sequence of
 // small transactions whose progress is stored with each step, so that any
 // instance can continue it. The request that makes a job only checks what

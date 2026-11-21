@@ -70,7 +70,7 @@ func SearchText(b *Block) string {
 	case b.Type == BlockHTML || b.Type == BlockSVG:
 		return markupText(b.Content)
 	case b.Type.UsesMarkup():
-		// index only what readers see: [必ず]{.red} is "必ず"
+		// index only what readers see: [always]{.red} is "always"
 		return strings.TrimSpace(markup.PlainText(b.Content))
 	default:
 		return strings.TrimSpace(b.Content)

@@ -562,7 +562,7 @@ func (a *applier) existing(id model.BlockID, base int64) (*model.Block, error) {
 	return nil, errConflictRecorded
 }
 
-// checkBase applies the revision rules (docs/model.html, "判定の規則").
+// checkBase applies the revision rules (docs/model.html#conflict).
 func (a *applier) checkBase(id model.BlockID, base int64) error {
 	if a.created[id] {
 		return nil

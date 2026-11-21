@@ -3,7 +3,7 @@
 // calling principal explicitly and enforces access itself, so no transport
 // can bypass it.
 //
-// Access has two parts (docs/model.html, "アクセス"): whether the principal
+// Access has two parts (docs/model.html#access): whether the principal
 // may use the workspace (the workspace's rule, narrowed by the token), and
 // whether the paper is public or the principal's own private paper. A
 // principal that may not see something gets ErrNotFound; one that may see but
@@ -59,7 +59,7 @@ func (c Config) validate() error {
 	return nil
 }
 
-// Limits of one batch (docs/model.html, "操作のまとまりの約束").
+// Limits of one batch (docs/model.html#commit).
 const (
 	MaxBlocksPerBatch = 240
 	MaxBatchBytes     = 3 << 20
