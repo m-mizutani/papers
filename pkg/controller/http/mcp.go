@@ -37,7 +37,7 @@ Model
 Block types (type: props)
 - paragraph, quote, heading (props.level 1-3), bulleted_list_item / numbered_list_item (props.indent 0-6), todo (props.indent, props.checked), callout (props.icon, one emoji), table_cell: content is inline markup: **bold**, *italic*, ~~strike~~, ` + "`code`" + `, [link](url), and colour [text]{.red} / background [text]{.bg-yellow}. Colours: gray brown orange yellow green blue purple pink red.
 - code: props.language, content verbatim. divider: no content. image: content = caption, props.url (external) or props.attachment_id (an image attached to this paper).
-- paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them, otherwise archives the child.
+- paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them all, otherwise archives the child with everything under it.
 - table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
 - mermaid, svg (a complete <svg> with a viewBox), html (self-contained, rendered in a sandboxed iframe): only AI writes these; props.height sets the frame height.
 
@@ -48,7 +48,7 @@ Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"set_title","title":"..."}
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
 - Paper-level ops, each alone in its batch: move_paper {parent, after, workspace}, set_visibility {visibility, parent}, save_version {note}, restore_version {version}, archive / unarchive {subtree}.
-- Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs as a background job. Small trees finish within the call. Otherwise the result lists the job with its state; check it with papers_job until it is done or failed. While a move runs, its papers cannot be written (error "busy").`
+- Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs in the background after the call returns; read the papers again to see the result. Deleting a child whose subtree has someone else's paper archives it instead. While a move runs, its papers cannot be written (error "busy"); afterwards the old paper id answers with where it moved.`
 
 func (s *Server) mcpHandler() http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: mcpServerVersion}, &mcp.ServerOptions{Instructions: mcpInstructions})
@@ -220,14 +220,9 @@ type mcpWriteOut struct {
 	// the next update of that block.
 	Revs        map[model.BlockID]int64 `json:"revs,omitempty"`
 	Deleted     []model.BlockID         `json:"deleted,omitempty"`
-	Trashed     []model.PaperID         `json:"trashed,omitempty"`
-	Archived    []model.PaperID         `json:"archived,omitempty"`
 	Editing     []usecase.Editing       `json:"editing,omitempty"`
 	Version     *int                    `json:"version,omitempty"`
 	NotRestored []usecase.NotRestored   `json:"not_restored,omitempty"`
-	MovedTo     *model.Forward          `json:"moved_to,omitempty"`
-	// Jobs are background jobs the write started.
-	Jobs []mcpJob `json:"jobs,omitempty"`
 	// Unsaved reminds that the change is not in a version yet.
 	Unsaved        bool   `json:"unsaved"`
 	WorkspaceRules string `json:"workspace_rules,omitempty"`
@@ -261,28 +256,6 @@ type mcpVersion struct {
 
 type mcpVersionsOut struct {
 	Versions []mcpVersion `json:"versions"`
-}
-
-// mcpJob is a background job as agents see it.
-type mcpJob struct {
-	ID      model.JobID      `json:"id"`
-	Kind    model.JobKind    `json:"kind"`
-	PaperID model.PaperID    `json:"paper_id"`
-	State   model.JobState   `json:"state"`
-	Phase   model.JobPhase   `json:"phase"`
-	Done    int              `json:"done"`
-	Total   int              `json:"total"`
-	Result  *model.JobResult `json:"result,omitempty"`
-	Error   string           `json:"error,omitempty"`
-}
-
-func jobOut(j *model.Job) mcpJob {
-	return mcpJob{ID: j.ID, Kind: j.Kind, PaperID: j.PaperID, State: j.State, Phase: j.Phase, Done: j.Done, Total: j.Total, Result: j.Result, Error: j.Error}
-}
-
-type mcpJobIn struct {
-	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	Job         model.JobID       `json:"job" jsonschema:"job id from a write result"`
 }
 
 type mcpDiffIn struct {
@@ -426,11 +399,8 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			}
 			out := mcpWriteOut{
 				PaperID: q.ID, Refs: res.Refs, Revs: map[model.BlockID]int64{}, Deleted: res.Deleted,
-				Trashed: res.Trashed, Archived: res.Archived, Editing: res.Editing, NotRestored: res.NotRestored,
-				MovedTo: res.Forward, Unsaved: res.Version == nil, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
-			}
-			for _, j := range res.Jobs {
-				out.Jobs = append(out.Jobs, jobOut(j))
+				Editing: res.Editing, NotRestored: res.NotRestored,
+				Unsaved: res.Version == nil, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
 			}
 			for _, b := range res.Blocks {
 				out.Revs[b.ID] = b.Rev
@@ -494,15 +464,6 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				return nil, err
 			}
 			return s.uc.Diff(ctx, p, in.WorkspaceID, q.ID, from, to)
-		})
-
-	addTool(server, "papers_job", "Check a background job you started (state queued, running, done or failed; progress done/total; result).",
-		func(ctx context.Context, p *model.Principal, in mcpJobIn) (mcpJob, error) {
-			j, err := s.uc.GetJob(ctx, p, in.WorkspaceID, in.Job)
-			if err != nil {
-				return mcpJob{}, err
-			}
-			return jobOut(j), nil
 		})
 }
 

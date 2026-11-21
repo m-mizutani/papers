@@ -18,9 +18,10 @@ import (
 // Background jobs (docs/model.html "裏の処理", docs/design.html "#jobs").
 // Work proportional to the size of a subtree runs as a job: a sequence of
 // small transactions whose progress is stored with each step, so that any
-// instance can continue it. The request that makes a job runs it for a
-// short while itself; most jobs finish there and the caller sees a normal
-// result.
+// instance can continue it. The request that makes a job only checks what
+// it can check at once, stores the job and answers; the instance runs the
+// job afterwards. Nobody reads a job's state: its results show as the
+// papers' state and through the change feed.
 
 var (
 	// errStaleStep: the job moved on (another runner, or a step of the same
@@ -32,7 +33,7 @@ var (
 const (
 	// jobMaxAttempts bounds retries of a step that keeps failing with an
 	// error that may be temporary.
-	jobMaxAttempts = 20
+	jobMaxAttempts  = 20
 	jobFirstBackoff = 2 * time.Second
 	jobMaxBackoff   = 5 * time.Minute
 )
@@ -47,38 +48,30 @@ func (u *UseCases) newJob(p *model.Principal, ws model.WorkspaceID, kind model.J
 	}
 }
 
-// startJob stores a new job and runs it inline.
-func (u *UseCases) startJob(ctx context.Context, j *model.Job) (*model.Job, error) {
+// startJob stores a new job and starts it.
+func (u *UseCases) startJob(ctx context.Context, j *model.Job) error {
 	if err := u.repo.RunTx(ctx, j.WorkspaceID, func(tx interfaces.Tx) error { return tx.PutJob(j) }); err != nil {
-		return nil, goerr.Wrap(err, "failed to store job", goerr.V("kind", j.Kind))
+		return goerr.Wrap(err, "failed to store job", goerr.V("kind", j.Kind))
 	}
-	out := u.runInline(ctx, []*model.Job{j})
-	return out[0], nil
+	u.kick(ctx, []*model.Job{j})
+	return nil
 }
 
-// runInline runs stored jobs for up to the inline budget. Jobs that do not
-// finish continue in the background on this instance (unless background
-// running is off, in which case the sweeper picks them up once the lease
-// ends).
-func (u *UseCases) runInline(ctx context.Context, jobs []*model.Job) []*model.Job {
-	deadline := u.now().Add(u.cfg.JobInline)
-	out := make([]*model.Job, len(jobs))
-	for i, j := range jobs {
-		got, err := u.run(ctx, j.WorkspaceID, j.ID, deadline)
-		if err != nil {
-			errutil.Handle(ctx, err, "failed to run job")
-			got = j
-		}
-		out[i] = got
-		if !got.State.Finished() && u.background {
-			ws, id := got.WorkspaceID, got.ID
-			async.Dispatch(ctx, func(ctx context.Context) error {
-				_, err := u.run(ctx, ws, id, time.Time{})
-				return err
-			})
+// kick runs stored jobs after the request: in a goroutine on this instance,
+// or before returning when jobs run synchronously (tests). Jobs left alone
+// are taken over by RunJobs once their lease ends.
+func (u *UseCases) kick(ctx context.Context, jobs []*model.Job) {
+	for _, j := range jobs {
+		ws, id := j.WorkspaceID, j.ID
+		switch {
+		case u.sync:
+			if err := u.run(ctx, ws, id); err != nil {
+				errutil.Handle(ctx, err, "failed to run job")
+			}
+		case u.background:
+			async.Dispatch(ctx, func(ctx context.Context) error { return u.run(ctx, ws, id) })
 		}
 	}
-	return out
 }
 
 // RunJobs takes over unfinished jobs whose lease has ended (their instance
@@ -102,11 +95,8 @@ func (u *UseCases) RunJobs(ctx context.Context) (int, error) {
 			n++
 			wsID, id := j.WorkspaceID, j.ID
 			if u.background {
-				async.Dispatch(ctx, func(ctx context.Context) error {
-					_, err := u.run(ctx, wsID, id, time.Time{})
-					return err
-				})
-			} else if _, err := u.run(ctx, wsID, id, time.Time{}); err != nil {
+				async.Dispatch(ctx, func(ctx context.Context) error { return u.run(ctx, wsID, id) })
+			} else if err := u.run(ctx, wsID, id); err != nil {
 				return n, err
 			}
 		}
@@ -139,30 +129,23 @@ func (u *UseCases) claim(ctx context.Context, j *model.Job) (bool, error) {
 }
 
 // run advances the job one step at a time while this instance holds it,
-// until it finishes or the deadline passes (zero: no deadline). It returns
-// the job as last read.
-func (u *UseCases) run(ctx context.Context, ws model.WorkspaceID, id model.JobID, deadline time.Time) (*model.Job, error) {
+// until it finishes.
+func (u *UseCases) run(ctx context.Context, ws model.WorkspaceID, id model.JobID) error {
 	for {
 		j, err := u.repo.GetJob(ctx, ws, id)
 		if err != nil {
-			return nil, goerr.Wrap(err, "failed to get job", goerr.V("job_id", id))
+			return goerr.Wrap(err, "failed to get job", goerr.V("job_id", id))
 		}
 		if j.State.Finished() || j.Runner != u.runner {
-			return j, nil
+			return nil
 		}
 		now := u.now()
-		if !deadline.IsZero() && !now.Before(deadline) {
-			return j, nil
-		}
 		if j.RetryAt.After(now) {
-			if !deadline.IsZero() {
-				return j, nil
-			}
 			t := time.NewTimer(j.RetryAt.Sub(now))
 			select {
 			case <-ctx.Done():
 				t.Stop()
-				return j, nil
+				return nil
 			case <-t.C:
 			}
 			continue
@@ -172,7 +155,7 @@ func (u *UseCases) run(ctx context.Context, ws model.WorkspaceID, id model.JobID
 			continue
 		}
 		if ferr := u.recordFailure(ctx, j, err); ferr != nil && !errors.Is(ferr, errStaleStep) {
-			return nil, ferr
+			return ferr
 		}
 	}
 }
@@ -282,26 +265,13 @@ func errorCode(err error) string {
 	return "internal"
 }
 
-// JobError turns a failed job into the error its request would have
-// returned.
-func JobError(j *model.Job) error {
-	sentinel := map[string]error{
-		"permission_denied": model.ErrPermissionDenied, "not_found": model.ErrNotFound,
-		"busy": model.ErrBusy, "conflict": model.ErrConflict, "invalid_argument": model.ErrInvalidArgument,
-	}[j.ErrorCode]
-	if sentinel == nil {
-		return goerr.New(j.Error, goerr.V("job_id", j.ID))
-	}
-	return goerr.Wrap(sentinel, j.Error, goerr.V("job_id", j.ID))
-}
-
 // recordFailure stores a failed step: a temporary error schedules a retry
 // with backoff; a permanent one (or too many retries) fails the job, or
 // starts rolling back a move that has not been attached yet.
 func (u *UseCases) recordFailure(ctx context.Context, j *model.Job, cause error) error {
 	final := permanent(cause) || j.Attempts+1 >= jobMaxAttempts
 	if final {
-		logging.From(ctx).Info("background job step failed", slog.String("job_id", string(j.ID)), slog.String("kind", string(j.Kind)), logging.ErrAttr(cause))
+		logging.From(ctx).Warn("background job failed", slog.String("job_id", string(j.ID)), slog.String("kind", string(j.Kind)), logging.ErrAttr(cause))
 	} else {
 		errutil.Handle(ctx, goerr.Wrap(cause, "background job step failed; retrying", goerr.V("job_id", j.ID), goerr.V("attempts", j.Attempts+1)), "background job step failed")
 	}
@@ -334,25 +304,4 @@ func (u *UseCases) recordFailure(ctx context.Context, j *model.Job, cause error)
 		}
 		return tx.PutJob(cur)
 	})
-}
-
-// GetJob returns a job to the user who started it.
-func (u *UseCases) GetJob(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.JobID) (*model.Job, error) {
-	if _, err := u.workspaceFor(ctx, p, ws); err != nil {
-		return nil, err
-	}
-	if !model.ValidID(string(id)) {
-		return nil, notFound("job", id)
-	}
-	j, err := u.repo.GetJob(ctx, ws, id)
-	if errors.Is(err, model.ErrNotFound) {
-		return nil, notFound("job", id)
-	}
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to get job", goerr.V("job_id", id))
-	}
-	if j.CreatedBy.UserID != p.User.ID {
-		return nil, notFound("job", id)
-	}
-	return j, nil
 }

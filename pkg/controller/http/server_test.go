@@ -59,17 +59,17 @@ func newTestServer(t *testing.T, devMode bool) *testServer {
 	return newTestServerWith(t, devMode, nil)
 }
 
-// newTestServerWith lets a test change the use case config; jobs that do
-// not finish in the request wait for RunJobs.
+// newTestServerWith lets a test change the use case config. Jobs run to the
+// end before the request answers.
 func newTestServerWith(t *testing.T, devMode bool, tune func(*usecase.Config)) *testServer {
 	t.Helper()
 	repo := memory.New(memory.WithEventBuffer(64))
 	wss := workspace.Static(&model.Workspace{ID: "team", Name: "Team", Description: "Write runbooks as numbered lists."}, &model.Workspace{ID: "other", Name: "Other"})
-	cfg := usecase.Config{MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobInline: time.Minute, JobLease: time.Minute, JobStep: 200}
+	cfg := usecase.Config{MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobLease: time.Minute, JobStep: 200}
 	if tune != nil {
 		tune(&cfg)
 	}
-	uc := gt.R1(usecase.New(repo, wss, attachment.NewMemory(), cfg, usecase.WithoutBackgroundJobs())).NoError(t)
+	uc := gt.R1(usecase.New(repo, wss, attachment.NewMemory(), cfg, usecase.WithSyncJobs())).NoError(t)
 	gt.NoError(t, uc.Init(context.Background())).Required()
 	idp := &fakeIdP{claims: map[string]*model.ExternalClaims{}}
 	var auth *usecase.Auth

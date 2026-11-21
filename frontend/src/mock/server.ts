@@ -434,7 +434,7 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
         const parent = papers.get(d.paper.parent_id ?? '')
         const pb = parent && [...parent.blocks.values()].find((x) => x.props.paper_id === d.paper.id)
         if (parent && pb) apply(parent, human(ME), [{ op: 'delete', block_id: pb.id, base_rev: pb.rev }])
-        return ok({ paper: d.paper, refs: {}, trashed: [d.paper.id] })
+        return ok({ paper: d.paper, refs: {} })
       }
       if (rest === '/restore') {
         d.paper = { ...d.paper, deleted_at: undefined, deleted_with: undefined }

@@ -35,9 +35,6 @@ type Config struct {
 	// TrashRetention is how long a trashed paper is kept before it is
 	// purged.
 	TrashRetention time.Duration
-	// JobInline is how long the request that makes a background job runs
-	// it itself before answering 202.
-	JobInline time.Duration
 	// JobLease is how long an instance holds a job without storing a step;
 	// after it, another instance takes the job over.
 	JobLease time.Duration
@@ -56,8 +53,8 @@ func (c Config) validate() error {
 	if c.TrashRetention <= 0 {
 		return goerr.New("trash retention must be positive")
 	}
-	if c.JobInline < 0 || c.JobLease <= 0 || c.JobStep <= 0 {
-		return goerr.New("job inline time must not be negative; job lease and step must be positive")
+	if c.JobLease <= 0 || c.JobStep <= 0 {
+		return goerr.New("job lease and step must be positive")
 	}
 	return nil
 }
@@ -77,8 +74,10 @@ type UseCases struct {
 	now        func() time.Time
 	// runner names this instance as the holder of the jobs it runs.
 	runner string
-	// background lets unfinished jobs continue after the request.
+	// background runs the jobs a request starts after it answers; sync
+	// runs them before (tests).
 	background bool
+	sync       bool
 }
 
 type Option func(*UseCases)
@@ -88,10 +87,16 @@ func WithClock(now func() time.Time) Option {
 	return func(u *UseCases) { u.now = now }
 }
 
-// WithoutBackgroundJobs leaves jobs that do not finish inline for RunJobs
-// instead of continuing them in a goroutine (tests).
+// WithoutBackgroundJobs leaves the jobs a request starts for RunJobs
+// instead of running them in a goroutine (tests).
 func WithoutBackgroundJobs() Option {
 	return func(u *UseCases) { u.background = false }
+}
+
+// WithSyncJobs runs the jobs a request starts to the end before the request
+// answers (tests).
+func WithSyncJobs() Option {
+	return func(u *UseCases) { u.sync, u.background = true, false }
 }
 
 func New(repo interfaces.Repository, workspaces interfaces.Workspaces, store interfaces.AttachmentStore, cfg Config, opts ...Option) (*UseCases, error) {
@@ -236,6 +241,12 @@ func (u *UseCases) paperFor(ctx context.Context, p *model.Principal, wsID model.
 	}
 	if err != nil {
 		return nil, nil, goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", id))
+	}
+	if paper.IsTrashed() {
+		// the original of a finished move points everyone to the copy
+		if f, ferr := u.repo.GetForward(ctx, wsID, id); ferr == nil {
+			return nil, nil, &MovedError{To: f}
+		}
 	}
 	if !p.SeesPaper(paper) {
 		return nil, nil, notFound("paper", id)

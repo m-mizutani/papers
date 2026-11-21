@@ -102,8 +102,6 @@ export const keys = {
   link: 'link',
   linkUrl: 'linkUrl',
   formatting: 'formatting',
-  childArchived: 'childArchived',
-  childTrashed: 'childTrashed',
   childHidden: 'childHidden',
   childPaperTitle: 'childPaperTitle',
   confirmArchiveChild: 'confirmArchiveChild',
@@ -180,14 +178,10 @@ export const keys = {
   versionsLead: 'versionsLead',
   viaApi: 'viaApi',
   workspaceNotFound: 'workspaceNotFound',
-  jobStarting: 'jobStarting',
-  jobRunning: 'jobRunning',
-  jobContinues: 'jobContinues',
-  jobFailed: 'jobFailed',
   busy: 'busy',
-  moveDone: 'moveDone',
-  trashDone: 'trashDone',
   restoredFromTrash: 'restoredFromTrash',
+  moveStarted: 'moveStarted',
+  trashStarted: 'trashStarted',
 } as const
 
 export type MsgKey = keyof typeof keys

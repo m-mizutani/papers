@@ -2,12 +2,10 @@ package http_test
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/m-mizutani/gt"
 
@@ -186,7 +184,11 @@ func TestPaperAPI(t *testing.T) {
 	gt.Equal(t, sb.Pins[0].ID, paper)
 
 	// only the creator deletes (with everything under it); others archive
-	alice.expect("POST", base+"/trash", nil, http.StatusForbidden, nil) // bob's child is under it
+	alice.expect("POST", base+"/trash", nil, http.StatusOK, nil) // bob's child is under it: archived instead
+	var archived paperView
+	alice.expect("GET", base, nil, http.StatusOK, &archived)
+	gt.NotNil(t, archived.Paper.ArchivedAt)
+	gt.Nil(t, archived.Paper.DeletedAt)
 	alice.expect("POST", "/api/v1/workspaces/team/papers/"+string(child)+"/trash", nil, http.StatusForbidden, nil)
 	alice.expect("POST", "/api/v1/workspaces/team/papers/"+string(child)+"/archive", map[string]any{}, http.StatusOK, nil)
 	bob.expect("POST", "/api/v1/workspaces/team/papers/"+string(child)+"/trash", nil, http.StatusOK, nil)
@@ -221,12 +223,17 @@ func TestVisibilityAndMoveAPI(t *testing.T) {
 	bob.expect("GET", "/api/v1/workspaces/team/resolve?path=Runbook/Memo", nil, http.StatusOK, &resolved)
 	gt.Equal(t, resolved.ID, memo.ID)
 
-	// move across workspaces leaves a forward
+	// move across workspaces: the old paper then points to the new place
+	alice.expect("POST", memoBase+"/move", map[string]any{"workspace": "other"}, http.StatusOK, nil)
 	var moved struct {
-		Forward model.Forward `json:"forward"`
+		Error struct {
+			Code    string        `json:"code"`
+			MovedTo model.Forward `json:"moved_to"`
+		} `json:"error"`
 	}
-	alice.expect("POST", memoBase+"/move", map[string]any{"workspace": "other"}, http.StatusOK, &moved)
-	gt.Equal(t, moved.Forward.ToWorkspaceID, model.WorkspaceID("other"))
+	bob.expect("GET", memoBase, nil, http.StatusNotFound, &moved)
+	gt.Equal(t, moved.Error.Code, "moved")
+	gt.Equal(t, moved.Error.MovedTo.ToWorkspaceID, model.WorkspaceID("other"))
 	_ = base
 }
 
@@ -270,33 +277,22 @@ func TestTokenAPI(t *testing.T) {
 	agent.expect("GET", "/api/v1/workspaces", nil, http.StatusUnauthorized, nil)
 }
 
-func TestBackgroundJobAPI(t *testing.T) {
-	ts := newTestServerWith(t, false, func(c *usecase.Config) { c.JobInline, c.JobLease = 0, time.Nanosecond })
-	alice, bob, ws, paper := setupPaper(t, ts)
+func TestTrashRunsTheJobAndAnswers(t *testing.T) {
+	ts := newTestServerWith(t, false, func(c *usecase.Config) { c.JobStep = 1 })
+	alice, _, ws, paper := setupPaper(t, ts)
 	base := "/api/v1/workspaces/" + string(ws)
 	var kid model.Paper
 	alice.expect("POST", base+"/papers", map[string]any{"title": "Kid", "parent": string(paper)}, http.StatusCreated, &kid)
 
 	var res struct {
-		Jobs []model.Job `json:"jobs"`
+		Paper model.Paper `json:"paper"`
+		Jobs  []any       `json:"jobs"`
 	}
-	alice.expect("POST", base+"/papers/"+string(paper)+"/trash", nil, http.StatusAccepted, &res)
-	gt.A(t, res.Jobs).Length(1).Required()
-	job := res.Jobs[0]
-	gt.Equal(t, job.Kind, model.JobTrash)
-
-	var got model.Job
-	alice.expect("GET", base+"/jobs/"+string(job.ID), nil, http.StatusOK, &got)
-	gt.False(t, got.State.Finished())
-	bob.expect("GET", base+"/jobs/"+string(job.ID), nil, http.StatusNotFound, nil)
-
-	// another instance (here: the sweeper) finishes it
-	time.Sleep(time.Millisecond)
-	gt.R1(ts.uc.RunJobs(context.Background())).NoError(t)
-	alice.expect("GET", base+"/jobs/"+string(job.ID), nil, http.StatusOK, &got)
-	gt.Equal(t, got.State, model.JobDone)
-	gt.True(t, got.Result.Trashed)
+	alice.expect("POST", base+"/papers/"+string(paper)+"/trash", nil, http.StatusOK, &res)
+	gt.Equal(t, res.Paper.ID, paper)
+	gt.A(t, res.Jobs).Length(0)
 	var view paperView
 	alice.expect("GET", base+"/papers/"+string(kid.ID), nil, http.StatusOK, &view)
 	gt.Equal(t, view.Paper.DeletedWith, paper)
+	alice.expect("GET", base+"/jobs/x", nil, http.StatusNotFound, nil)
 }

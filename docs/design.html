@@ -81,7 +81,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <li class="block agent"><b>今の状態と、明示的に保存した版だけ</b><span>commit・変更履歴・ブロックの版は廃止。ブロックは内部の Rev（内容が変わると +1）だけを持つ。版はペーパー全体の (ブロック ID, Rev, 親, 位置) の列と、変わったブロックだけの BlockSnapshot。保存は人も AI もできるが、システムは自動で保存しない。</span></li>
 <li class="block held"><b>衝突は元の Rev で判定し、一度止める</b><span>r なし・r &gt; cur は 400、r = cur は適用、r &lt; cur は衝突（強行で上書き）、他人が削除したブロックの更新は衝突（強行でも）、まとまりの中で作ったブロックは判定しない。1 つでも衝突があれば何も書かず 409 で全部返す。</span></li>
 <li class="block human"><b>子ペーパーは親の本文の paper ブロック</b><span>ペーパーは親（ParentID）だけを持つ。移動は 3 件の書き込み。ワークスペースをまたぐ移動は写して元をゴミ箱へ入れ、転送を残す。</span></li>
-<li class="block held"><b>配下に及ぶ処理とワークスペースをまたぐ移動は裏の処理（2026-11-22）</b><span>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動は <code>Job</code> として 200 件ずつのトランザクションに分けて進める。リクエストは 3 秒まで自分で進め、終われば普通の応答、終わらなければ <code>202</code> と裏の処理を返す。期限（60 秒）の切れた裏の処理は他のインスタンスが引き継ぐ。配下の上限（500）は廃止。移動の元は <code>Paper.JobID</code> で書けなくし、写しは終わるまで隠す。</span></li>
+<li class="block held"><b>配下に及ぶ処理とワークスペースをまたぐ移動は裏の処理（2026-11-22）</b><span>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動は <code>Job</code> として 200 件ずつのトランザクションに分けて進める。リクエストは裏の処理を作ってすぐに応答し、同じインスタンスが続ける（状態を読む API はない）。期限（60 秒）の切れた裏の処理は他のインスタンスが引き継ぐ。配下の上限（500）は廃止。移動の元は <code>Paper.JobID</code> で書けなくし、写しは終わるまで隠す。</span></li>
 <li class="block agent"><b>本文は Markdown + 色の囲み</b><span><code>[文字]{.red}</code> / <code>{.bg-yellow}</code>。保存前に正規化・検証し、検索には平文を入れる。サーバー（Go）と画面（TS）に同じ実装があり、<code>testdata/markup/cases.json</code> を両方が通す。画面はブロックごとに Tiptap で編集する。</span></li>
 </ul>
 </section>
@@ -115,7 +115,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <tbody>
 <tr><td><code>insert</code></td><td>ID を発行して追加。<code>table</code> なら行・列 ID とセル、<code>paper</code> なら子のペーパーも作る。本文は記法を正規化する。</td><td>不要</td></tr>
 <tr><td><code>update</code></td><td>内容（種類・本文・属性）を変える。行・列とセルの位置は変えない。変わらなければ何もしない。Rev は「まとまり前の Rev + 1」。</td><td>必須</td></tr>
-<tr><td><code>delete</code></td><td>削除。表はセルも消す。paper ブロックは消さずに <code>drop</code> の裏の処理を作る（子と配下がすべて本人のものならブロックを消して配下ごとゴミ箱へ、そうでなければ子を配下ごとアーカイブしてブロックを残す）。応答の <code>jobs</code> に添える。</td><td>必須</td></tr>
+<tr><td><code>delete</code></td><td>削除。表はセルも消す。paper ブロックは消さずに <code>drop</code> の裏の処理を作る（子と配下がすべて本人のものならブロックを消して配下ごとゴミ箱へ、そうでなければ子を配下ごとアーカイブしてブロックを残す）。ブロックが消えるのは配信で届く。</td><td>必須</td></tr>
 <tr><td><code>move</code></td><td>位置だけ変える（Rev は変わらない、衝突しない）。</td><td>不要</td></tr>
 <tr><td><code>set_title</code></td><td>後勝ち（D1）。</td><td>なし</td></tr>
 <tr><td><code>insert_markdown</code></td><td>Markdown をブロックの列にして insert する。</td><td>不要</td></tr>
@@ -159,18 +159,18 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <h2>裏の処理（Job）</h2>
 <p><code>pkg/usecase/job.go</code> が進め方（取り出し・期限・再試行）を、<code>job_*.go</code> が種類ごとの段を持つ。対象の数に比例する書き込みは、この形でしか行わない。</p>
 <figure>
-<svg viewBox="0 0 860 210" role="img" aria-label="裏の処理の流れ。リクエストが作って 3 秒まで進め、終わらなければ同じインスタンスが続ける。止まったら他のインスタンスが期限切れを拾う。">
+<svg viewBox="0 0 860 210" role="img" aria-label="裏の処理の流れ。リクエストが作ってすぐ応答し、同じインスタンスが進める。止まったら他のインスタンスが期限切れを拾う。">
 <g font-family="Instrument Sans, system-ui" font-size="13" fill="currentColor">
-<rect x="20" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="105" y="55" text-anchor="middle">リクエスト</text><text x="105" y="74" text-anchor="middle" fill="var(--soft)">作る・期限を取る</text>
-<rect x="250" y="30" width="190" height="60" rx="6" fill="none" stroke="var(--human)" stroke-width="2"/><text x="345" y="55" text-anchor="middle">段を進める（3 秒まで）</text><text x="345" y="74" text-anchor="middle" fill="var(--soft)">終われば 200 と結果</text>
-<rect x="500" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="585" y="55" text-anchor="middle">同じインスタンスで続ける</text><text x="585" y="74" text-anchor="middle" fill="var(--soft)">202 を返した後</text>
-<rect x="500" y="130" width="170" height="60" rx="6" fill="none" stroke="var(--held)" stroke-width="2"/><text x="585" y="155" text-anchor="middle">他のインスタンス</text><text x="585" y="174" text-anchor="middle" fill="var(--soft)">15 秒ごとに期限切れを拾う</text>
+<rect x="20" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="105" y="55" text-anchor="middle">リクエスト</text><text x="105" y="74" text-anchor="middle" fill="var(--soft)">作ってすぐ応答</text>
+<rect x="250" y="30" width="190" height="60" rx="6" fill="none" stroke="var(--human)" stroke-width="2"/><text x="345" y="55" text-anchor="middle">同じインスタンスで進める</text><text x="345" y="74" text-anchor="middle" fill="var(--soft)">段ごとに期限を延ばす</text>
+<rect x="500" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="585" y="55" text-anchor="middle">結果が見える</text><text x="585" y="74" text-anchor="middle" fill="var(--soft)">ペーパーの状態と配信</text>
+<rect x="250" y="130" width="190" height="60" rx="6" fill="none" stroke="var(--held)" stroke-width="2"/><text x="345" y="155" text-anchor="middle">他のインスタンス</text><text x="345" y="174" text-anchor="middle" fill="var(--soft)">15 秒ごとに期限切れを拾う</text>
 <rect x="720" y="30" width="120" height="60" rx="6" fill="none" stroke="currentColor"/><text x="780" y="55" text-anchor="middle">done / failed</text><text x="780" y="74" text-anchor="middle" fill="var(--soft)">7 日で消える</text>
 <path class="flow" d="M190 60 H250" stroke="currentColor" stroke-width="1.5" fill="none"/>
 <path class="flow" d="M440 60 H500" stroke="currentColor" stroke-width="1.5" fill="none"/>
 <path class="flow" d="M670 60 H720" stroke="currentColor" stroke-width="1.5" fill="none"/>
-<path d="M585 90 V130" stroke="var(--held)" stroke-width="1.5" fill="none" stroke-dasharray="4 4"/><text x="595" y="114" fill="var(--held)" font-size="12">止まったら</text>
-<path class="flow" d="M670 160 H780 V90" stroke="var(--held)" stroke-width="1.5" fill="none"/>
+<path d="M345 90 V130" stroke="var(--held)" stroke-width="1.5" fill="none" stroke-dasharray="4 4"/><text x="355" y="114" fill="var(--held)" font-size="12">止まったら</text>
+<path class="flow" d="M440 160 H585 V90" stroke="var(--held)" stroke-width="1.5" fill="none"/>
 </g></svg>
 <figcaption>どのインスタンスも同じ段を進められる。進み具合は段と同じトランザクションで裏の処理に書くので、途中で止まっても続きから進む。</figcaption>
 </figure>
@@ -179,10 +179,10 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <li><b>期限</b>: 進めるインスタンスは <code>LeaseUntil</code>（60 秒）と自分の ID（起動ごとの乱数）を書き、段ごとに延ばす。段の初めに期限と持ち主を読み直し、他のインスタンスに取られていたら止まる。<code>serve</code> は 15 秒ごとに、設定の各ワークスペースで <code>State</code> が終わっておらず期限の切れた裏の処理を探して取る。</li>
 <li><b>段</b>: 1 段は 1 つのトランザクションで、items を 200 件まで（写しはブロックを 200 件まで）。<b>集める</b>段は未展開の items を読み、子を <code>ParentID in</code> で一括で探して items に足す。<b>当てる</b>段は未処理の items を深さの順に読み、ペーパーに印を付け、items を済みにする。</li>
 <li><b>再試行</b>: <code>ErrInvalidArgument</code>・<code>ErrPermissionDenied</code>・<code>ErrNotFound</code> は規則による失敗で、すぐ failed（戻せる段なら戻す）。他は 2 秒から倍々で最大 5 分まで間隔を空け、20 回で failed。</li>
-<li><b>リクエストの中で進める</b>: 作ったインスタンスがそのまま 3 秒（<code>--job-inline</code>）まで進める。終われば結果を普通の応答にし（規則による失敗はその場のエラー）、終わらなければ <code>202</code> と裏の処理を返して <code>async.Dispatch</code> で続ける。</li>
+<li><b>始め方</b>: リクエストはその場で確かめられることだけを確かめ、裏の処理を保存して応答する。作ったインスタンスが <code>async.Dispatch</code> で進める。ゴミ箱は、集める段で他の人のペーパーが見つかれば配下ごとのアーカイブに切り替わる（D18）。規則による失敗（移動先が消えた、など）はログにだけ残す。</li>
 <li><b>移動の写し</b>: 写しの ID（ペーパー・ブロック・添付）は <code>model.DeriveID(job, 元の ID)</code> で決める（SHA-256 から作る v4 の形）。同じ段をやり直しても同じ文書を書くので、ワークスペースをまたぐトランザクションは要らない。版の v1 はペーパーの最後の段で、まだなければ作る。添付は同じキーに書き直す。</li>
 <li><b>移動の印</b>: 集める段で元の各ペーパーに <code>JobID</code> を付ける。<code>JobID</code> のあるペーパーへの書き込み（ブロック・タイトル・版・移動・公開範囲・削除、子の追加、そこへの移動）は <code>ErrBusy</code>（409 <code>busy</code>）。写しも <code>JobID</code> 付きで作る。<code>JobID</code> のあるペーパーは検索の後で除く（移動の間だけ、元も出ない）。つなぐ段で写しの印を外して根を親の本文に置き、片付ける段で元をゴミ箱に入れて転送を書き、印を外す。つなぐ前に failed なら、写しを <code>PurgePaper</code> で消し、元の印を外す。</li>
-<li><b>API</b>: 応答に <code>job</code>（操作のまとまりは <code>jobs</code>）を添える。<code>GET …/jobs/{id}</code> で状態（始めた人だけ）。MCP は <code>papers_job</code>。画面は 1 秒ごとに状態を読み、進み具合を出し、終わったら木とペーパーを読み直す。</li>
+<li><b>見え方</b>: 裏の処理の状態を読む API はない。画面は変更の配信で読み直す。移動が終わった元のペーパーは転送の記録を持ち、開くと（ゴミ箱にあっても）<code>moved</code> で移動先へ案内する。</li>
 </ul>
 </section>
 
@@ -219,10 +219,9 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <tr><td><code>GET /papers/{id}</code>, <code>/blocks?after&amp;limit</code>, <code>/children</code>, <code>/markdown</code></td><td>ペーパーとパンくず、ブロックの範囲読み（子ペーパーは一括で付ける）、子の一覧、Markdown</td></tr>
 <tr><td><code>POST /papers/{id}/ops</code></td><td>操作のまとまり</td></tr>
 <tr><td><code>GET|POST /versions</code>, <code>GET /versions/{n|latest}</code>, <code>POST /versions/{n}/restore</code>, <code>GET /diff?from&amp;to</code>, <code>GET /status</code></td><td>版</td></tr>
-<tr><td><code>POST /move</code>, <code>PUT /visibility</code>, <code>POST /archive|unarchive|trash|restore</code>, <code>PUT|DELETE /pin</code>, <code>POST /presence</code>, <code>POST|GET /attachments</code>, <code>GET /live</code></td><td>木・状態・ピン・presence・添付・配信。配下に及ぶものは終わらなければ <code>202</code> と <code>job</code></td></tr>
-<tr><td><code>GET /jobs/{id}</code></td><td>裏の処理の状態・進み具合・結果（始めた人だけ）</td></tr>
+<tr><td><code>POST /move</code>, <code>PUT /visibility</code>, <code>POST /archive|unarchive|trash|restore</code>, <code>PUT|DELETE /pin</code>, <code>POST /presence</code>, <code>POST|GET /attachments</code>, <code>GET /live</code></td><td>木・状態・ピン・presence・添付・配信。配下に及ぶものは裏の処理を始めて応答する</td></tr>
 </tbody></table></div>
-<p>MCP（<code>/mcp</code>、トークン必須）: <code>papers_guide</code>（ワークスペースの決まりごとと、ホームの本文）、<code>papers_list_workspaces</code>、<code>papers_search</code>（パスで範囲）、<code>papers_read</code>（<code>at</code> で版、範囲、目次だけ）、<code>papers_create_paper</code>、<code>papers_write</code>、<code>papers_save_version</code>、<code>papers_versions</code>、<code>papers_diff</code>、<code>papers_job</code>。読み書きの結果にもワークスペースの決まりごとを付け、書き込みには「まだ版になっていない」ことを返す。</p>
+<p>MCP（<code>/mcp</code>、トークン必須）: <code>papers_guide</code>（ワークスペースの決まりごとと、ホームの本文）、<code>papers_list_workspaces</code>、<code>papers_search</code>（パスで範囲）、<code>papers_read</code>（<code>at</code> で版、範囲、目次だけ）、<code>papers_create_paper</code>、<code>papers_write</code>、<code>papers_save_version</code>、<code>papers_versions</code>、<code>papers_diff</code>。読み書きの結果にもワークスペースの決まりごとを付け、書き込みには「まだ版になっていない」ことを返す。</p>
 </section>
 
 <section id="firestore">
@@ -277,7 +276,7 @@ workspaces/{ws}/search/{paper}_{block|title}</pre></div>
 <ul class="open">
 <li><b>Firestore 実装を実データベースで検証する。</b> 契約テストはメモリ実装で通しているが、この環境にはエミュレーターがなく Firestore 側は未実行。<code>task test:firestore</code> と Query Explain でインデックスの利用を確かめる。</li>
 <li><b>リスナーの共有。</b> 1 インスタンス 50 接続を超える規模では必要（上）。</li>
-<li><b>ゴミ箱の裏の処理の後から配下に足されたペーパー。</b> 集める段の後に他の人が配下に作ったペーパーは、ゴミ箱に入れず結果の <code>skipped</code> に添える（木からはたどれず、検索には出る）。扱いを決める。</li>
+<li><b>ゴミ箱の裏の処理の後から配下に足されたペーパー。</b> 集める段の後に他の人が配下に作ったペーパーは、ゴミ箱に入れずに残す（木からはたどれず、検索には出る）。扱いを決める。</li>
 <li><b>同じ木に重なる裏の処理。</b> 移動は <code>JobID</code> で他の書き込みを止めるが、ゴミ箱・アーカイブ同士は止めない（印を付けるだけなので結果は壊れない）。止めるべきか。</li>
 <li><b>つないだ後に失敗し続けた移動。</b> 片付ける段が 20 回失敗すると、元が書けないまま残る。今は failed にしてログに出すだけ。</li>
 <li><b>private のペーパーの招待</b>（モデルで後回しにしたもの）。</li>

@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router'
 import { ApiError, api } from '../api/client'
-import type { BatchResult, Paper } from '../api/types'
+import type { Paper } from '../api/types'
 import { useTranslation } from '../i18n'
-import { errorMessage, followJobs } from '../utils/jobs'
+import { errorMessage } from '../utils/errors'
 
 /** What can be done with the paper itself: pin, move, who can use it, archive, delete. */
 export function PaperMenu({ ws, paper, isHome, owner, onChanged, onNotice }: {
@@ -16,16 +16,13 @@ export function PaperMenu({ ws, paper, isHome, owner, onChanged, onNotice }: {
   const { t } = useTranslation()
   const navigate = useNavigate()
 
-  // Runs a change; work on everything under the paper may go on as a
-  // background job, which is followed until it finishes.
-  const attempt = async (fn: () => Promise<BatchResult | void>, done?: string, after?: (res: BatchResult) => void) => {
+  // Runs a change. Work on everything under the paper goes on in the
+  // background; its results arrive through the change feed.
+  const attempt = async (fn: () => Promise<unknown>, done?: string, after?: () => void) => {
     try {
-      const res = await fn()
-      if (res) {
-        const jobs = await followJobs(ws, res, onNotice, t)
-        after?.({ ...res, jobs, forward: res.forward ?? jobs.find((j) => j.result?.forward)?.result?.forward })
-      }
+      await fn()
       if (done) onNotice(done)
+      after?.()
       onChanged()
     } catch (e) {
       if (e instanceof ApiError && e.code === 'ambiguous') {
@@ -45,9 +42,7 @@ export function PaperMenu({ ws, paper, isHome, owner, onChanged, onNotice }: {
   const moveAcross = () => {
     const target = window.prompt(t('moveWorkspacePrompt'), '')
     if (!target) return
-    void attempt(() => api.move(ws, paper.id, { parent: '', workspace: target }), t('moveDone'), (res) => {
-      if (res.forward) navigate(`/ws/${res.forward.to_workspace_id}/p/${res.forward.to_paper_id}`)
-    })
+    void attempt(() => api.move(ws, paper.id, { parent: '', workspace: target }), t('moveStarted'))
   }
 
   const visibility = () => {
@@ -69,14 +64,14 @@ export function PaperMenu({ ws, paper, isHome, owner, onChanged, onNotice }: {
 
   const trash = () => {
     if (!window.confirm(t('confirmDeletePaper', { title: paper.title || t('untitled') }))) return
-    void attempt(() => api.trashPaper(ws, paper.id), t('trashDone'), () => navigate(`/ws/${ws}`))
+    void attempt(() => api.trashPaper(ws, paper.id), t('trashStarted'), () => navigate(`/ws/${ws}`))
   }
 
   return (
     <details className="menu">
       <summary className="btn btn-quiet" aria-label={t('more')}>⋯</summary>
       <div className="menu-items" onClick={(e) => (e.currentTarget.parentElement as HTMLDetailsElement).removeAttribute('open')}>
-        <button type="button" onClick={() => void attempt(async () => { await api.pin(ws, paper.id) }, t('pinned'))}>{t('pin')}</button>
+        <button type="button" onClick={() => void attempt(() => api.pin(ws, paper.id), t('pinned'))}>{t('pin')}</button>
         {!isHome && paper.visibility === 'public' && <button type="button" onClick={move}>{t('move')}</button>}
         {!isHome && paper.visibility === 'public' && <button type="button" onClick={moveAcross}>{t('moveWorkspace')}</button>}
         {!isHome && owner && <button type="button" onClick={visibility}>{paper.visibility === 'public' ? t('makePrivate') : t('makePublic')}</button>}

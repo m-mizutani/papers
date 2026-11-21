@@ -124,9 +124,6 @@ func (u *UseCases) includeRoot(c *stepCtx, root *model.Paper) error {
 			return goerr.Wrap(model.ErrInvalidArgument, "the paper is already in the trash")
 		}
 		if !p.Owns(root) {
-			if j.Kind == model.JobTrash {
-				return goerr.Wrap(model.ErrPermissionDenied, "only the creator can delete the paper; archive it instead")
-			}
 			j.Foreign = true
 		}
 	case model.JobRestore:
@@ -152,10 +149,7 @@ func (u *UseCases) includeChild(c *stepCtx, k *model.Paper) (bool, error) {
 			return false, nil // trashed before, on its own
 		}
 		if !p.Owns(k) {
-			if j.Kind == model.JobTrash {
-				return false, goerr.Wrap(model.ErrPermissionDenied, "some papers under this one belong to others; archive it instead", goerr.V("paper_id", k.ID))
-			}
-			j.Foreign = true
+			j.Foreign = true // others' papers are archived, not deleted (D18)
 		}
 		return true, nil
 	case model.JobRestore:
@@ -194,7 +188,7 @@ func (u *UseCases) applyTree(ctx context.Context, j *model.Job) error {
 		return u.commitStep(ctx, j, func(c *stepCtx) error {
 			finishJob(c.job, c.now)
 			switch {
-			case c.job.Kind == model.JobDrop && c.job.Foreign:
+			case (c.job.Kind == model.JobTrash || c.job.Kind == model.JobDrop) && c.job.Foreign:
 				c.job.Result.Archived = true
 			case c.job.Kind == model.JobTrash || c.job.Kind == model.JobDrop:
 				c.job.Result.Trashed = true
@@ -263,7 +257,7 @@ func (u *UseCases) applyItem(c *stepCtx, q *model.Paper, home model.PaperID) err
 		if root {
 			return w.removeBlockOf(q.WorkspaceID, q.ParentID, q.ID)
 		}
-	case j.Kind == model.JobDrop, j.Kind == model.JobArchive:
+	case j.Kind == model.JobTrash, j.Kind == model.JobDrop, j.Kind == model.JobArchive:
 		if q.IsTrashed() || q.IsArchived() || !p.SeesPaper(q) {
 			return nil
 		}

@@ -14,7 +14,7 @@ import { detectShortcut } from '../components/shortcuts'
 import { useTranslation } from '../i18n'
 import { plainText } from '../markup/markup'
 import { isDemo } from '../utils/demo'
-import { errorMessage, followJobs } from '../utils/jobs'
+import { errorMessage } from '../utils/errors'
 import { isEnter } from '../utils/keyboard'
 
 const RECENT_MS = 4000
@@ -200,7 +200,11 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
             if (ev.block_id) receive([], [ev.block_id], undefined, false)
             break
           case 'paper_updated':
-            if (ev.paper && ev.paper.id === paperId) receive([], [], ev.paper, false)
+            if (ev.paper && ev.paper.id === paperId) {
+              receive([], [], ev.paper, false)
+              // a finished move trashes the original: reading it again leads to the copy
+              if (ev.paper.deleted_at) void load()
+            }
             break
           case 'version_saved':
             refreshStatus()
@@ -232,8 +236,6 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
   }, [editingId, ws, paperId, readOnlyVersion])
 
   const showResult = useCallback((res: BatchResult) => {
-    if (res.trashed?.length) setNotice(t('childTrashed'))
-    if (res.archived?.length) setNotice(t('childArchived'))
     if (res.editing?.length) setNotice(t('removedWhileEditing', { names: res.editing.map((e) => actorLabel(e.actor)).join(', ') }))
     if (res.not_restored?.length) setNotice(t('notRestored', { count: res.not_restored.length }))
   }, [t])
@@ -255,19 +257,6 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
       }
       showResult(res)
       refreshStatus()
-      if (res.jobs?.length && (res.jobs ?? []).some((j) => j.state === 'queued' || j.state === 'running')) {
-        // Deleting a big child runs in the background; reread when it ends.
-        void followJobs(ws, res, setNotice, t).then((jobs) => {
-          showResult({
-            ...res,
-            trashed: jobs.filter((j) => j.kind === 'drop' && j.result?.trashed).map((j) => j.paper_id),
-            archived: jobs.filter((j) => j.kind === 'drop' && j.result?.archived).map((j) => j.paper_id),
-            editing: [], not_restored: [],
-          })
-          onChanged()
-          void load()
-        }, (e: unknown) => setNotice(errorMessage(e, t)))
-      }
       return res
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') {
@@ -289,7 +278,7 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
       }
       return null
     }
-  }, [ws, paperId, receive, commit, onChanged, showResult, refreshStatus, load, t])
+  }, [ws, paperId, receive, commit, onChanged, showResult, refreshStatus, t])
 
   const runOk = useCallback(async (ops: Op[]) => (await run(ops)) !== null, [run])
 
@@ -618,7 +607,6 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
     try {
       const res = await api.restoreVersion(ws, paperId, n)
       showResult(res)
-      await followJobs(ws, res, setNotice, t)
       onChanged()
       await load()
       navigate(`/ws/${ws}/p/${paperId}`)
@@ -629,8 +617,7 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
 
   const restoreFromTrash = async () => {
     try {
-      const res = await api.restorePaper(ws, paperId)
-      await followJobs(ws, res, setNotice, t)
+      await api.restorePaper(ws, paperId)
       setNotice(t('restoredFromTrash'))
       onChanged()
       await load()

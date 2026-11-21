@@ -415,6 +415,7 @@ func (u *UseCases) RestoreVersion(ctx context.Context, p *model.Principal, ws mo
 	}
 	now := u.now()
 	var result *BatchResult
+	var jobs []*model.Job
 	err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
 		paper, err := tx.GetPaper(id)
 		if err != nil {
@@ -517,14 +518,13 @@ func (u *UseCases) RestoreVersion(ctx context.Context, p *model.Principal, ws mo
 			return err
 		}
 		a.result.NotRestored = append(a.result.NotRestored, w.result.NotRestored...)
-		result = a.result
-		result.Jobs = a.jobs
+		result, jobs = a.result, a.jobs
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	u.runBatchJobs(ctx, result)
+	u.kick(ctx, jobs)
 	return result, nil
 }
 

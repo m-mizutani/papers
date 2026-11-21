@@ -21,7 +21,6 @@ type Server struct {
 	maxOpsPerBatch int
 	paperTouch     time.Duration
 	trashRetention time.Duration
-	jobInline      time.Duration
 	jobLease       time.Duration
 	jobStep        int
 	jobPoll        time.Duration
@@ -61,11 +60,6 @@ func (x *Server) Flags() []cli.Flag {
 			Value: 30 * 24 * time.Hour, Sources: cli.EnvVars("PAPERS_TRASH_RETENTION"), Destination: &x.trashRetention,
 		},
 		&cli.DurationFlag{
-			Name: "job-inline", Category: "jobs",
-			Usage: "How long a request runs the background job it starts (trash, restore, archive of a subtree, moves across workspaces) before answering 202",
-			Value: 3 * time.Second, Sources: cli.EnvVars("PAPERS_JOB_INLINE"), Destination: &x.jobInline,
-		},
-		&cli.DurationFlag{
 			Name: "job-lease", Category: "jobs", Usage: "How long an instance holds a background job between steps before another instance may take it over",
 			Value: time.Minute, Sources: cli.EnvVars("PAPERS_JOB_LEASE"), Destination: &x.jobLease,
 		},
@@ -86,7 +80,6 @@ func (x Server) LogValue() slog.Value {
 		slog.String("base_url", x.baseURL),
 		slog.Bool("enable_mcp", x.enableMCP),
 		slog.Duration("trash_retention", x.trashRetention),
-		slog.Duration("job_inline", x.jobInline),
 		slog.Duration("job_lease", x.jobLease),
 		slog.Int("job_step", x.jobStep),
 	)
@@ -104,7 +97,6 @@ func (x *Server) UseCaseConfig() usecase.Config {
 		MaxOpsPerBatch:     x.maxOpsPerBatch,
 		PaperTouchInterval: x.paperTouch,
 		TrashRetention:     x.trashRetention,
-		JobInline:          x.jobInline,
 		JobLease:           x.jobLease,
 		JobStep:            x.jobStep,
 	}

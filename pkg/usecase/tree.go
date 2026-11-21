@@ -410,7 +410,7 @@ func (u *UseCases) setArchived(ctx context.Context, p *model.Principal, ws model
 		if !archived {
 			kind = model.JobUnarchive
 		}
-		return u.treeJob(ctx, p, u.newJob(p, ws, kind, id, u.now()))
+		return u.treeJob(ctx, u.newJob(p, ws, kind, id, u.now()))
 	}
 	var result *BatchResult
 	err = u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
@@ -442,41 +442,24 @@ func (u *UseCases) setArchived(ctx context.Context, p *model.Principal, ws model
 	return result, nil
 }
 
-// treeJob runs a job over a paper's subtree and turns it into the result
-// of the request: the paper as it is now and the job. A job that failed
-// inline is the request's error.
-func (u *UseCases) treeJob(ctx context.Context, p *model.Principal, j *model.Job) (*BatchResult, error) {
-	j, err := u.startJob(ctx, j)
-	if err != nil {
+// treeJob starts a job over a paper's subtree. The result is the paper as
+// it is when the job starts; the job's changes arrive through the change
+// feed.
+func (u *UseCases) treeJob(ctx context.Context, j *model.Job) (*BatchResult, error) {
+	if err := u.startJob(ctx, j); err != nil {
 		return nil, err
 	}
-	if j.State == model.JobFailed {
-		return nil, JobError(j)
-	}
-	return u.jobResult(ctx, j)
-}
-
-// jobResult reads the job's paper for a response.
-func (u *UseCases) jobResult(ctx context.Context, j *model.Job) (*BatchResult, error) {
-	res := &BatchResult{Refs: map[string]string{}, Jobs: []*model.Job{j}}
-	ws, id := j.WorkspaceID, j.PaperID
-	if j.Kind == model.JobMove && j.State == model.JobDone && j.Result != nil {
-		ws, id, res.Forward = j.Target.WorkspaceID, j.Result.CopyID, j.Result.Forward
-	}
-	paper, err := u.repo.GetPaper(ctx, ws, id)
+	paper, err := u.repo.GetPaper(ctx, j.WorkspaceID, j.PaperID)
 	if err != nil {
-		return nil, goerr.Wrap(err, "failed to read the job's paper", goerr.V("paper_id", id))
+		return nil, goerr.Wrap(err, "failed to read the job's paper", goerr.V("paper_id", j.PaperID))
 	}
-	res.Paper = paper
-	if j.State == model.JobDone && j.Result != nil && j.Result.Trashed {
-		res.Trashed = []model.PaperID{j.PaperID}
-	}
-	return res, nil
+	return &BatchResult{Paper: paper, Refs: map[string]string{}}, nil
 }
 
 // Trash sends a paper and everything under it to the trash. Only the
-// creator may, and only if every paper under it is theirs too (D18). It
-// runs as a background job.
+// creator may; when a paper under it belongs to someone else, the job
+// archives the paper and everything under it instead (D18). It runs as a
+// background job.
 func (u *UseCases) Trash(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) (*BatchResult, error) {
 	_, paper, err := u.writablePaper(ctx, p, ws, id)
 	if err != nil {
@@ -488,7 +471,7 @@ func (u *UseCases) Trash(ctx context.Context, p *model.Principal, ws model.Works
 	if !p.Owns(paper) {
 		return nil, goerr.Wrap(model.ErrPermissionDenied, "only the creator can delete the paper; archive it instead")
 	}
-	return u.treeJob(ctx, p, u.newJob(p, ws, model.JobTrash, id, u.now()))
+	return u.treeJob(ctx, u.newJob(p, ws, model.JobTrash, id, u.now()))
 }
 
 // RestoreFromTrash brings a paper back with everything that was trashed
@@ -508,7 +491,7 @@ func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws 
 	}
 	j := u.newJob(p, ws, model.JobRestore, id, u.now())
 	j.With = paper.DeletedWith
-	return u.treeJob(ctx, p, j)
+	return u.treeJob(ctx, j)
 }
 
 // placeRestored puts a restored paper back in the tree: under its parent,

@@ -149,29 +149,11 @@ type BatchResult struct {
 	Blocks  []*model.Block  `json:"blocks"`
 	Deleted []model.BlockID `json:"deleted"`
 	// Refs maps each ref of the batch to the ID issued for it.
-	Refs map[string]string `json:"refs"`
-	// Trashed and Archived are child papers sent to the trash or archived
-	// by deleting their paper blocks.
-	Trashed  []model.PaperID `json:"trashed,omitempty"`
-	Archived []model.PaperID `json:"archived,omitempty"`
-	Editing  []Editing       `json:"editing,omitempty"`
+	Refs    map[string]string `json:"refs"`
+	Editing []Editing         `json:"editing,omitempty"`
 	// Version is the version a save_version created.
 	Version     *model.Version `json:"version,omitempty"`
 	NotRestored []NotRestored  `json:"not_restored,omitempty"`
-	Forward     *model.Forward `json:"forward,omitempty"`
-	// Jobs are the background jobs the request started. A job that has not
-	// finished goes on after the response.
-	Jobs []*model.Job `json:"jobs,omitempty"`
-}
-
-// Pending reports whether a job of the result is still running.
-func (r *BatchResult) Pending() bool {
-	for _, j := range r.Jobs {
-		if !j.State.Finished() {
-			return true
-		}
-	}
-	return false
 }
 
 type applier struct {
@@ -1156,6 +1138,7 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 
 	now := u.now()
 	var result *BatchResult
+	var jobs []*model.Job
 	err := u.repo.RunTx(ctx, wsID, func(tx interfaces.Tx) error {
 		paper, err := tx.GetPaper(paperID)
 		if err != nil {
@@ -1184,36 +1167,14 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 		if err := a.finish(); err != nil {
 			return err
 		}
-		result = a.result
-		result.Jobs = a.jobs
+		result, jobs = a.result, a.jobs
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	u.runBatchJobs(ctx, result)
+	u.kick(ctx, jobs)
 	return result, nil
-}
-
-// runBatchJobs runs the jobs a batch stored and reports the finished ones
-// in the result as the batch itself would have.
-func (u *UseCases) runBatchJobs(ctx context.Context, result *BatchResult) {
-	if len(result.Jobs) == 0 {
-		return
-	}
-	result.Jobs = u.runInline(ctx, result.Jobs)
-	for _, j := range result.Jobs {
-		if j.State != model.JobDone || j.Result == nil {
-			continue
-		}
-		switch {
-		case j.Kind == model.JobDrop && j.Result.Trashed:
-			result.Trashed = append(result.Trashed, j.PaperID)
-			result.Deleted = append(result.Deleted, j.BlockID)
-		case j.Kind == model.JobDrop && j.Result.Archived:
-			result.Archived = append(result.Archived, j.PaperID)
-		}
-	}
 }
 
 func (u *UseCases) applyPaperOp(ctx context.Context, p *model.Principal, ws model.WorkspaceID, paper model.PaperID, op Op) (*BatchResult, error) {

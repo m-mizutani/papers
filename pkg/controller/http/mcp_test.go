@@ -63,7 +63,7 @@ func TestMCP(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_search", "papers_read", "papers_create_paper", "papers_write", "papers_save_version", "papers_versions", "papers_diff", "papers_job"} {
+	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_search", "papers_read", "papers_create_paper", "papers_write", "papers_save_version", "papers_versions", "papers_diff"} {
 		gt.True(t, names[n]).Describef("tool %s", n)
 	}
 
@@ -154,27 +154,18 @@ func TestMCP(t *testing.T) {
 	for _, b := range rp.Blocks {
 		linkID, linkRev = b.ID, b.Rev // the child's block is the last one
 	}
-	type jobsOut struct {
-		Trashed []model.PaperID `json:"trashed"`
-		Jobs    []struct {
-			ID    model.JobID    `json:"id"`
-			State model.JobState `json:"state"`
-		} `json:"jobs"`
+	type deleteOut struct {
+		Deleted []model.BlockID `json:"deleted"`
 	}
-	jo, ok := callTool[jobsOut](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(paper), "ops": []map[string]any{
+	_, ok = callTool[deleteOut](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(paper), "ops": []map[string]any{
 		{"op": "delete", "block_id": linkID, "base_rev": linkRev},
 	}})
 	gt.True(t, ok)
-	gt.Equal(t, jo.Trashed, []model.PaperID{co.ID})
-	gt.A(t, jo.Jobs).Length(1).Required()
-	type jobOut struct {
-		State model.JobState `json:"state"`
-		Total int            `json:"total"`
-	}
-	st, ok := callTool[jobOut](t, session, "papers_job", map[string]any{"workspace_id": ws, "job": string(jo.Jobs[0].ID)})
+	after, ok := callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": ws, "paper": "Runbook"})
 	gt.True(t, ok)
-	gt.Equal(t, st.State, model.JobDone)
-	gt.Equal(t, st.Total, 1)
+	for _, b := range after.Blocks {
+		gt.NotEqual(t, b.ID, linkID)
+	}
 }
 
 func TestMCPRequiresAuth(t *testing.T) {

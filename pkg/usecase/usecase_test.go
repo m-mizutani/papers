@@ -88,10 +88,13 @@ func newEnvWith(t *testing.T, tune func(*usecase.Config), opts ...usecase.Option
 	}
 	store := attachment.NewMemory()
 	cfg := usecase.Config{
-		MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobInline: time.Minute, JobLease: time.Minute, JobStep: 200,
+		MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobLease: time.Minute, JobStep: 200,
 	}
 	if tune != nil {
 		tune(&cfg)
+	}
+	if len(opts) == 0 {
+		opts = []usecase.Option{usecase.WithSyncJobs()}
 	}
 	uc, err := usecase.New(count, r, store, cfg, append([]usecase.Option{usecase.WithClock(c.Now)}, opts...)...)
 	gt.NoError(t, err).Required()
@@ -222,7 +225,7 @@ func TestNewValidatesConfig(t *testing.T) {
 	repo := memory.New()
 	ws := workspace.Static(&model.Workspace{ID: "x"})
 	store := attachment.NewMemory()
-	good := usecase.Config{MaxOpsPerBatch: 1, PaperTouchInterval: 0, TrashRetention: time.Hour, JobInline: 0, JobLease: time.Minute, JobStep: 1}
+	good := usecase.Config{MaxOpsPerBatch: 1, PaperTouchInterval: 0, TrashRetention: time.Hour, JobLease: time.Minute, JobStep: 1}
 	gt.R1(usecase.New(repo, ws, store, good)).NoError(t)
 	bad := []usecase.Config{
 		{MaxOpsPerBatch: 0, TrashRetention: time.Hour},
@@ -230,7 +233,6 @@ func TestNewValidatesConfig(t *testing.T) {
 		{MaxOpsPerBatch: 1},
 		{MaxOpsPerBatch: 1, TrashRetention: time.Hour, JobLease: time.Minute},
 		{MaxOpsPerBatch: 1, TrashRetention: time.Hour, JobStep: 1},
-		{MaxOpsPerBatch: 1, TrashRetention: time.Hour, JobInline: -1, JobLease: time.Minute, JobStep: 1},
 	}
 	for _, c := range bad {
 		_, err := usecase.New(repo, ws, store, c)

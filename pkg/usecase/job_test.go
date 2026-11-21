@@ -27,17 +27,35 @@ func tree(t *testing.T, e *env, p *model.Principal, ws model.WorkspaceID, n int)
 	return root, all
 }
 
-// manual makes an env whose jobs do not run in the request nor in the
-// background, and whose steps are small.
+// manual makes an env whose jobs wait for a test to run them, and whose
+// steps are small.
 func manual(t *testing.T) *env {
 	t.Helper()
-	return newEnvWith(t, func(c *usecase.Config) { c.JobInline, c.JobStep = 0, 2 }, usecase.WithoutBackgroundJobs())
+	return newEnvWith(t, func(c *usecase.Config) { c.JobStep = 2 }, usecase.WithoutBackgroundJobs())
 }
 
-func jobOf(t *testing.T, res *usecase.BatchResult) *model.Job {
+// started returns the job the last request started in the workspace (the
+// only unfinished one besides those given).
+func started(t *testing.T, e *env, ws model.WorkspaceID, not ...*model.Job) *model.Job {
 	t.Helper()
-	gt.A(t, res.Jobs).Length(1).Required()
-	return res.Jobs[0]
+	jobs := gt.R1(e.repo.ListRunnableJobs(context.Background(), ws, e.clock.Now().Add(time.Hour), 100)).NoError(t)
+	var out []*model.Job
+	for _, j := range jobs {
+		skip := false
+		for _, n := range not {
+			skip = skip || n.ID == j.ID
+		}
+		if !skip {
+			out = append(out, j)
+		}
+	}
+	gt.A(t, out).Length(1).Required()
+	return out[0]
+}
+
+func job(t *testing.T, e *env, ws model.WorkspaceID, id model.JobID) *model.Job {
+	t.Helper()
+	return gt.R1(e.repo.GetJob(context.Background(), ws, id)).NoError(t)
 }
 
 func TestTrashLargeSubtreeInSteps(t *testing.T) {
@@ -47,8 +65,8 @@ func TestTrashLargeSubtreeInSteps(t *testing.T) {
 	root, all := tree(t, e, alice, wsA, 5)
 
 	res := gt.R1(e.uc.Trash(ctx, alice, wsA, root.ID)).NoError(t)
-	j := jobOf(t, res)
-	gt.True(t, res.Pending())
+	gt.Equal(t, res.Paper.ID, root.ID)
+	j := started(t, e, wsA)
 	gt.False(t, e.paper(t, wsA, root.ID).IsTrashed()) // nothing yet
 
 	// the job is leased to the instance that made it
@@ -58,7 +76,7 @@ func TestTrashLargeSubtreeInSteps(t *testing.T) {
 	e.clock.Advance(2 * time.Minute)
 	gt.Equal(t, gt.R1(other.RunJobs(ctx)).NoError(t), 1)
 
-	got := gt.R1(e.uc.GetJob(ctx, alice, wsA, j.ID)).NoError(t)
+	got := job(t, e, wsA, j.ID)
 	gt.Equal(t, got.State, model.JobDone)
 	gt.True(t, got.Result.Trashed)
 	gt.Equal(t, got.Total, 11)
@@ -74,8 +92,7 @@ func TestTrashLargeSubtreeInSteps(t *testing.T) {
 	}
 
 	// restoring brings everything back, also in steps
-	res = gt.R1(e.uc.RestoreFromTrash(ctx, alice, wsA, root.ID)).NoError(t)
-	gt.True(t, res.Pending())
+	gt.R1(e.uc.RestoreFromTrash(ctx, alice, wsA, root.ID)).NoError(t)
 	e.clock.Advance(2 * time.Minute)
 	gt.Equal(t, gt.R1(other.RunJobs(ctx)).NoError(t), 1)
 	gt.False(t, e.paper(t, wsA, root.ID).IsTrashed())
@@ -84,28 +101,21 @@ func TestTrashLargeSubtreeInSteps(t *testing.T) {
 	}
 }
 
-func TestTrashJobInline(t *testing.T) {
+func TestTrashArchivesWhenOthersOwnPart(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	alice, bob := e.user(t, "alice"), e.user(t, "bob")
-	root, _ := tree(t, e, alice, wsA, 2)
+	root, all := tree(t, e, alice, wsA, 2)
+	other := e.child(t, bob, wsA, string(all[0].ID), "bob's")
 
-	// someone else's paper under it: the request fails, nothing changes
-	e.child(t, bob, wsA, string(root.ID), "bob's")
-	_, err := e.uc.Trash(ctx, alice, wsA, root.ID)
-	gt.True(t, errors.Is(err, model.ErrPermissionDenied))
-	gt.False(t, e.paper(t, wsA, root.ID).IsTrashed())
-
-	// the job is the starter's only
-	mine := e.child(t, alice, wsA, "", "mine")
-	res := gt.R1(e.uc.Trash(ctx, alice, wsA, mine.ID)).NoError(t)
-	j := jobOf(t, res)
-	gt.False(t, res.Pending())
-	gt.Equal(t, res.Trashed, []model.PaperID{mine.ID})
-	_, err = e.uc.GetJob(ctx, bob, wsA, j.ID)
-	gt.True(t, errors.Is(err, model.ErrNotFound))
-	_, err = e.uc.GetJob(ctx, alice, wsA, "not-an-id")
-	gt.True(t, errors.Is(err, model.ErrNotFound))
+	gt.R1(e.uc.Trash(ctx, alice, wsA, root.ID)).NoError(t)
+	for _, q := range append(all, root, other) {
+		got := e.paper(t, wsA, q.ID)
+		gt.False(t, got.IsTrashed())
+		gt.True(t, got.IsArchived())
+	}
+	// the root stays in its parent's body
+	gt.A(t, paperBlocks(t, e, alice, wsA, e.home(t, wsA))).Length(1)
 }
 
 func TestDropJobArchivesWhenOthersOwnPart(t *testing.T) {
@@ -121,7 +131,6 @@ func TestDropJobArchivesWhenOthersOwnPart(t *testing.T) {
 		}
 	}
 	res := e.apply(t, alice, wsA, parent.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: block.ID, BaseRev: block.Rev})
-	gt.Equal(t, res.Archived, []model.PaperID{kid.ID})
 	gt.A(t, res.Deleted).Length(0)
 	gt.True(t, e.paper(t, wsA, kid.ID).IsArchived())
 	gt.A(t, e.blocks(t, alice, wsA, parent.ID)).Length(1)
@@ -132,17 +141,14 @@ func TestArchiveSubtreeJob(t *testing.T) {
 	ctx := context.Background()
 	alice := e.user(t, "alice")
 	root, all := tree(t, e, alice, wsA, 3)
-	res := gt.R1(e.uc.Archive(ctx, alice, wsA, root.ID, true)).NoError(t)
-	j := jobOf(t, res)
-	for gt.R1(e.uc.GetJob(ctx, alice, wsA, j.ID)).NoError(t).State != model.JobDone {
-		gt.NoError(t, usecase.StepJob(ctx, e.uc, wsA, j.ID)).Required()
-	}
+	gt.R1(e.uc.Archive(ctx, alice, wsA, root.ID, true)).NoError(t)
+	j := started(t, e, wsA)
+	stepUntil(t, e, wsA, j.ID, func(*model.Job) bool { return false })
 	for _, q := range append(all, root) {
 		gt.True(t, e.paper(t, wsA, q.ID).IsArchived())
 	}
 	// without the subtree it stays a single write
-	res = gt.R1(e.uc.Unarchive(ctx, alice, wsA, root.ID, false)).NoError(t)
-	gt.A(t, res.Jobs).Length(0)
+	gt.R1(e.uc.Unarchive(ctx, alice, wsA, root.ID, false)).NoError(t)
 	gt.False(t, e.paper(t, wsA, root.ID).IsArchived())
 	gt.True(t, e.paper(t, wsA, all[0].ID).IsArchived())
 }
@@ -176,15 +182,16 @@ func TestMoveAcrossInStepsKeepsOriginalsReadOnly(t *testing.T) {
 	att := gt.R1(e.uc.Upload(ctx, alice, wsA, all[1].ID, usecase.UploadInput{Name: "x.png", ContentType: "image/png", Body: strings.NewReader("png")})).NoError(t)
 	e.apply(t, alice, wsA, all[1].ID, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockImage), Props: &model.BlockProps{AttachmentID: att.ID}})
 
-	res := gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
-	j := jobOf(t, res)
-	gt.True(t, res.Pending())
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	j := started(t, e, wsA)
 
 	// once collected, the originals cannot be written and are not found
 	j = stepUntil(t, e, wsA, j.ID, func(j *model.Job) bool { return j.Phase == model.PhaseCopy })
 	_, err := e.uc.Apply(ctx, alice, wsA, all[0].ID, usecase.BatchInput{Ops: []usecase.Op{para("late")}})
 	gt.True(t, errors.Is(err, model.ErrBusy))
 	_, err = e.uc.Trash(ctx, alice, wsA, all[1].ID)
+	gt.True(t, errors.Is(err, model.ErrBusy))
+	_, err = e.uc.MovePaper(ctx, alice, wsA, all[1].ID, usecase.MoveInput{Parent: string(e.home(t, wsA))})
 	gt.True(t, errors.Is(err, model.ErrBusy))
 	hits := gt.R1(e.uc.Search(ctx, alice, wsA, usecase.SearchInput{Query: "line"})).NoError(t)
 	gt.A(t, hits).Length(0)
@@ -215,7 +222,11 @@ func TestMoveAcrossInStepsKeepsOriginalsReadOnly(t *testing.T) {
 	hits = gt.R1(e.uc.Search(ctx, alice, wsB, usecase.SearchInput{Query: "line"})).NoError(t)
 	gt.True(t, len(hits) > 0)
 
-	// the originals are in the trash, not busy, and forward
+	// the originals are in the trash, not busy, and lead to their copies
+	_, err = e.uc.GetPaper(ctx, alice, wsA, root.ID)
+	f, moved := usecase.IsMoved(err)
+	gt.True(t, moved)
+	gt.Equal(t, f.ToPaperID, cp)
 	for _, q := range append(all, root) {
 		got := e.paper(t, wsA, q.ID)
 		gt.True(t, got.IsTrashed())
@@ -232,8 +243,8 @@ func TestMoveAcrossRollsBack(t *testing.T) {
 	root, all := tree(t, e, alice, wsA, 2)
 	target := e.child(t, alice, wsB, "", "target")
 
-	res := gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB, Parent: string(target.ID)})).NoError(t)
-	j := jobOf(t, res)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB, Parent: string(target.ID)})).NoError(t)
+	j := started(t, e, wsA)
 	j = stepUntil(t, e, wsA, j.ID, func(j *model.Job) bool { return j.Phase == model.PhaseAttach })
 	items := gt.R1(e.repo.ListJobItemsAt(ctx, wsA, j.ID, model.StageCopied, 0)).NoError(t)
 	gt.A(t, items).Length(5)
@@ -242,7 +253,8 @@ func TestMoveAcrossRollsBack(t *testing.T) {
 	}
 
 	// the new parent goes away before the copy is attached
-	trash := jobOf(t, gt.R1(e.uc.Trash(ctx, alice, wsB, target.ID)).NoError(t))
+	gt.R1(e.uc.Trash(ctx, alice, wsB, target.ID)).NoError(t)
+	trash := started(t, e, wsB)
 	stepUntil(t, e, wsB, trash.ID, func(*model.Job) bool { return false })
 	gt.True(t, e.paper(t, wsB, target.ID).IsTrashed())
 	j = stepUntil(t, e, wsA, j.ID, func(*model.Job) bool { return false })
@@ -270,15 +282,16 @@ func TestMoveAcrossStopsAtAnotherMove(t *testing.T) {
 	other := e.child(t, bob, wsA, string(mid.ID), "other")
 
 	// bob's move of his paper has marked it
-	first := jobOf(t, gt.R1(e.uc.MovePaper(ctx, bob, wsA, other.ID, usecase.MoveInput{Workspace: wsB})).NoError(t))
+	gt.R1(e.uc.MovePaper(ctx, bob, wsA, other.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	first := started(t, e, wsA)
 	stepUntil(t, e, wsA, first.ID, func(j *model.Job) bool { return j.Phase == model.PhaseCopy })
 
 	// alice's move of the tree above it fails and lets go of her papers
-	second := jobOf(t, gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t))
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	second := started(t, e, wsA, first)
 	got := stepUntil(t, e, wsA, second.ID, func(*model.Job) bool { return false })
 	gt.Equal(t, got.State, model.JobFailed)
 	gt.Equal(t, got.ErrorCode, "busy")
-	gt.True(t, errors.Is(usecase.JobError(got), model.ErrBusy))
 	gt.False(t, e.paper(t, wsA, root.ID).IsBusy())
 	gt.False(t, e.paper(t, wsA, mid.ID).IsBusy())
 	gt.Equal(t, e.paper(t, wsA, other.ID).JobID, first.ID)
@@ -293,7 +306,8 @@ func TestJobRetriesTemporaryFailures(t *testing.T) {
 	ctx := context.Background()
 	alice := e.user(t, "alice")
 	root, all := tree(t, e, alice, wsA, 2)
-	j := jobOf(t, gt.R1(e.uc.Trash(ctx, alice, wsA, root.ID)).NoError(t))
+	gt.R1(e.uc.Trash(ctx, alice, wsA, root.ID)).NoError(t)
+	j := started(t, e, wsA)
 	gt.NoError(t, usecase.StepJob(ctx, e.uc, wsA, j.ID)) // the root item
 
 	e.count.failChildren = 1
@@ -327,9 +341,7 @@ func TestRestoreVersionBringsBackTrashedChildWithItsSubtree(t *testing.T) {
 	gt.R1(e.uc.Trash(ctx, alice, wsA, kid.ID)).NoError(t)
 	gt.True(t, e.paper(t, wsA, grand.ID).IsTrashed())
 
-	res := gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
-	gt.A(t, res.Jobs).Length(1)
-	gt.Equal(t, res.Jobs[0].State, model.JobDone)
+	gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
 	gt.False(t, e.paper(t, wsA, kid.ID).IsTrashed())
 	gt.False(t, e.paper(t, wsA, grand.ID).IsTrashed())
 }

@@ -1,5 +1,5 @@
 import type {
-  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, Forward, Job, Me, Op, Paper, PaperRef, PaperStatusInfo,
+  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, Forward, Me, Op, Paper, PaperRef, PaperStatusInfo,
   PaperView, SearchHit, Sidebar, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
 } from './types'
 
@@ -91,7 +91,6 @@ export const api = {
     request<BatchResult>('PUT', `${paperPath(ws, paper)}/visibility`, { visibility, parent, after: null }),
   archive: (ws: string, paper: string, archived: boolean, subtree: boolean) =>
     request<BatchResult>('POST', `${paperPath(ws, paper)}/${archived ? 'archive' : 'unarchive'}`, { subtree }),
-  job: (ws: string, id: string) => request<Job>('GET', `${wsPath(ws)}/jobs/${enc(id)}`),
   trashPaper: (ws: string, paper: string) => request<BatchResult>('POST', `${paperPath(ws, paper)}/trash`),
   restorePaper: (ws: string, paper: string) => request<BatchResult>('POST', `${paperPath(ws, paper)}/restore`),
   pin: (ws: string, paper: string) => request<void>('PUT', `${paperPath(ws, paper)}/pin`, { after: null }),
@@ -125,30 +124,3 @@ export async function loadAllBlocks(ws: string, paper: string): Promise<BlocksPa
     after = page.next
   }
 }
-
-/** How often an unfinished background job is checked. */
-export const jobPollMs = 1000
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-/**
- * Waits until every background job of a result has finished, reporting
- * progress. A failed job becomes an ApiError with the job's error code, as
- * if the request itself had failed.
- */
-export async function waitJobs(ws: string, res: BatchResult, onProgress?: (done: number, total: number) => void, pollMs = jobPollMs): Promise<Job[]> {
-  const out: Job[] = []
-  for (let j of res.jobs ?? []) {
-    while (j.state === 'queued' || j.state === 'running') {
-      onProgress?.(j.done, j.total)
-      await sleep(pollMs)
-      j = await api.job(ws, j.id)
-    }
-    if (j.state === 'failed') throw new ApiError(409, j.error_code || 'error', j.error || 'failed')
-    out.push(j)
-  }
-  return out
-}
-
-/** Whether a result still has a background job running. */
-export const pending = (res: BatchResult) => (res.jobs ?? []).some((j) => j.state === 'queued' || j.state === 'running')

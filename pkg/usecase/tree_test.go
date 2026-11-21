@@ -88,8 +88,8 @@ func TestDeletePaperBlock(t *testing.T) {
 	}
 	// alice deletes her child: it goes to the trash with everything under it
 	b := blockOf(mine.ID)
-	res := e.apply(t, alice, wsA, parent.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: b.ID, BaseRev: b.Rev})
-	gt.Equal(t, res.Trashed, []model.PaperID{mine.ID})
+	e.apply(t, alice, wsA, parent.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: b.ID, BaseRev: b.Rev})
+	gt.True(t, e.paper(t, wsA, mine.ID).IsTrashed())
 	gt.True(t, e.paper(t, wsA, sub.ID).IsTrashed())
 	gt.Equal(t, e.paper(t, wsA, sub.ID).DeletedWith, mine.ID)
 	gt.Nil(t, blockOf(mine.ID))
@@ -99,8 +99,7 @@ func TestDeletePaperBlock(t *testing.T) {
 
 	// alice deletes bob's child: it is archived and the block stays
 	b = blockOf(theirs.ID)
-	res = e.apply(t, alice, wsA, parent.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: b.ID, BaseRev: b.Rev})
-	gt.Equal(t, res.Archived, []model.PaperID{theirs.ID})
+	e.apply(t, alice, wsA, parent.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: b.ID, BaseRev: b.Rev})
 	gt.NotNil(t, blockOf(theirs.ID))
 	gt.True(t, e.paper(t, wsA, theirs.ID).IsArchived())
 
@@ -127,10 +126,14 @@ func TestTrashRules(t *testing.T) {
 	_, err = e.uc.Archive(ctx, alice, wsA, home, false)
 	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 
-	// a subtree with someone else's paper cannot be deleted
+	// a subtree with someone else's paper is archived instead of deleted
 	x := e.child(t, bob, wsA, string(b.ID), "X")
-	_, err = e.uc.Trash(ctx, alice, wsA, a.ID)
-	gt.True(t, errors.Is(err, model.ErrPermissionDenied))
+	gt.R1(e.uc.Trash(ctx, alice, wsA, a.ID)).NoError(t)
+	gt.False(t, e.paper(t, wsA, a.ID).IsTrashed())
+	gt.True(t, e.paper(t, wsA, a.ID).IsArchived())
+	gt.True(t, e.paper(t, wsA, x.ID).IsArchived())
+	gt.R1(e.uc.Unarchive(ctx, alice, wsA, a.ID, true)).NoError(t)
+	gt.False(t, e.paper(t, wsA, x.ID).IsArchived())
 	gt.R1(e.uc.Trash(ctx, bob, wsA, x.ID)).NoError(t)
 
 	// trash B (with C), then A; restore B: it goes to the nearest live ancestor (home)
@@ -245,15 +248,18 @@ func TestMoveAcrossWorkspaces(t *testing.T) {
 	gt.R1(e.uc.SaveVersion(ctx, alice, wsA, a.ID, "first")).NoError(t)
 	e.apply(t, alice, wsA, a.ID, para("unsaved"))
 
-	res := e.apply(t, alice, wsA, a.ID, usecase.Op{Kind: usecase.OpMovePaper, Workspace: wsB})
-	gt.NotNil(t, res.Forward)
-	newID := res.Forward.ToPaperID
+	e.apply(t, alice, wsA, a.ID, usecase.Op{Kind: usecase.OpMovePaper, Workspace: wsB})
+	fwd := gt.R1(e.repo.GetForward(ctx, wsA, a.ID)).NoError(t)
+	newID := fwd.ToPaperID
 
 	// originals are in the trash and forward
 	gt.True(t, e.paper(t, wsA, a.ID).IsTrashed())
 	gt.True(t, e.paper(t, wsA, sub.ID).IsTrashed())
+	// opening the original leads to the copy, also while it is in the trash
 	_, err := e.uc.GetPaper(ctx, alice, wsA, a.ID)
-	gt.NoError(t, err) // the owner still sees it in the trash
+	f, moved := usecase.IsMoved(err)
+	gt.True(t, moved)
+	gt.Equal(t, f.ToPaperID, newID)
 	bob := e.user(t, "bob")
 	_, err = e.uc.GetPaper(ctx, bob, wsA, a.ID)
 	gt.True(t, errors.Is(err, model.ErrNotFound))
@@ -286,7 +292,7 @@ func TestMoveAcrossWorkspaces(t *testing.T) {
 	e.clock.Advance(31 * 24 * time.Hour)
 	gt.R1(e.uc.PurgeTrash(ctx)).NoError(t)
 	_, err = e.uc.GetPaper(ctx, alice, wsA, a.ID)
-	f, moved := usecase.IsMoved(err)
+	f, moved = usecase.IsMoved(err)
 	gt.True(t, moved)
 	gt.Equal(t, f.ToPaperID, newID)
 }

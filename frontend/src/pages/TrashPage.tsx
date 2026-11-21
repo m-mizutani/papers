@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { api } from '../api/client'
 import type { PaperRef } from '../api/types'
 import { useTranslation } from '../i18n'
-import { errorMessage, followJobs } from '../utils/jobs'
+import { errorMessage } from '../utils/errors'
 
 /** My papers in the trash; they are deleted for good after 30 days. */
 export function TrashPage({ ws, onChanged }: { ws: string; onChanged: () => void }) {
@@ -14,8 +14,7 @@ export function TrashPage({ ws, onChanged }: { ws: string; onChanged: () => void
   useEffect(load, [ws])
   const restore = async (id: string) => {
     try {
-      const res = await api.restorePaper(ws, id)
-      await followJobs(ws, res, setNotice, t)
+      await api.restorePaper(ws, id)
       setNotice(t('restoredFromTrash'))
       onChanged()
       load()
