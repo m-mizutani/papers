@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
 
 // End-to-end tests run the real server (in-memory storage, sign-in off,
@@ -5,7 +6,8 @@ import { defineConfig, devices } from '@playwright/test'
 // Chromium. Build the UI first (`pnpm build`). PAPERS_BIN runs a prebuilt
 // server binary instead of `go run`.
 const port = Number(process.env.E2E_PORT ?? 18090)
-const server = process.env.PAPERS_BIN ?? 'go run .'
+// The server runs from the repository root, so PAPERS_BIN is made absolute here.
+const server = process.env.PAPERS_BIN ? resolve(process.env.PAPERS_BIN) : 'go run .'
 
 export default defineConfig({
   testDir: './e2e',
