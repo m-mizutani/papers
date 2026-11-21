@@ -18,6 +18,7 @@ func mustQuery(t *testing.T, raw string) model.SearchQuery {
 
 func TestSearch(t *testing.T) {
 	runRepositoryTest(t, "titles and block text", func(t *testing.T, repo interfaces.Repository) {
+		requireSearch(t, repo)
 		ctx := context.Background()
 		home, p := homeAndChild(t, repo)
 		ws := home.WorkspaceID
@@ -49,6 +50,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	runRepositoryTest(t, "limit is validated", func(t *testing.T, repo interfaces.Repository) {
+		requireSearch(t, repo)
 		_, err := repo.Search(context.Background(), newWorkspaceID(), mustQuery(t, "x"), 0)
 		gt.Error(t, err)
 	})

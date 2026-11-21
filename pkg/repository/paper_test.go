@@ -136,8 +136,10 @@ func TestPaperTree(t *testing.T) {
 		gt.True(t, errors.Is(err, model.ErrNotFound))
 		_, err = repo.ListBlocks(ctx, ws, child.ID)
 		gt.True(t, errors.Is(err, model.ErrNotFound))
-		hits := gt.R1(repo.Search(ctx, ws, mustQuery(t, "hello"), 10)).NoError(t)
-		gt.A(t, hits).Length(0)
+		if canSearch(repo) {
+			hits := gt.R1(repo.Search(ctx, ws, mustQuery(t, "hello"), 10)).NoError(t)
+			gt.A(t, hits).Length(0)
+		}
 	})
 }
 

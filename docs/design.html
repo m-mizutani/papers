@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>papers 設計</title>
+<title>papers design</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
@@ -64,164 +64,164 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 </head>
 <body>
 <article class="sheet">
-<h1>papers 設計</h1>
-<p class="meta">最終更新 2026-11-22（モデルの刷新を実装に反映: 設定ファイルのワークスペースと Rego、public / private、ペーパーの木、今の状態と版、Rev による衝突、行・列 ID の表、色つきの記法、添付）。リポジトリ m-mizutani/papers。</p>
-<p class="callout">用語・実体・規則の正本は <a href="model.html">モデルと概念</a>（<code>docs/model.html</code>）。この文書は、それをどう実装したか（書き込みの経路、保存先の配置、配信、認可、運用）を書く。食い違えばモデルに従う。コードの読み方は <a href="codebase.html">コードベースガイド</a>。</p>
+<h1>papers design</h1>
+<p class="meta">Last updated 2026-11-22 (the rebuilt model as implemented: workspaces from configuration files with Rego, public / private papers, the paper tree, current state and versions, conflicts by revision, tables with row and column IDs, coloured markup, attachments, background jobs). Repository m-mizutani/papers.</p>
+<p class="callout">Terms, entities and rules are defined in <a href="model.html">Model and concepts</a> (<code>docs/model.html</code>), the source of truth. This document describes how they are implemented: the write path, the storage layout, the change feed, authorization and operations. Where the two disagree, the model wins. For reading the code, see the <a href="codebase.html">codebase map</a>.</p>
 
-<nav class="scroll" aria-label="目次">
-<a href="#decisions">決定事項</a><a href="#architecture">全体像</a><a href="#ops">操作のまとまり</a><a href="#versions">版</a><a href="#tree">木</a><a href="#jobs">裏の処理</a><a href="#feed">配信と presence</a><a href="#auth">認証・認可</a><a href="#api">API と MCP</a><a href="#firestore">Firestore</a><a href="#search">検索</a><a href="#attachments">添付</a><a href="#deploy">デプロイ</a><a href="#scale">規模</a><a href="#open">未決事項</a>
+<nav class="scroll" aria-label="Contents">
+<a href="#decisions">Decisions</a><a href="#architecture">Overview</a><a href="#ops">Batches</a><a href="#versions">Versions</a><a href="#tree">Tree</a><a href="#jobs">Background jobs</a><a href="#feed">Feed and presence</a><a href="#auth">Authentication and authorization</a><a href="#api">API and MCP</a><a href="#firestore">Firestore</a><a href="#search">Search</a><a href="#attachments">Attachments</a><a href="#deploy">Deployment</a><a href="#testing">Testing and CI</a><a href="#scale">Scale</a><a href="#open">Open questions</a>
 </nav>
 
 <section id="decisions">
-<h2>決定事項</h2>
+<h2>Decisions</h2>
 <ul class="decisions">
-<li class="block human"><b>ワークスペースは設定ファイルで定義する</b><span><code>--config</code> のディレクトリに 1 ファイル 1 ワークスペースの TOML。<code>[authz]</code> の Rego（<code>data.papers.authz.allow</code>）で使える人を決める。規則がなければログイン済みの全員（起動時に警告）。判定は 60 秒キャッシュし、判定できなければ拒否。画面と API にワークスペースを作る・変える入口はない。</span></li>
-<li class="block human"><b>ロールはない。ペーパーは public / private</b><span>public はワークスペースを使える人全員、private は作成者だけ（AI はその代理元）。削除・戻す・完全削除は作成者本人だけで、配下もすべて本人のものに限る。他の人はアーカイブ。システム管理者もいない。</span></li>
-<li class="block human"><b>すべての ID はサーバーが発行する UUID v4 の base62（22 文字）</b><span>受け取る ID は形式と v4 であることを検査し、違えば 404。新しいブロックを同じまとまりで指すときは <code>ref</code> と <code>after: "ref:n1"</code>。応答は ref と ID の対応を返す。</span></li>
-<li class="block agent"><b>今の状態と、明示的に保存した版だけ</b><span>commit・変更履歴・ブロックの版は廃止。ブロックは内部の Rev（内容が変わると +1）だけを持つ。版はペーパー全体の (ブロック ID, Rev, 親, 位置) の列と、変わったブロックだけの BlockSnapshot。保存は人も AI もできるが、システムは自動で保存しない。</span></li>
-<li class="block held"><b>衝突は元の Rev で判定し、一度止める</b><span>r なし・r &gt; cur は 400、r = cur は適用、r &lt; cur は衝突（強行で上書き）、他人が削除したブロックの更新は衝突（強行でも）、まとまりの中で作ったブロックは判定しない。1 つでも衝突があれば何も書かず 409 で全部返す。</span></li>
-<li class="block human"><b>子ペーパーは親の本文の paper ブロック</b><span>ペーパーは親（ParentID）だけを持つ。移動は 3 件の書き込み。ワークスペースをまたぐ移動は写して元をゴミ箱へ入れ、転送を残す。</span></li>
-<li class="block held"><b>配下に及ぶ処理とワークスペースをまたぐ移動は裏の処理（2026-11-22）</b><span>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動は <code>Job</code> として 200 件ずつのトランザクションに分けて進める。リクエストは裏の処理を作ってすぐに応答し、同じインスタンスが続ける（状態を読む API はない）。期限（60 秒）の切れた裏の処理は他のインスタンスが引き継ぐ。配下の上限（500）は廃止。移動の元は <code>Paper.JobID</code> で書けなくし、写しは終わるまで隠す。</span></li>
-<li class="block agent"><b>本文は Markdown + 色の囲み</b><span><code>[文字]{.red}</code> / <code>{.bg-yellow}</code>。保存前に正規化・検証し、検索には平文を入れる。サーバー（Go）と画面（TS）に同じ実装があり、<code>testdata/markup/cases.json</code> を両方が通す。画面はブロックごとに Tiptap で編集する。</span></li>
+<li class="block human"><b>Workspaces are defined in configuration files</b><span>One TOML file per workspace in the <code>--config</code> directory. A Rego rule in <code>[authz]</code> (<code>data.papers.authz.allow</code>) decides who may use it; with no rule, every signed-in user may (warned at startup). Decisions are cached for 60 seconds, and a decision that cannot be made denies. Neither the UI nor the API can create or change a workspace.</span></li>
+<li class="block human"><b>No roles; a paper is public or private</b><span>A public paper is for everyone who may use the workspace; a private one only for its creator (for an AI, the user it acts for). Deleting, restoring and purging are the creator's alone, and only when everything under the paper is theirs too; others archive. There are no system administrators.</span></li>
+<li class="block human"><b>Every ID is a server-issued UUID v4 in base62 (22 characters)</b><span>Incoming IDs are checked for the format and for v4; anything else is 404. A new block is referred to within its batch by <code>ref</code> and <code>after: "ref:n1"</code>, and the answer maps each ref to its ID.</span></li>
+<li class="block agent"><b>The current state, and versions saved on purpose</b><span>Commits, change history and per-block versions are gone. A block keeps only an internal revision (<code>Rev</code>, +1 whenever its contents change). A version is the paper's list of (block ID, Rev, parent, position) plus a BlockSnapshot of each block that changed. People and AI save versions; the system never does.</span></li>
+<li class="block held"><b>Conflicts are judged by the base revision, and stop the write</b><span>No base or base &gt; current: 400. Base = current: applied. Base &lt; current: conflict (force overwrites). Updating a block someone else deleted: conflict, even with force. Blocks created in the same batch are not checked. If any op conflicts, nothing is written and the 409 lists every conflict.</span></li>
+<li class="block human"><b>A child paper is a paper block in its parent's body</b><span>A paper keeps only its parent (<code>ParentID</code>). A move writes three documents. A move to another workspace copies, trashes the originals and leaves forwards.</span></li>
+<li class="block held"><b>Work on a whole subtree, and moves across workspaces, are background jobs (2026-11-22)</b><span>Trashing, restoring and archiving a subtree, and moving across workspaces, run as a <code>Job</code> split into transactions of 200 papers. The request stores the job and answers at once; the same instance runs it, and another instance takes it over once its 60-second lease ends (there is no API to read a job). The 500-paper limit on a subtree is gone. A move makes the originals read-only with <code>Paper.JobID</code> and keeps the copies hidden until they are complete.</span></li>
+<li class="block agent"><b>Block text is Markdown plus coloured spans</b><span><code>[text]{.red}</code> / <code>{.bg-yellow}</code>. Text is normalized and validated before it is stored, and search indexes the plain text. The server (Go) and the UI (TypeScript) implement it twice and both pass <code>testdata/markup/cases.json</code>. The UI edits each block with Tiptap.</span></li>
 </ul>
 </section>
 
 <section id="architecture">
-<h2>全体像</h2>
+<h2>Overview</h2>
 <figure>
-<svg viewBox="0 0 860 260" role="img" aria-label="人と AI が Cloud Run に書き、Firestore の変更フィードから配信される">
+<svg viewBox="0 0 860 260" role="img" aria-label="People and AI write through Cloud Run into Firestore; changes come back through Firestore's change feed">
 <g font-family="Instrument Sans, system-ui" font-size="13" fill="currentColor">
-<rect x="20" y="30" width="150" height="56" rx="6" fill="none" stroke="var(--human)" stroke-width="2"/><text x="95" y="55" text-anchor="middle">Web UI（人）</text><text x="95" y="73" text-anchor="middle" fill="var(--soft)">REST + WebSocket</text>
-<rect x="20" y="150" width="150" height="56" rx="6" fill="none" stroke="var(--agent)" stroke-width="2"/><text x="95" y="175" text-anchor="middle">AI エージェント</text><text x="95" y="193" text-anchor="middle" fill="var(--soft)">MCP / REST（トークン）</text>
-<rect x="300" y="80" width="220" height="90" rx="6" fill="none" stroke="currentColor"/><text x="410" y="108" text-anchor="middle">Cloud Run: papers serve</text><text x="410" y="128" text-anchor="middle" fill="var(--soft)">usecase（認可・操作・版・木）</text><text x="410" y="148" text-anchor="middle" fill="var(--soft)">設定: workspaces/*.toml + Rego</text>
-<rect x="650" y="40" width="190" height="70" rx="6" fill="none" stroke="currentColor"/><text x="745" y="68" text-anchor="middle">Firestore Enterprise</text><text x="745" y="88" text-anchor="middle" fill="var(--soft)">ペーパー・ブロック・版・Event</text>
-<rect x="650" y="150" width="190" height="56" rx="6" fill="none" stroke="currentColor"/><text x="745" y="175" text-anchor="middle">Cloud Storage</text><text x="745" y="193" text-anchor="middle" fill="var(--soft)">添付の画像</text>
+<rect x="20" y="30" width="150" height="56" rx="6" fill="none" stroke="var(--human)" stroke-width="2"/><text x="95" y="55" text-anchor="middle">Web UI (people)</text><text x="95" y="73" text-anchor="middle" fill="var(--soft)">REST + WebSocket</text>
+<rect x="20" y="150" width="150" height="56" rx="6" fill="none" stroke="var(--agent)" stroke-width="2"/><text x="95" y="175" text-anchor="middle">AI agents</text><text x="95" y="193" text-anchor="middle" fill="var(--soft)">MCP / REST (token)</text>
+<rect x="300" y="80" width="220" height="90" rx="6" fill="none" stroke="currentColor"/><text x="410" y="108" text-anchor="middle">Cloud Run: papers serve</text><text x="410" y="128" text-anchor="middle" fill="var(--soft)">usecase (access, ops, versions, tree)</text><text x="410" y="148" text-anchor="middle" fill="var(--soft)">config: workspaces/*.toml + Rego</text>
+<rect x="650" y="40" width="190" height="70" rx="6" fill="none" stroke="currentColor"/><text x="745" y="68" text-anchor="middle">Firestore Enterprise</text><text x="745" y="88" text-anchor="middle" fill="var(--soft)">papers, blocks, versions, events</text>
+<rect x="650" y="150" width="190" height="56" rx="6" fill="none" stroke="currentColor"/><text x="745" y="175" text-anchor="middle">Cloud Storage</text><text x="745" y="193" text-anchor="middle" fill="var(--soft)">attached images</text>
 <path class="flow" d="M170 58 H300" stroke="var(--human)" stroke-width="2" fill="none"/>
 <path class="flow" d="M170 178 H300" stroke="var(--agent)" stroke-width="2" fill="none"/>
 <path class="flow" d="M520 110 H650" stroke="currentColor" stroke-width="2" fill="none"/>
 <path class="flow" d="M520 150 H650 V178" stroke="currentColor" stroke-width="1.5" fill="none"/>
 <path d="M650 90 C600 230 300 240 170 80" stroke="var(--held)" stroke-width="1.5" fill="none" stroke-dasharray="4 4"/>
-<text x="420" y="235" text-anchor="middle" fill="var(--held)">変更フィード（events コレクションのリスナー）→ WebSocket</text>
+<text x="420" y="235" text-anchor="middle" fill="var(--held)">change feed (listeners on the events collection) → WebSocket</text>
 </g></svg>
-<figcaption>書き込みはすべて REST / MCP から usecase を通り、1 回の Firestore トランザクションで今の状態・検索エントリ・Event を書く。画面への配信は Event のリスナーから。状態はすべて Firestore（と Cloud Storage）にあり、どのインスタンスにつながってもよい。</figcaption>
+<figcaption>Every write comes through REST or MCP into the use cases, and one Firestore transaction writes the current state, the search entries and the events. The UI receives changes from listeners on the events. All state is in Firestore (and Cloud Storage), so a client may talk to any instance.</figcaption>
 </figure>
 </section>
 
 <section id="ops">
-<h2>操作のまとまり（batch）</h2>
-<p><code>POST …/papers/{id}/ops</code>（MCP は <code>papers_write</code>）に操作の列と <code>force</code> を送る。<code>pkg/usecase/ops.go</code> の applier が 1 回の <code>RunTx</code>（ワークスペース単位のトランザクション）で適用する。</p>
+<h2>Batches</h2>
+<p><code>POST …/papers/{id}/ops</code> (MCP: <code>papers_write</code>) takes a list of ops and <code>force</code>. The applier in <code>pkg/usecase/ops.go</code> applies them in one <code>RunTx</code> (a transaction over one workspace).</p>
 <div class="scroll"><table class="stack">
-<thead><tr><th>操作</th><th>やること</th><th>元の Rev</th></tr></thead>
+<thead><tr><th>Op</th><th>What it does</th><th>Base revision</th></tr></thead>
 <tbody>
-<tr><td><code>insert</code></td><td>ID を発行して追加。<code>table</code> なら行・列 ID とセル、<code>paper</code> なら子のペーパーも作る。本文は記法を正規化する。</td><td>不要</td></tr>
-<tr><td><code>update</code></td><td>内容（種類・本文・属性）を変える。行・列とセルの位置は変えない。変わらなければ何もしない。Rev は「まとまり前の Rev + 1」。</td><td>必須</td></tr>
-<tr><td><code>delete</code></td><td>削除。表はセルも消す。paper ブロックは消さずに <code>drop</code> の裏の処理を作る（子と配下がすべて本人のものならブロックを消して配下ごとゴミ箱へ、そうでなければ子を配下ごとアーカイブしてブロックを残す）。ブロックが消えるのは配信で届く。</td><td>必須</td></tr>
-<tr><td><code>move</code></td><td>位置だけ変える（Rev は変わらない、衝突しない）。</td><td>不要</td></tr>
-<tr><td><code>set_title</code></td><td>後勝ち（D1）。</td><td>なし</td></tr>
-<tr><td><code>insert_markdown</code></td><td>Markdown をブロックの列にして insert する。</td><td>不要</td></tr>
-<tr><td><code>insert_row</code> ほか 6 種</td><td>表の行・列の挿入（新しいセルも）、削除（そのセルも。編集中の人を <code>editing</code> で返す、D3）、並び替え。</td><td>見ない</td></tr>
-<tr><td><code>move_paper</code> 他</td><td>move_paper・set_visibility・save_version・restore_version・archive・unarchive はペーパー単位の操作で、まとまりの中で単独のときだけ受け付ける（専用の REST もある）。</td><td>不要</td></tr>
+<tr><td><code>insert</code></td><td>Issues an ID and adds the block. A <code>table</code> also gets row and column IDs and its cells; a <code>paper</code> also creates the child paper. Text is normalized.</td><td>Not needed</td></tr>
+<tr><td><code>update</code></td><td>Changes the contents (type, text, properties), never the rows, columns or cell positions. Does nothing when nothing changes. The new Rev is the Rev before the batch + 1.</td><td>Required</td></tr>
+<tr><td><code>delete</code></td><td>Deletes the block; a table loses its cells too. A paper block is not deleted by the batch: it starts a <code>drop</code> job, which deletes the block and trashes the child with its subtree when all of it is the caller's, and otherwise archives the child with its subtree and keeps the block. The block's removal arrives through the change feed.</td><td>Required</td></tr>
+<tr><td><code>move</code></td><td>Changes only the position (no new Rev, never a conflict).</td><td>Not needed</td></tr>
+<tr><td><code>set_title</code></td><td>The last writer wins (D1).</td><td>None</td></tr>
+<tr><td><code>insert_markdown</code></td><td>Turns Markdown into blocks and inserts them.</td><td>Not needed</td></tr>
+<tr><td><code>insert_row</code> and five more</td><td>Insert (with new cells), delete (with their cells; people editing them come back in <code>editing</code>, D3) and reorder table rows and columns.</td><td>Not checked</td></tr>
+<tr><td><code>move_paper</code> and others</td><td>move_paper, set_visibility, save_version, restore_version, archive and unarchive act on the whole paper and are accepted only alone in their batch (each also has its own REST route).</td><td>Not needed</td></tr>
 </tbody></table></div>
 <ul>
-<li><b>上限</b>: 変えるブロック 240、本文 3 MiB、1 ペーパー 5,000 ブロック（insert があるときだけ数える）。操作数は <code>--max-ops-per-batch</code>。</li>
-<li><b>書くもの</b>: ブロック、検索エントリ（ブロックごと、タイトルは <code>_title</code>）、Event（ブロックごと、ペーパーが変わればペーパー）。ペーパー本体はタイトルが変わったときか、<code>UpdatedAt</code> が 1 分以上古いときだけ書く（D6）。</li>
-<li><b>読み取り</b>: トランザクションでは書く前に読む必要があるので、書き込みは最後にまとめて行い、読み取りはまとめた書き込みを重ねて返す（<code>fsTx</code>）。</li>
-<li><b>画面</b>: 新しいブロックは仮のキー（<code>tmp:n</code>）で先に表示して編集を始め、応答の ref 対応で本当の ID に替える。React の key は仮のキーのまま保つので、編集中のカーソルは失われない。</li>
+<li><b>Limits</b>: 240 changed blocks, 3 MiB of text, and 5,000 blocks per paper (counted only when the batch inserts). The number of ops is <code>--max-ops-per-batch</code>.</li>
+<li><b>What is written</b>: the blocks, the search entries (one per block; the title's is <code>_title</code>) and the events (one per block, plus one for the paper when it changes). The paper document is written only when the title changes or <code>UpdatedAt</code> is a minute or more old (D6).</li>
+<li><b>Reads</b>: a Firestore transaction must read before it writes, so writes are staged and applied at the end, and reads return the staged writes on top of what is stored (<code>fsTx</code>).</li>
+<li><b>UI</b>: a new block shows at once under a temporary key (<code>tmp:n</code>) and can be edited right away; the answer's ref map then gives it its real ID. The React key stays the temporary one, so the caret is not lost.</li>
 </ul>
 </section>
 
 <section id="versions">
-<h2>版</h2>
+<h2>Versions</h2>
 <ul>
-<li><b>保存</b>（<code>SaveVersion</code>）: 今のブロックの (ID, Rev, 親, 位置) とタイトルが最新の版と同じなら何もしない。違えば、最新の版にない (ID, Rev) だけ <code>snapshots/{blockID}_{rev}</code> を書き、<code>versions/{番号}</code> を <code>Create</code>（同じ番号を同時に取ったら片方が失敗）、<code>Paper.VersionNumber</code> を進める。v1 で下書きから正本になる。</li>
-<li><b>読み取り</b>: 版 1 件と、それが指す写しを一括取得して組み立てる。<code>/latest</code> は <code>VersionNumber</code> の版。</li>
-<li><b>差分</b>: 2 つの側（版か今）を (ID, Rev) で突き合わせ、違うものだけ中身を読む。</li>
-<li><b>復元</b>: 今にあって版にないブロックは消し（paper ブロックは削除と同じ規則）、版にあって今にないブロックは同じ ID で戻す。戻すブロックの Rev は <code>max(写しの Rev + 1, 現在時刻のマイクロ秒)</code> に跳ばし、(ID, Rev) が 1 つの中身だけを指し続けるようにする。よそへ移った子・他人のゴミ箱にある子は戻さず <code>not_restored</code> で返す。ゴミ箱から戻る子は、子そのものをまとまりの中で戻し、一緒にゴミ箱に入った配下を <code>restore</code> の裏の処理で戻す。上限はかけない。</li>
-<li><b>画面</b>: 「版を保存」（メモつき）、版の一覧・表示（<code>/v/{n}</code>, <code>/latest</code>）・今との差分・「この版に戻す」。戻す前に <code>/status</code> で保存していない変更を確かめ、先に保存するかを聞く。</li>
+<li><b>Save</b> (<code>SaveVersion</code>): when the blocks' (ID, Rev, parent, position) and the title equal the latest version, nothing happens. Otherwise only the (ID, Rev) pairs missing from the latest version get a <code>snapshots/{blockID}_{rev}</code>, <code>versions/{number}</code> is written with <code>Create</code> (of two writers taking the same number, one fails), and <code>Paper.VersionNumber</code> moves on. v1 turns a draft into a canonical paper.</li>
+<li><b>Read</b>: one version and the snapshots it points to, read in one batch. <code>/latest</code> is the version numbered <code>VersionNumber</code>.</li>
+<li><b>Diff</b>: the two sides (a version or now) are matched by (ID, Rev), and only the blocks that differ are read.</li>
+<li><b>Restore</b>: blocks that exist now but not in the version are deleted (paper blocks by the delete rules); blocks in the version but not now come back with the same ID. A block that comes back gets Rev <code>max(snapshot Rev + 1, now in microseconds)</code>, so that an (ID, Rev) pair always names one content. Children that moved elsewhere, or are in someone else's trash, stay where they are and are listed in <code>not_restored</code>. A child that comes back from the trash is restored in the batch itself, and what was trashed with it by a <code>restore</code> job. There is no limit.</li>
+<li><b>UI</b>: "Save version" (with a note), the list of versions, a version (<code>/v/{n}</code>, <code>/latest</code>), the difference from now, and "Go back to this version". Before going back, <code>/status</code> tells whether there are unsaved changes, and the UI offers to save them first.</li>
 </ul>
 </section>
 
 <section id="tree">
-<h2>木（ペーパーの入れ子）</h2>
+<h2>Tree</h2>
 <ul>
-<li><b>ホーム</b>: 起動時（<code>UseCases.Init</code>）に設定の各ワークスペースについて <code>EnsureHome</code>。<code>workspaces/{ws}</code> の <code>HomePaperID</code> がなければ、記録とホームのペーパーを 1 つのトランザクションで作る。設定から消えたワークスペースの記録があれば警告だけ出す。</li>
-<li><b>子を作る</b>: 親に <code>insert paper</code>（<code>POST …/papers</code> もこれを使う）。private のペーパーは子を持たない。</li>
-<li><b>移動</b>: 元の親の paper ブロック削除、新しい親への追加、本人の <code>ParentID</code> の 3 件。新しい親から 100 段まで親を辿って循環を拒む。親はパスでも指定でき（<code>ResolvePaper</code>、同名が複数なら <code>ambiguous</code> と候補）。</li>
-<li><b>ワークスペースをまたぐ移動</b>: <code>move</code> の裏の処理（<a href="#jobs">下</a>）。新しい ID で写し（今の状態と最新の版を v1 に、添付もコピー）、写しをつないでから元をゴミ箱へ入れ、各ペーパーに転送（<code>forwards/{id}</code>）を残す。古い ID を開くと <code>moved</code>（REST はエラーコード、画面は転送先へ移る）。</li>
-<li><b>ゴミ箱</b>: <code>DeletedAt</code> と <code>DeletedWith</code>（削除を始めたペーパー）。戻すと同じ <code>DeletedWith</code> の配下も戻り、親がゴミ箱なら近い祖先（なければホーム）に置く。30 日（<code>--trash-retention</code>）を過ぎたものは毎時の処理が添付ごと完全に消す。</li>
-<li><b>配下の扱い</b>: 配下に及ぶ処理（ゴミ箱へ・戻す・配下ごとのアーカイブ）はすべて裏の処理。配下は親インデックス（<code>ParentID in [...]</code>、30 件ずつ）で 1 段ずつ集める。数の上限はない。</li>
-<li><b>子の並び</b>: 親の本文の paper ブロックの順（<code>ListPaperBlocks</code>）で、子のペーパーは一括で読む。</li>
-<li><b>サイドバー</b>: ホーム、ピン（開いた段の子だけ読む）、最近開いたもの 10 件、自分の private。<code>GetPaper</code> のたびに最近を更新する。</li>
+<li><b>Home</b>: at startup (<code>UseCases.Init</code>) each configured workspace gets <code>EnsureHome</code>: if <code>workspaces/{ws}</code> has no <code>HomePaperID</code>, the record and the home paper are created in one transaction. A stored workspace that is no longer configured only causes a warning.</li>
+<li><b>Creating a child</b>: <code>insert paper</code> into the parent (<code>POST …/papers</code> does the same). Private papers have no children.</li>
+<li><b>Moving</b>: three writes: the paper block removed from the old parent, one added to the new parent, and the paper's <code>ParentID</code>. Cycles are refused by walking up from the new parent (at most 100 levels). A parent may be given by path (<code>ResolvePaper</code>; when a title is not unique the answer is <code>ambiguous</code> with the candidates).</li>
+<li><b>Moving to another workspace</b>: a <code>move</code> job (<a href="#jobs">below</a>). The paper and its subtree are copied with new IDs (the current state, the latest version as v1, and the attachments); the copy is attached, then the originals go to the trash and each leaves a forward (<code>forwards/{id}</code>). An old ID then answers <code>moved</code> (an error code in REST; the UI follows it).</li>
+<li><b>Trash</b>: <code>DeletedAt</code> and <code>DeletedWith</code> (the paper whose deletion started it). Restoring brings back what has the same <code>DeletedWith</code>; when the parent is in the trash, the paper goes under the nearest ancestor that is not (or the home). After 30 days (<code>--trash-retention</code>) an hourly task purges it with its attachments.</li>
+<li><b>Subtrees</b>: everything that acts on a whole subtree (trash, restore, archive with the subtree) is a background job. A subtree is collected one level at a time through the parent index (<code>ParentID in [...]</code>, 30 at a time). There is no limit on its size.</li>
+<li><b>Order of children</b>: the order of the paper blocks in the parent's body (<code>ListPaperBlocks</code>); the child papers are read in one batch.</li>
+<li><b>Sidebar</b>: the home, pins (children are read only for the open levels), the 10 most recently opened papers and the user's private papers. <code>GetPaper</code> updates the recent list each time, and the UI reads the sidebar again after a paper has loaded.</li>
 </ul>
 </section>
 
 <section id="jobs">
-<h2>裏の処理（Job）</h2>
-<p><code>pkg/usecase/job.go</code> が進め方（取り出し・期限・再試行）を、<code>job_*.go</code> が種類ごとの段を持つ。対象の数に比例する書き込みは、この形でしか行わない。</p>
+<h2>Background jobs</h2>
+<p><code>pkg/usecase/job.go</code> runs jobs (picking up, leases, retries); <code>job_*.go</code> hold the steps of each kind. Writes proportional to the size of a subtree are made only this way.</p>
 <figure>
-<svg viewBox="0 0 860 210" role="img" aria-label="裏の処理の流れ。リクエストが作ってすぐ応答し、同じインスタンスが進める。止まったら他のインスタンスが期限切れを拾う。">
+<svg viewBox="0 0 860 210" role="img" aria-label="How a background job runs: the request stores it and answers, the same instance runs it, and when that instance stops another one takes over the expired job.">
 <g font-family="Instrument Sans, system-ui" font-size="13" fill="currentColor">
-<rect x="20" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="105" y="55" text-anchor="middle">リクエスト</text><text x="105" y="74" text-anchor="middle" fill="var(--soft)">作ってすぐ応答</text>
-<rect x="250" y="30" width="190" height="60" rx="6" fill="none" stroke="var(--human)" stroke-width="2"/><text x="345" y="55" text-anchor="middle">同じインスタンスで進める</text><text x="345" y="74" text-anchor="middle" fill="var(--soft)">段ごとに期限を延ばす</text>
-<rect x="500" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="585" y="55" text-anchor="middle">結果が見える</text><text x="585" y="74" text-anchor="middle" fill="var(--soft)">ペーパーの状態と配信</text>
-<rect x="250" y="130" width="190" height="60" rx="6" fill="none" stroke="var(--held)" stroke-width="2"/><text x="345" y="155" text-anchor="middle">他のインスタンス</text><text x="345" y="174" text-anchor="middle" fill="var(--soft)">15 秒ごとに期限切れを拾う</text>
-<rect x="720" y="30" width="120" height="60" rx="6" fill="none" stroke="currentColor"/><text x="780" y="55" text-anchor="middle">done / failed</text><text x="780" y="74" text-anchor="middle" fill="var(--soft)">7 日で消える</text>
+<rect x="20" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="105" y="55" text-anchor="middle">Request</text><text x="105" y="74" text-anchor="middle" fill="var(--soft)">stores it, answers</text>
+<rect x="250" y="30" width="190" height="60" rx="6" fill="none" stroke="var(--human)" stroke-width="2"/><text x="345" y="55" text-anchor="middle">Same instance runs it</text><text x="345" y="74" text-anchor="middle" fill="var(--soft)">renews the lease per step</text>
+<rect x="500" y="30" width="170" height="60" rx="6" fill="none" stroke="currentColor"/><text x="585" y="55" text-anchor="middle">Results show</text><text x="585" y="74" text-anchor="middle" fill="var(--soft)">paper state and feed</text>
+<rect x="250" y="130" width="190" height="60" rx="6" fill="none" stroke="var(--held)" stroke-width="2"/><text x="345" y="155" text-anchor="middle">Another instance</text><text x="345" y="174" text-anchor="middle" fill="var(--soft)">takes expired jobs every 15 s</text>
+<rect x="720" y="30" width="120" height="60" rx="6" fill="none" stroke="currentColor"/><text x="780" y="55" text-anchor="middle">done / failed</text><text x="780" y="74" text-anchor="middle" fill="var(--soft)">kept for 7 days</text>
 <path class="flow" d="M190 60 H250" stroke="currentColor" stroke-width="1.5" fill="none"/>
 <path class="flow" d="M440 60 H500" stroke="currentColor" stroke-width="1.5" fill="none"/>
 <path class="flow" d="M670 60 H720" stroke="currentColor" stroke-width="1.5" fill="none"/>
-<path d="M345 90 V130" stroke="var(--held)" stroke-width="1.5" fill="none" stroke-dasharray="4 4"/><text x="355" y="114" fill="var(--held)" font-size="12">止まったら</text>
+<path d="M345 90 V130" stroke="var(--held)" stroke-width="1.5" fill="none" stroke-dasharray="4 4"/><text x="355" y="114" fill="var(--held)" font-size="12">if it stops</text>
 <path class="flow" d="M440 160 H585 V90" stroke="var(--held)" stroke-width="1.5" fill="none"/>
 </g></svg>
-<figcaption>どのインスタンスも同じ段を進められる。進み具合は段と同じトランザクションで裏の処理に書くので、途中で止まっても続きから進む。</figcaption>
+<figcaption>Any instance can run any step. Progress is written to the job in the same transaction as the step, so a job that stops goes on from where it was.</figcaption>
 </figure>
 <ul>
-<li><b>保存</b>: <code>workspaces/{ws}/jobs/{job}</code> と、対象のペーパーごとの <code>…/jobs/{job}/items/{paper}</code>（深さ・子を集めたか・済んだか・写しの ID・写した位置）。終われば <code>ExpireAt</code> を 7 日後にして TTL で消す。</li>
-<li><b>期限</b>: 進めるインスタンスは <code>LeaseUntil</code>（60 秒）と自分の ID（起動ごとの乱数）を書き、段ごとに延ばす。段の初めに期限と持ち主を読み直し、他のインスタンスに取られていたら止まる。<code>serve</code> は 15 秒ごとに、設定の各ワークスペースで <code>State</code> が終わっておらず期限の切れた裏の処理を探して取る。</li>
-<li><b>段</b>: 1 段は 1 つのトランザクションで、items を 200 件まで（写しはブロックを 200 件まで）。<b>集める</b>段は未展開の items を読み、子を <code>ParentID in</code> で一括で探して items に足す。<b>当てる</b>段は未処理の items を深さの順に読み、ペーパーに印を付け、items を済みにする。</li>
-<li><b>再試行</b>: <code>ErrInvalidArgument</code>・<code>ErrPermissionDenied</code>・<code>ErrNotFound</code> は規則による失敗で、すぐ failed（戻せる段なら戻す）。他は 2 秒から倍々で最大 5 分まで間隔を空け、20 回で failed。</li>
-<li><b>始め方</b>: リクエストはその場で確かめられることだけを確かめ、裏の処理を保存して応答する。作ったインスタンスが <code>async.Dispatch</code> で進める。ゴミ箱は、集める段で他の人のペーパーが見つかれば配下ごとのアーカイブに切り替わる（D18）。規則による失敗（移動先が消えた、など）はログにだけ残す。</li>
-<li><b>移動の写し</b>: 写しの ID（ペーパー・ブロック・添付）は <code>model.DeriveID(job, 元の ID)</code> で決める（SHA-256 から作る v4 の形）。同じ段をやり直しても同じ文書を書くので、ワークスペースをまたぐトランザクションは要らない。版の v1 はペーパーの最後の段で、まだなければ作る。添付は同じキーに書き直す。</li>
-<li><b>移動の印</b>: 集める段で元の各ペーパーに <code>JobID</code> を付ける。<code>JobID</code> のあるペーパーへの書き込み（ブロック・タイトル・版・移動・公開範囲・削除、子の追加、そこへの移動）は <code>ErrBusy</code>（409 <code>busy</code>）。写しも <code>JobID</code> 付きで作る。<code>JobID</code> のあるペーパーは検索の後で除く（移動の間だけ、元も出ない）。つなぐ段で写しの印を外して根を親の本文に置き、片付ける段で元をゴミ箱に入れて転送を書き、印を外す。つなぐ前に failed なら、写しを <code>PurgePaper</code> で消し、元の印を外す。</li>
-<li><b>見え方</b>: 裏の処理の状態を読む API はない。画面は変更の配信で読み直す。移動が終わった元のペーパーは転送の記録を持ち、開くと（ゴミ箱にあっても）<code>moved</code> で移動先へ案内する。</li>
+<li><b>Storage</b>: <code>workspaces/{ws}/jobs/{job}</code>, and one <code>…/jobs/{job}/items/{paper}</code> per paper (depth, whether its children were collected, its stage, and for a move the copy's ID and how much was copied). A finished job's <code>ExpireAt</code> is set 7 days ahead and the TTL removes it.</li>
+<li><b>Leases</b>: the running instance writes <code>LeaseUntil</code> (60 seconds) and its own ID (random per start), and renews the lease with every step. Each step checks the holder and the step counter again in its transaction and stops if the job moved on. Every 15 seconds <code>serve</code> looks in each configured workspace for unfinished jobs whose lease has ended and takes them.</li>
+<li><b>Steps</b>: one step is one transaction over up to 200 items (or 200 blocks of a copy). <b>Collect</b> reads items whose children are not collected yet, finds the children in one query with <code>ParentID in</code>, and adds them as items. <b>Apply</b> reads items at the first stage in depth order, changes the papers, and moves the items on.</li>
+<li><b>Retries</b>: <code>ErrInvalidArgument</code>, <code>ErrPermissionDenied</code>, <code>ErrNotFound</code> and <code>ErrBusy</code> are failures by rule: the job fails at once (and is rolled back where that is possible). Anything else is retried after 2 seconds, doubling up to 5 minutes, and fails after 20 tries.</li>
+<li><b>Starting</b>: the request checks only what it can check at once, stores the job and answers; the instance that stored it runs it with <code>async.Dispatch</code>. A trash job that finds someone else's paper under the tree archives the tree instead (D18). Failures by rule (a target parent that went away, say) are only logged.</li>
+<li><b>Copies of a move</b>: the IDs of copied papers, blocks and attachments are <code>model.DeriveID(job, original ID)</code> (UUID v4 shaped, from SHA-256). Repeating a step writes the same documents again, so no transaction has to span two workspaces. A copy's v1 is written in the paper's last copy step if it does not exist yet; attachments are written to the same key again.</li>
+<li><b>Marks of a move</b>: collecting sets <code>JobID</code> on every original. Writes to a paper with a <code>JobID</code> (blocks, title, versions, moves, visibility, deletion, adding a child, moving something under it) get <code>ErrBusy</code> (409 <code>busy</code>). Copies are created with the <code>JobID</code> too. Papers with a <code>JobID</code> are dropped from search results (during the move the originals do not show either). Attaching clears the copies' marks and puts the copy of the root into the new parent's body; retiring trashes the originals, writes the forwards and clears their marks. A move that fails before attaching purges the copies (<code>PurgePaper</code>) and clears the originals' marks.</li>
+<li><b>What users see</b>: there is no API to read a job. The UI rereads through the change feed. An original of a finished move has a forward, and opening it (even in the trash) answers <code>moved</code>.</li>
 </ul>
 </section>
 
 <section id="feed">
-<h2>配信と presence</h2>
-<p>変更フィードは <code>papers/{id}/events</code>（<code>ExpireAt</code> の TTL で 24 時間後に消える短命の記録）。ブロックの put / delete、ペーパーの更新、版の保存、presence を同じ形で配る。<code>Watch</code> は events のクエリと、完全削除を知るためのペーパー本体の 2 本のリスナーを張り、初回のスナップショットを受け取ってから返す。</p>
+<h2>Feed and presence</h2>
+<p>The change feed is <code>papers/{id}/events</code>, short-lived records that a TTL on <code>ExpireAt</code> removes after 24 hours. Block puts and deletes, paper updates, saved versions and presence all travel the same way. <code>Watch</code> opens two listeners, a query on the events and one on the paper document (to learn about a purge), and returns after the first snapshot.</p>
 <ul>
-<li>WebSocket はサーバーから送るだけ（<code>hello</code> / <code>event</code> / <code>closing</code>）。<code>hello</code> のたびに画面は読み直す。追いつけない読者のチャネルは閉じ、再接続・再読み込みさせる。ペーパーが更新されたら見られるかを確かめ直し、見られなくなれば <code>access revoked</code>。</li>
-<li>presence は <code>POST …/presence</code>（編集の開始と 30 秒ごと、終わりに <code>leaving</code>）で Event に書き、45 秒で切れる。画面は編集中のブロックに名前を出す。行・列の削除は直近の presence を見て、消すセルを編集している人を返す。</li>
+<li>The WebSocket only sends from the server (<code>hello</code> / <code>event</code> / <code>closing</code>); the UI reloads on every <code>hello</code>. A reader that cannot keep up has its channel closed and reconnects and reloads. When the paper changes, access is checked again; a reader who lost it gets <code>access revoked</code>.</li>
+<li>Presence is reported with <code>POST …/presence</code> (when editing starts, every 30 seconds, and <code>leaving</code> at the end), stored as an event and valid for 45 seconds. The UI shows names on the blocks being edited. Deleting rows and columns looks at recent presence and returns the people editing the cells that go.</li>
 </ul>
 </section>
 
 <section id="auth">
-<h2>認証・認可</h2>
-<h3>認証</h3>
-<p>Google OIDC（許可するドメイン・メールで入口を絞る）とセッション Cookie、API トークン（<code>pap_{ID}.{秘密}</code>、保存は秘密のハッシュ）。開発用に <code>--no-authn</code>。</p>
-<h3>認可</h3>
+<h2>Authentication and authorization</h2>
+<h3>Authentication</h3>
+<p>Google OIDC (limited to the allowed domains and emails) with session cookies, and API tokens (<code>pap_{ID}.{secret}</code>, stored as a hash of the secret). <code>--no-authn</code> is for development.</p>
+<h3>Authorization</h3>
 <ol>
-<li>ワークスペース: 設定にあり、トークンの許可範囲内で、Rego が <code>allow</code>。入力は <code>{workspace: {id}, user: {id, email, domain}}</code>。</li>
-<li>ペーパー: public か、private・ゴミ箱なら作成者本人（<code>Principal.SeesPaper</code>）。</li>
-<li>書き込み: 読み取り用トークンは 403。他はすべて、見えなければ 404。</li>
-<li>作成者だけ: 公開範囲の変更、削除・戻す（配下も本人のもの）。ホームは削除・アーカイブ・移動・private 化できない。</li>
+<li>Workspace: configured, within the token's workspaces, and <code>allow</code> by its Rego rule. The input is <code>{workspace: {id}, user: {id, email, domain}}</code>.</li>
+<li>Paper: public, or for private and trashed papers the creator (<code>Principal.SeesPaper</code>).</li>
+<li>Writing: a read-only token gets 403. Everything not visible is 404.</li>
+<li>Creator only: changing visibility, deleting and restoring (with everything under it the creator's). The home cannot be deleted, archived, moved or made private.</li>
 </ol>
-<p>書き手（Actor）は人・AI（トークンの種類 agent）・system（ホームの作成）。個人用トークンの書き込みは人のまま、<code>token_id</code> で「API 経由」と出す（D7）。</p>
+<p>A writer (Actor) is a person, an AI (a token of kind agent) or the system (creating homes). Writes with a personal token stay the person's and are shown as "via API" through <code>token_id</code> (D7).</p>
 </section>
 
 <section id="api">
-<h2>API と MCP</h2>
+<h2>API and MCP</h2>
 <div class="scroll"><table class="stack">
-<thead><tr><th>REST（/api/v1/workspaces/{ws}…）</th><th>内容</th></tr></thead>
+<thead><tr><th>REST (/api/v1/workspaces/{ws}…)</th><th>What it is for</th></tr></thead>
 <tbody>
-<tr><td><code>GET /workspaces</code>, <code>/{ws}</code>, <code>/sidebar</code>, <code>/search?q&amp;under</code>, <code>/trash</code>, <code>/resolve?path</code></td><td>使えるワークスペースと表示のまとまり、サイドバー、検索、ゴミ箱、パスの解決</td></tr>
-<tr><td><code>POST /papers</code></td><td>ペーパーを作る（public は親の下、private は木の外）</td></tr>
-<tr><td><code>GET /papers/{id}</code>, <code>/blocks?after&amp;limit</code>, <code>/children</code>, <code>/markdown</code></td><td>ペーパーとパンくず、ブロックの範囲読み（子ペーパーは一括で付ける）、子の一覧、Markdown</td></tr>
-<tr><td><code>POST /papers/{id}/ops</code></td><td>操作のまとまり</td></tr>
-<tr><td><code>GET|POST /versions</code>, <code>GET /versions/{n|latest}</code>, <code>POST /versions/{n}/restore</code>, <code>GET /diff?from&amp;to</code>, <code>GET /status</code></td><td>版</td></tr>
-<tr><td><code>POST /move</code>, <code>PUT /visibility</code>, <code>POST /archive|unarchive|trash|restore</code>, <code>PUT|DELETE /pin</code>, <code>POST /presence</code>, <code>POST|GET /attachments</code>, <code>GET /live</code></td><td>木・状態・ピン・presence・添付・配信。配下に及ぶものは裏の処理を始めて応答する</td></tr>
+<tr><td><code>GET /workspaces</code>, <code>/{ws}</code>, <code>/sidebar</code>, <code>/search?q&amp;under</code>, <code>/trash</code>, <code>/resolve?path</code></td><td>The usable workspaces and their display groups, the sidebar, search, the trash, resolving a path</td></tr>
+<tr><td><code>POST /papers</code></td><td>Creating a paper (a public one under a parent, a private one outside the tree)</td></tr>
+<tr><td><code>GET /papers/{id}</code>, <code>/blocks?after&amp;limit</code>, <code>/children</code>, <code>/markdown</code></td><td>The paper and its breadcrumbs, a range of blocks (with the child papers read in one batch), the children, Markdown</td></tr>
+<tr><td><code>POST /papers/{id}/ops</code></td><td>A batch</td></tr>
+<tr><td><code>GET|POST /versions</code>, <code>GET /versions/{n|latest}</code>, <code>POST /versions/{n}/restore</code>, <code>GET /diff?from&amp;to</code>, <code>GET /status</code></td><td>Versions</td></tr>
+<tr><td><code>POST /move</code>, <code>PUT /visibility</code>, <code>POST /archive|unarchive|trash|restore</code>, <code>PUT|DELETE /pin</code>, <code>POST /presence</code>, <code>POST|GET /attachments</code>, <code>GET /live</code></td><td>Tree, state, pins, presence, attachments, the feed. Work on a subtree starts a background job and answers</td></tr>
 </tbody></table></div>
-<p>MCP（<code>/mcp</code>、トークン必須）: <code>papers_guide</code>（ワークスペースの決まりごとと、ホームの本文）、<code>papers_list_workspaces</code>、<code>papers_search</code>（パスで範囲）、<code>papers_read</code>（<code>at</code> で版、範囲、目次だけ）、<code>papers_create_paper</code>、<code>papers_write</code>、<code>papers_save_version</code>、<code>papers_versions</code>、<code>papers_diff</code>。読み書きの結果にもワークスペースの決まりごとを付け、書き込みには「まだ版になっていない」ことを返す。</p>
+<p>MCP (<code>/mcp</code>, token required): <code>papers_guide</code> (the workspace's rules and the home's text), <code>papers_list_workspaces</code>, <code>papers_search</code> (limited by path), <code>papers_read</code> (<code>at</code> for a version, ranges, the outline only), <code>papers_create_paper</code>, <code>papers_write</code>, <code>papers_save_version</code>, <code>papers_versions</code>, <code>papers_diff</code>. Results carry the workspace's rules too, and a write says that it is not in a version yet.</p>
 </section>
 
 <section id="firestore">
@@ -229,58 +229,68 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <div class="codewrap"><pre>users/{userID}                      pins/{ws}_{paper}, recents/{ws}
 emails/{base64url(email)} identities/{provider}/subjects/{sub}
 sessions/{id}  (TTL ExpiresAt)      tokens/{id}
-workspaces/{ws}                     HomePaperID（ワークスペースは設定）
+workspaces/{ws}                     HomePaperID (the workspace itself is configuration)
 workspaces/{ws}/papers/{paper}
-  …/blocks/{block}                  今の状態
-  …/versions/{0000000003}           版
-  …/snapshots/{block}_{rev}         版が指す写し
-  …/events/{auto}  (TTL ExpireAt)   変更フィード
+  …/blocks/{block}                  current state
+  …/versions/{0000000003}           versions
+  …/snapshots/{block}_{rev}         contents the versions point to
+  …/events/{auto}  (TTL ExpireAt)   change feed
   …/attachments/{id}
-workspaces/{ws}/forwards/{paper}    ワークスペースをまたいだ移動の転送
-workspaces/{ws}/jobs/{job}  (TTL ExpireAt)  裏の処理
-  …/items/{paper}  (TTL ExpireAt)   対象のペーパーごとの進み具合
+workspaces/{ws}/forwards/{paper}    forwards of moves across workspaces
+workspaces/{ws}/jobs/{job}  (TTL ExpireAt)  background jobs
+  …/items/{paper}  (TTL ExpireAt)   progress per paper
 workspaces/{ws}/search/{paper}_{block|title}</pre></div>
-<p>Enterprise はインデックスを自動で作らず、インデックスのないクエリは全件走査になる。使うクエリはすべて <code>firestore.RequiredIndexes</code> に並べ、<code>papers firestore setup</code> が足りないインデックスと TTL を作る。主なもの: papers の <code>ParentID</code>（子）、<code>Visibility + CreatedBy.UserID</code>（private）、<code>CreatedBy.UserID + DeletedAt</code>・<code>DeletedAt</code>（ゴミ箱）、blocks の <code>ParentID + Order</code>（範囲読み・挿入位置）と <code>Type + Order</code>（子の並び）、versions の <code>Number</code>、events の <code>Event.At</code>、attachments の <code>SHA256</code>、jobs の <code>State + LeaseUntil</code>（期限切れ）、items の <code>Expanded + Depth</code>・<code>Done + Depth</code>（未展開・未処理）、search の全文インデックス。</p>
-<p>契約テスト（<code>pkg/repository/*_test.go</code>）はメモリと Firestore の両方に同じ期待をかける。Firestore 側はエミュレーターか実データベース（<code>TEST_FIRESTORE_PROJECT_ID</code>）で走る。読み取り回数は usecase のテストで数え、子ペーパーの一覧が 1 回の一括取得で済むことを確かめる。</p>
+<p>Enterprise creates no index by itself and runs a query without one as a full scan. Every query is listed in <code>firestore.RequiredIndexes</code>, and <code>papers firestore setup</code> creates the missing indexes and TTL policies. The main ones: on papers, <code>ParentID</code> (children), <code>Visibility + CreatedBy.UserID</code> (private papers), <code>CreatedBy.UserID + DeletedAt</code> and <code>DeletedAt</code> (trash); on blocks, <code>ParentID + Order</code> (range reads, insert positions) and <code>Type + Order</code> (order of children); <code>Number</code> on versions; <code>Event.At</code> on events; <code>SHA256</code> on attachments; <code>State + LeaseUntil</code> on jobs (expired leases); <code>Expanded + Depth</code> and <code>Stage + Depth</code> on items; and the full-text index on search.</p>
+<p>The contract tests (<code>pkg/repository/*_test.go</code>) hold the memory and Firestore implementations to the same expectations. The Firestore side runs on the emulator or a real database (<code>TEST_FIRESTORE_PROJECT_ID</code>). Use-case tests count reads, for example that listing child papers takes one batch read.</p>
 </section>
 
 <section id="search">
-<h2>検索</h2>
-<p>検索エントリはブロックごと（記法を除いた平文）とタイトルごとに、同じトランザクションで書く。Firestore Enterprise の Search ステージ（ワークスペースのコレクション単位）で探し、当たりのペーパーを一括で読んで、見えないもの・ゴミ箱・アーカイブ（指定がなければ）を除く。除いた分を見込んで上限の 4 倍を求める。「この配下で」は当たりのペーパーの親を 1 段ずつ一括で読んで絞る。</p>
+<h2>Search</h2>
+<p>A search entry is written per block (plain text without markup) and per title, in the same transaction as the block. Search uses the Search stage of Firestore Enterprise on the workspace's collection, reads the papers of the hits in one batch, and drops what the caller may not see, what is in the trash, what a move is working on, and (unless asked) what is archived. Four times the limit is requested to make up for what is dropped. "Under this paper" walks up from the hits one level at a time with batch reads.</p>
 </section>
 
 <section id="attachments">
-<h2>添付</h2>
-<p>画像だけ（PNG・JPEG・GIF・WebP、20 MiB まで）。1 つのペーパーに属し、変わらない。保存先は <code>--attachment-backend</code>（<code>gcs</code>: Cloud Storage の JSON API、<code>dir</code>: ローカルのディレクトリ、<code>memory</code>）。キーは <code>workspaces/{ws}/papers/{p}/attachments/{id}</code>。同じペーパーに同じ中身を貼れば同じ添付を返す。image ブロックは同じペーパーの添付しか指せない。配信はサーバーを通し、読む人の権限を確かめる（署名 URL は使わない）。</p>
+<h2>Attachments</h2>
+<p>Images only (PNG, JPEG, GIF, WebP; up to 20 MiB). An attachment belongs to one paper and never changes. Storage is <code>--attachment-backend</code>: <code>gcs</code> (the Cloud Storage JSON API), <code>dir</code> (a local directory) or <code>memory</code>. The key is <code>workspaces/{ws}/papers/{p}/attachments/{id}</code>. Attaching the same bytes to the same paper returns the existing attachment. An image block can point only to attachments of its own paper. Attachments are served through the server, which checks the reader's access (no signed URLs).</p>
 </section>
 
 <section id="deploy">
-<h2>デプロイ</h2>
+<h2>Deployment</h2>
 <ul>
-<li>Cloud Run + 外部 HTTPS LB。<code>--timeout=3600</code> で WebSocket を最大 60 分保つ。最小 2 インスタンス。</li>
-<li>設定ファイル（<code>--config</code> のディレクトリ、<code>--global-config</code>）はイメージかマウントで一緒に届ける。起動時にすべて検証し、1 つでも不正なら起動しない。変更は再起動で反映する。</li>
-<li><code>papers firestore setup</code> でインデックスと TTL（sessions, events, jobs, items）を作る。</li>
-<li>裏の処理は応答の後も同じインスタンスで続けるので、CPU を常に割り当てる（<code>--no-cpu-throttling</code>）。割り当てない場合も、最小インスタンスの 15 秒ごとの見回りが期限切れを拾うので止まりはしないが、遅くなる。</li>
-<li><code>--base-url</code> が https なら Cookie に Secure を付ける。</li>
+<li>Cloud Run behind an external HTTPS load balancer. <code>--timeout=3600</code> keeps a WebSocket for up to 60 minutes. At least two instances.</li>
+<li>The configuration files (the <code>--config</code> directory and <code>--global-config</code>) ship in the image or a mount. They are all validated at startup, and any invalid one stops the server from starting. Changes take effect on restart.</li>
+<li><code>papers firestore setup</code> creates the indexes and the TTL policies (sessions, events, jobs, items).</li>
+<li>Background jobs go on on the same instance after the response, so CPU is always allocated (<code>--no-cpu-throttling</code>). Without it jobs still finish, because the minimum instances look for expired leases every 15 seconds, but more slowly.</li>
+<li>When <code>--base-url</code> is https, cookies are Secure.</li>
+</ul>
+</section>
+
+<section id="testing">
+<h2>Testing and CI</h2>
+<ul>
+<li><b>Go</b>: unit and use-case tests on the memory repository (<code>go test -race ./...</code>), and the repository contract tests on the Firestore emulator.</li>
+<li><b>Frontend</b>: ESLint, Vitest unit tests, and the type-checked build of the app and the demo.</li>
+<li><b>End to end</b>: Playwright tests in <code>frontend/e2e/</code> drive the built server (memory storage, sign-in off, the example workspaces) in Chromium, one test per basic use case: workspaces and navigation, editing and formatting, block types, tables, images, child papers, moves within and across workspaces, trash and restore, archive, private papers, pins, search, versions, live updates, conflicts, API tokens and agents, Markdown export and printing. <code>task test:e2e</code> runs them locally.</li>
+<li><b>CI</b> (<code>.github/workflows/ci.yml</code>) runs all of these on every pull request and also fails when <code>go.mod</code>/<code>go.sum</code> are not tidy.</li>
 </ul>
 </section>
 
 <section id="scale">
-<h2>規模</h2>
-<p>前の見積もり（同時接続 300、開かれているペーパー 30、編集中 60 人）の結論は変わらない。書き込みはブロック・検索エントリ・Event で 1 編集あたり 3 件程度、毎秒十数件で、ドキュメント単位の毎秒 1 回の目安を大きく下回る。ペーパー本体は 1 分に 1 回までしか書かない。</p>
-<p>注意点は 2 つ。1 本の gRPC 接続あたりストリームは 100 本までで、Watch は接続ごとに 2 本張るので、1 インスタンスに 50 接続を超えるなら、インスタンス内でペーパーごとにリスナーを共有するか接続プールを増やす（<a href="#open">未決事項</a>）。もう 1 つは版の保存で、1 版あたり変わったブロックの写しと版の文書 1 件を書く。版の文書は全ブロックの (ID, Rev, 親, 位置) を持つので、5,000 ブロックで約 400 KB と 1 MiB の上限に収まる。</p>
+<h2>Scale</h2>
+<p>The earlier estimate (300 concurrent connections, 30 open papers, 60 people editing) still holds. A write is about three documents per edit (block, search entry, event), a dozen or so per second, well below the guide of one write per second per document. The paper document is written at most once a minute.</p>
+<p>Two things need care. A gRPC connection carries at most 100 streams and <code>Watch</code> opens two per connection, so beyond 50 connections per instance the listeners must be shared per paper within the instance or the connection pool grown (<a href="#open">open questions</a>). Saving a version writes the snapshots of the changed blocks and one version document; the version document holds (ID, Rev, parent, position) for every block, about 400 KB for 5,000 blocks, within the 1 MiB limit.</p>
 </section>
 
 <section id="open">
-<h2>未決事項と次のタスク</h2>
+<h2>Open questions and next tasks</h2>
 <ul class="open">
-<li><b>Firestore 実装を実データベースで検証する。</b> 契約テストはメモリ実装で通しているが、この環境にはエミュレーターがなく Firestore 側は未実行。<code>task test:firestore</code> と Query Explain でインデックスの利用を確かめる。</li>
-<li><b>リスナーの共有。</b> 1 インスタンス 50 接続を超える規模では必要（上）。</li>
-<li><b>ゴミ箱の裏の処理の後から配下に足されたペーパー。</b> 集める段の後に他の人が配下に作ったペーパーは、ゴミ箱に入れずに残す（木からはたどれず、検索には出る）。扱いを決める。</li>
-<li><b>同じ木に重なる裏の処理。</b> 移動は <code>JobID</code> で他の書き込みを止めるが、ゴミ箱・アーカイブ同士は止めない（印を付けるだけなので結果は壊れない）。止めるべきか。</li>
-<li><b>つないだ後に失敗し続けた移動。</b> 片付ける段が 20 回失敗すると、元が書けないまま残る。今は failed にしてログに出すだけ。</li>
-<li><b>private のペーパーの招待</b>（モデルで後回しにしたもの）。</li>
-<li><b>大きな配下の書き出し・印刷</b>はまだ同期（画面が配下を順に読む）。必要なら裏の処理にする。</li>
+<li><b>Check the Firestore implementation on a real Enterprise database.</b> CI runs the contract tests on the emulator, which does not support the Search stage; confirm search and the indexes with Query Explain on a real database.</li>
+<li><b>Sharing listeners</b>, needed beyond 50 connections per instance (above).</li>
+<li><b>Papers added under a tree after a trash job collected it.</b> A paper someone else creates under the tree after the collect step is left out of the trash (it can no longer be reached through the tree but shows in search). Decide how to handle it.</li>
+<li><b>Overlapping jobs on one tree.</b> A move stops other writes with <code>JobID</code>; trash and archive jobs do not stop each other (they only set marks, so the result is not broken). Should they?</li>
+<li><b>A move that keeps failing after attaching.</b> If retiring fails 20 times, the originals stay read-only. Today the job fails and is logged.</li>
+<li><b>Inviting people to private papers</b> (left for later in the model).</li>
+<li><b>Exporting and printing a large subtree</b> is still synchronous (the UI reads the papers one after another); make it a background job if needed.</li>
 </ul>
 </section>
 </article>
@@ -289,11 +299,12 @@ workspaces/{ws}/search/{paper}_{block|title}</pre></div>
   for (const b of document.querySelectorAll('.copy')) {
     b.addEventListener('click', async () => {
       const text = b.nextElementSibling.textContent
-      try { await navigator.clipboard.writeText(text); b.textContent = 'コピーしました' }
-      catch { b.textContent = 'コピーできませんでした' }
-      setTimeout(() => { b.textContent = 'コピー' }, 1600)
+      try { await navigator.clipboard.writeText(text); b.textContent = 'Copied' }
+      catch { b.textContent = 'Could not copy' }
+      setTimeout(() => { b.textContent = 'Copy' }, 1600)
     })
   }
 }
 </script>
 </body>
+</html>
