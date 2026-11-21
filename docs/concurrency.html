@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>papers 同時編集: ロックをやめて版で守る</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+/*
+VOICE   a design proposal: what is decided, what the version model must guarantee, then the one UX choice left open.
+IDEA    the same paper sheet as docs/design.html; the conflict timeline forks into the two policies side by side.
+COLOUR  papers' palette: blue for people, violet for AI, amber for the conflict.
+TYPE    Source Serif 4 for reading, Instrument Sans for structure.
+*/
+:root{color-scheme:light dark;
+--desk:light-dark(#e4e8ee,#11161f);--sheet:light-dark(#fdfdfc,#18202c);--ink:light-dark(#1a2230,#e6eaf0);--soft:light-dark(#4a5566,#a9b3c2);--faint:light-dark(#6b7686,#7d8898);
+--rule:light-dark(#dde2e9,#2a3442);--human:light-dark(#2350c8,#7ea1ff);--agent:light-dark(#7b3fc4,#b58cf0);--held:light-dark(#b86e00,#f0a640);
+--wash:light-dark(#eef2f8,#1f2836);--code:light-dark(#1a2230,#0c1118);--codeink:light-dark(#e4e8ee,#d6dde8)}
+*{box-sizing:border-box;min-width:0}
+html{scroll-padding-top:72px}
+body{margin:0;background:var(--desk);color:var(--ink);font:17px/1.7 "Source Serif 4","Hiragino Mincho ProN","Noto Serif JP",Georgia,serif;overflow-x:clip}
+.ui,nav,table,figcaption,.meta,.tag,pre{font-family:"Instrument Sans","Hiragino Sans","Noto Sans JP",system-ui,sans-serif}
+.sheet{max-width:960px;margin:clamp(0px,3vw,40px) auto;background:var(--sheet);padding:clamp(24px,5vw,64px) clamp(18px,6vw,80px) 80px;box-shadow:0 1px 2px rgba(0,0,0,.06),0 12px 32px rgba(0,0,0,.08)}
+h1{font-size:clamp(30px,5vw,42px);line-height:1.15;margin:0 0 12px;text-wrap:balance;font-weight:600}
+h2{font-size:26px;line-height:1.25;margin:56px 0 12px;font-weight:600}
+h3{font-size:19px;margin:28px 0 6px;font-weight:600}
+p,li{max-width:68ch}
+.meta{color:var(--faint);font-size:14px;margin:0 0 28px}
+nav{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:14px;padding:12px 0;border-block:1px solid var(--rule);margin-bottom:8px}
+nav a{color:var(--soft);text-decoration:none;padding:6px 0;min-height:32px}
+nav a:hover{color:var(--human)}
+nav a:focus-visible{outline:2px solid var(--human);outline-offset:2px}
+@media(min-width:900px){nav{position:sticky;top:0;background:var(--sheet);z-index:2}}
+.block{position:relative;padding-left:20px;margin-left:-20px}
+.block::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:3px;background:var(--rule)}
+.block.human::before{background:var(--human)}.block.agent::before{background:var(--agent)}.block.held::before{background:var(--held)}
+.decisions{display:grid;gap:14px;margin:8px 0 0;padding:0;list-style:none}
+.decisions li{max-width:none}
+.decisions b{display:block;font-family:"Instrument Sans",system-ui,sans-serif;font-size:16px}
+.decisions span{color:var(--soft)}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:4px;background:var(--wash);color:var(--soft);margin-left:6px;vertical-align:2px}
+figure{margin:28px 0}
+figure svg{width:100%;height:auto;display:block;color:var(--ink)}
+figcaption{font-size:14px;color:var(--soft);margin-top:8px;max-width:72ch}
+svg text{fill:currentColor;font-family:"Instrument Sans","Hiragino Sans","Noto Sans JP",system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.55}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--rule)}
+th{font-weight:600;color:var(--soft)}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.86em;background:var(--wash);padding:1px 4px;border-radius:3px;overflow-wrap:anywhere}
+.scroll{overflow-x:auto}
+pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;overflow-x:auto;font:13px/1.6 ui-monospace,Menlo,monospace;margin:12px 0}
+.callout{background:var(--wash);padding:14px 18px;border-radius:6px;margin:16px 0}
+.rec{border:2px solid var(--human);border-radius:8px;padding:14px 18px;margin:16px 0}
+.rec b.ui{color:var(--human)}
+@media(max-width:600px){body{font-size:16px}.sheet{margin:0}table{font-size:13px}}
+</style>
+</head>
+<body>
+<article class="sheet">
+<h1>同時編集: ロックをやめて版で守る</h1>
+<p class="meta">提案 2026-11-21。決まったら <code>docs/design.html</code> の「同時編集」と決定事項に反映する。</p>
+<nav aria-label="目次"><a href="#decided">決まったこと</a><a href="#gaps">今の版管理の穴</a><a href="#versions">版管理の仕様</a><a href="#policy">衝突の扱い（未決）</a><a href="#editing">編集中の体験</a><a href="#remove">消えるもの</a><a href="#open">未決事項</a></nav>
+
+<section id="decided">
+<h2>決まったこと</h2>
+<ul class="decisions">
+<li class="block human"><b>ブロックのロックをやめる<span class="tag">11-21</span></b><span>書き込みを止める仕組みは持たない。意味としては後勝ち。ロックの記録・延長・TTL・WebSocket のロック操作をすべて削る。</span></li>
+<li class="block human"><b>その代わり版管理を厳密にする<span class="tag">11-21</span></b><span>誰がどの版を元に何を書いたかが、すべての変更について追えること。消えた内容は必ず履歴から戻せること。</span></li>
+<li class="block held"><b>衝突を拒否するか、警告だけにするかは体験設計で決める<span class="tag">未決</span></b><span>下の「衝突の扱い」で 2 案を比べる。どちらでも版管理の仕様は同じ。</span></li>
+</ul>
+</section>
+
+<section id="gaps">
+<h2>今の版管理の穴</h2>
+<p>ブロックごとの版番号と不変のスナップショットはすでにある。ただ、ロックが前提だったので、ロックなしでは次の穴が表に出る。</p>
+<div class="scroll"><table>
+<thead><tr><th>穴</th><th>起きること</th><th>場所</th></tr></thead>
+<tbody>
+<tr><td>元の版を見るのは update だけ</td><td>他人が直したばかりのブロックを、古い画面のまま削除・移動しても何も記録されない</td><td><code>usecase/commit.go</code> の delete・move</td></tr>
+<tr><td><code>base_version</code> が任意</td><td>付けずに送ると、上書きしても記録が残らない。AI は付け忘れやすい</td><td>REST・MCP の op</td></tr>
+<tr><td>移動でも版が上がる</td><td>誰かがブロックを並べ替えただけで、内容を直していた人の保存が「上書き」と判定される</td><td><code>applier.move</code></td></tr>
+<tr><td>上書きされた側が気づけない</td><td>警告は上書きした本人にしか出ない（保存直後の通知と履歴パネル）</td><td><code>PaperPage.tsx</code>, <code>HistoryPanel.tsx</code></td></tr>
+<tr><td>戻す操作がない</td><td>古い版のスナップショットは読めるが、それをもう一度現在の内容にする op がない。削除したブロックも戻せない</td><td>op の種類</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="versions">
+<h2>版管理の仕様</h2>
+<p>衝突をどう扱うかに関係なく、まずここを固める。</p>
+<h3>1. 既存ブロックへの op は必ず元の版を持つ</h3>
+<p>update・delete・move は <code>base_version</code> を必須にする。UI は表示中の版を必ず送る。API と MCP で欠けていれば 400。AI には「読んだ版を送る」ことを papers_guide で教えている（今は任意と書いている）ので、必須に変える。</p>
+<h3>2. 衝突は「内容の衝突」だけ</h3>
+<p>版番号は移動でも上がるので、番号の比較だけでは判定しない。<code>base_version</code> が現在より古いときは、そのスナップショットと現在を比べ、型・本文・属性のどれかが変わっていれば衝突とする。並び順と親だけの変化は衝突にしない。</p>
+<div class="scroll"><table>
+<thead><tr><th>自分の op</th><th>相手がしたこと</th><th>判定</th></tr></thead>
+<tbody>
+<tr><td>update</td><td>本文を変えた</td><td>衝突</td></tr>
+<tr><td>update</td><td>移動しただけ</td><td>衝突しない（自分の本文で更新、位置は相手のまま）</td></tr>
+<tr><td>update</td><td>削除した</td><td>衝突（相手は消したかった）</td></tr>
+<tr><td>delete</td><td>本文を変えた</td><td>衝突（相手の直したばかりの内容が消える）</td></tr>
+<tr><td>move</td><td>本文を変えた・移動した</td><td>衝突しない（並びは後勝ちで害がない）</td></tr>
+</tbody></table></div>
+<p>比較には <code>versions/{base}</code> を 1 回読む。古い版を元にしたときだけなので、普段の読み取りは増えない。</p>
+<h3>3. 上書きは誰の何を消したかまで残す</h3>
+<p><code>Change</code> に、上書きされた版とその書き手（スナップショットの <code>UpdatedBy</code>）を入れる。履歴に「B さんが A さんの v5 を上書き」と出せる。</p>
+<h3>4. 戻す op を足す</h3>
+<pre><code>{"op":"restore","block_id":"…","version":5,"base_version":7}</code></pre>
+<p>v5 の型・本文・属性で新しい版 v8 を作る（履歴は書き換えない）。削除済みのブロックは、最後の位置の近くに同じ ID で戻す。UI では履歴パネルの各版に「この版に戻す」を付ける。</p>
+<h3>5. 削除も 1 つの版として残す</h3>
+<p>今は削除するとブロックの本体が消え、版のスナップショットだけが残る。削除時に「削除済み」の版を 1 つ書き足し、誰がいつ消したかを版の列だけで追えるようにする。</p>
+</section>
+
+<section id="policy">
+<h2>衝突の扱い（未決）</h2>
+<p>A さんと B さんが同じ v3 を見て、B さんが先に保存して v4 になった。A さんが v3 を元に保存したとき、何が起きるか。</p>
+<figure>
+<svg viewBox="0 0 900 320" role="img" aria-label="A と B が同じ v3 から編集し、B が先に v4 を保存する。A の保存は、案 A では v5 として通り上書きが記録され、案 B では拒否されて比較画面が出る。">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<g style="color:var(--soft)">
+<line x1="40" y1="60" x2="860" y2="60" stroke="currentColor" stroke-width="1.5"/>
+<text x="40" y="28" font-size="13" font-weight="600">ブロックの版</text>
+</g>
+<circle cx="90" cy="60" r="16" fill="var(--sheet)" stroke="currentColor" stroke-width="1.5"/><text x="90" y="65" text-anchor="middle" font-size="13">v3</text>
+<g style="color:var(--human)">
+<path d="M90 76C110 120 160 130 200 130" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="210" y="134" font-size="13">A が編集を始める</text>
+<path d="M90 76C110 190 160 200 200 200" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="210" y="204" font-size="13">B が編集を始める</text>
+<path d="M330 200C360 200 370 90 386 72" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+</g>
+<circle cx="400" cy="60" r="16" fill="var(--sheet)" stroke="currentColor" stroke-width="1.5"/><text x="400" y="65" text-anchor="middle" font-size="13">v4</text>
+<text x="400" y="28" text-anchor="middle" font-size="12" style="fill:var(--soft)">B が保存</text>
+<g style="color:var(--held)">
+<path d="M350 130H520" fill="none" stroke="currentColor" stroke-width="2"/>
+<text x="436" y="122" text-anchor="middle" font-size="12">A が v3 を元に保存</text>
+<path d="M520 130C560 130 570 80 600 70" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+<path d="M520 130C560 130 570 230 600 250" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+</g>
+<circle cx="620" cy="60" r="16" fill="var(--sheet)" stroke="var(--held)" stroke-width="2"/><text x="620" y="65" text-anchor="middle" font-size="13">v5</text>
+<text x="646" y="94" font-size="13" font-weight="600">案 A: 通る</text>
+<text x="646" y="114" font-size="12" style="fill:var(--soft)">「v4（B）を上書き」と記録</text>
+<rect x="604" y="232" width="260" height="56" rx="6" fill="var(--wash)"/>
+<text x="618" y="255" font-size="13" font-weight="600">案 B: 拒否して比べる</text>
+<text x="618" y="276" font-size="12" style="fill:var(--soft)">A の画面に B の v4 と自分の案</text>
+</svg>
+<figcaption>どちらの案でも v4 は消えずに履歴に残り、restore で戻せる。違うのは、A さんが保存した瞬間にそれを知るかどうか。</figcaption>
+</figure>
+
+<div class="scroll"><table>
+<thead><tr><th></th><th>案 A: 警告だけ（素直な後勝ち）</th><th>案 B: 拒否して選ばせる（既定は拒否、明示すれば後勝ち）</th></tr></thead>
+<tbody>
+<tr><td>保存したとき</td><td>必ず通る。通った後に「B さんの変更を上書きしました」と出る</td><td>409 で止まり、B さんの v4 と自分の案を並べて見せる。「自分の内容で上書き」「B さんの内容を残す」「編集を続ける」から選ぶ</td></tr>
+<tr><td>AI のとき</td><td>通る。結果に上書きの記録が付く（読まない AI は気づかない）</td><td>エラーと現在の内容が返る。AI は読み直して書き直すか、<code>force</code> で上書きする</td></tr>
+<tr><td>消えた内容</td><td>履歴にある。戻すには気づいて restore する必要がある</td><td>上書きを選ばない限り消えない</td></tr>
+<tr><td>手間</td><td>保存時の手間はゼロ。気づくのが遅れると戻す手間が大きい</td><td>衝突したときだけ 1 回選ぶ。めったに起きない</td></tr>
+<tr><td>AI が大量に書くとき</td><td>人が直している途中のブロックを AI が上書きしても止まらない</td><td>AI が止まり、人の変更を取り込んで書き直す</td></tr>
+<tr><td>実装</td><td>今の挙動に記録を足すだけ</td><td>use case に衝突エラー、UI に比較ダイアログ、MCP に <code>force</code> の説明</td></tr>
+</tbody></table></div>
+
+<div class="rec"><b class="ui">推奨: 案 B（既定は拒否、明示すれば後勝ち）</b>
+<p>ロックがなくなると、人が衝突を知る機会は保存の瞬間しか残らない。そこで止めれば何も失われず、止まるのは同じブロックを同時に直したときだけなので、体験の負担は小さい。主な書き手の AI にとっても、エラーで止まって読み直すのは自然な動き。後勝ちの意味は <code>force</code> で残り、選んだ上書きはすべて記録される。</p></div>
+</section>
+
+<section id="editing">
+<h2>編集中の体験</h2>
+<ul>
+<li>自分が編集しているブロックに他人の変更が届いても、入力中の内容は置き換えない。ブロックの端に「B さんが更新しました（v4）」と出し、保存したときに上の流れに入る。</li>
+<li>自分が編集していないブロックは、届いた変更をそのまま反映する（今と同じ）。</li>
+<li>「誰がどこを編集中か」の表示はなくす。必要になったら、書き込みを止めない別の仕組み（在席表示）として後で足す。</li>
+<li>保存は、ブロックから離れたとき・Enter・数秒入力が止まったとき。衝突の窓を短くするため、編集中も定期的に保存する。</li>
+</ul>
+</section>
+
+<section id="remove">
+<h2>消えるもの</h2>
+<div class="scroll"><table>
+<thead><tr><th>場所</th><th>削るもの</th></tr></thead>
+<tbody>
+<tr><td>保存先</td><td><code>papers/{p}/locks</code>、その TTL、<code>LockRepository</code></td></tr>
+<tr><td>model・use case</td><td><code>BlockLock</code>、<code>ErrBlockLocked</code>、<code>AcquireLock</code>・<code>ReleaseLock</code>、commit 時のロック確認、<code>HolderKey</code></td></tr>
+<tr><td>WebSocket</td><td><code>lock</code>・<code>unlock</code>・<code>heartbeat</code> と <code>lock_result</code>・<code>lock_lost</code>。サーバーからの一方向（<code>hello</code>・<code>event</code>・<code>closing</code>）だけになる</td></tr>
+<tr><td>UI</td><td>ロックの取得と延長、他人のロックの表示、ロック中の編集不可</td></tr>
+<tr><td>MCP</td><td><code>force</code> の意味が「他人のロックを無視」から「衝突しても上書き」に変わる（案 B のとき）</td></tr>
+</tbody></table></div>
+<p>ロックの延長は、編集中の人 1 人につき 10 秒に 1 回の書き込みだった。これがなくなるので、ピーク時の書き込みの大半が消える。</p>
+</section>
+
+<section id="open">
+<h2>未決事項</h2>
+<ol>
+<li class="block held"><b class="ui">衝突の扱い:</b> 案 A か案 B か。</li>
+<li class="block"><b class="ui">上書きされた人への知らせ:</b> 履歴に出すだけでよいか。ペーパーを開いたときに「あなたの変更が上書きされています」と出すなら、人ごとの通知の置き場が要る。</li>
+<li class="block"><b class="ui">表のセル:</b> セルも 1 ブロックなので同じ規則で扱う。表の形（行数・列数）の変更とセルの編集が重なったときの扱いを詰める。</li>
+<li class="block"><b class="ui">タイトル:</b> 版を持たない。同じ規則にそろえるなら、ペーパー本体にも版を付ける。</li>
+</ol>
+</section>
+</article>
+</body>
+</html>
