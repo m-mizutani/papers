@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>papers ペーパーの整理</title>
+<title>papers organizing papers</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
@@ -80,438 +80,438 @@ td.y{color:var(--human)}td.n{color:var(--held)}
 </head>
 <body>
 <article class="sheet">
-<h1>ペーパーをどう整理するか</h1>
-<p class="lede">ワークスペースの中でペーパーがすべて同じ高さに並ぶと、数百を超えたあたりで人も AI も置き場所と探し場所を見失う。階層を持つか、持つならどんな形かを比べる。</p>
-<p class="meta">2026-11-21 起草。同日、入れ物を「フォルダ」から「ペーパーの入れ子」に改めた（フォルダは「まとめのペーパー + 子の一覧」と同じで冗長なため）。<a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1">モデルと概念</a>の続き。決めることの番号は D19 から続ける。決まったものは<a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1">モデルと概念</a>に反映済み。実装はまだしない。</p>
-<p class="callout"><b>追記（11-21）</b>: モデルの D15 で、commit・リリースをまとめて「版」（人か AI が明示的に保存したペーパーの写し。システムが勝手に作ることはない）だけにした。自動保存という概念はなく、ほかは今の状態（編集中の最新版）があるだけ。これにより、この文書の D22（移動を commit に残す）・D32（<code>MoveID</code>）は取り下げ、D26 の「リリース」は「版」、D29 の <code>/latest</code>・<code>/v/{番号}</code> は版を指し、D30（誰でも保存できる、AI も含む）はそのまま。決まったことはすべて<a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1">モデルと概念</a>に反映済みで、そちらを正とする（この文書は検討の経緯）。</p>
-<ul class="legend ui"><li class="block human">推奨する形</li><li class="block held">決めること</li><li class="block agent">AI に関わること</li></ul>
-<nav aria-label="目次"><a href="#problem">困ること</a><a href="#shapes">形の候補</a><a href="#compare">比較</a><a href="#nest">埋め込みの懸念</a><a href="#move">移動で起きること</a><a href="#tree">推奨: 埋め込み</a><a href="#decide">決めること</a></nav>
+<h1>How to organize papers</h1>
+<p class="lede">When every paper in a workspace sits at the same level, people and AI lose track of where to put things and where to look once there are a few hundred. This compares whether to have a hierarchy, and if so what shape.</p>
+<p class="meta">Drafted 2026-11-21. The same day the container changed from "folders" to "nested papers" (a folder is the same as "a summary paper plus a list of children", so it is redundant). Continues <a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1">Model and concepts</a>; decision numbers continue from D19. Decisions are carried into <a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1">Model and concepts</a>.</p>
+<p class="callout"><b>Note (11-21)</b>: D15 in the model reduced commits and releases to "versions" alone (a copy of a paper saved on purpose by a person or an AI; the system never makes one). There is no autosave; otherwise there is only the current state. So D22 (recording moves as commits) and D32 (<code>MoveID</code>) here are withdrawn, the "release" of D26 is a version, <code>/latest</code> and <code>/v/{n}</code> in D29 point to versions, and D30 (anyone may save, AI included) stands. Everything decided is in <a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1">Model and concepts</a>, which is the source of truth; this page records how the decisions were reached.</p>
+<ul class="legend ui"><li class="block human">recommended shape</li><li class="block held">to decide</li><li class="block agent">concerns AI</li></ul>
+<nav aria-label="Contents"><a href="#problem">The problem</a><a href="#shapes">Candidate shapes</a><a href="#compare">Comparison</a><a href="#nest">Concerns with embedding</a><a href="#move">What a move does</a><a href="#tree">Recommended: embedding</a><a href="#decide">Decisions</a></nav>
 
 <section id="problem">
-<h2>フラットだと何に困るか</h2>
-<p>置き場所や見通しは、検索と一覧の並べ替え、AI への目次で足りる。フラットで本当に困るのは<b>まとめて扱えない</b>ことだけで、それが次の場面で表に出る。</p>
+<h2>What goes wrong when everything is flat</h2>
+<p>Finding things and getting an overview are covered by search, sorted lists and an outline for AI. What a flat space really lacks is <b>handling things together</b>, which shows up here.</p>
 <div class="scroll"><table>
-<thead><tr><th>場面</th><th>フラットだと</th></tr></thead>
+<thead><tr><th>Situation</th><th>When flat</th></tr></thead>
 <tbody>
-<tr><td>検索・一覧の範囲を絞る</td><td>「この案件の中で探す」ができない。ワークスペース全体から探すしかない。</td></tr>
-<tr><td>AI に読ませる範囲</td><td>「この案件の資料を全部踏まえて書いて」と言っても、どれがその資料かを AI が推測するしかない。MCP の読み取り・検索に範囲を渡せない。</td></tr>
-<tr><td>片付け</td><td>終わった案件の資料をまとめてアーカイブ・削除・別のワークスペースへ移す、ができない。1 件ずつになる。</td></tr>
-<tr><td>書き出し</td><td>案件の資料を一式で Markdown や PDF に書き出せない。</td></tr>
-<tr><td>見守る</td><td>「この案件で何か変わったら知らせて」の単位がない（通知を作るとき）。</td></tr>
+<tr><td>Narrowing search and lists</td><td>"Search within this project" is impossible; only the whole workspace can be searched.</td></tr>
+<tr><td>What AI should read</td><td>"Write this taking all the project's material into account" leaves the AI guessing which papers that is. MCP reads and searches cannot be given a scope.</td></tr>
+<tr><td>Cleaning up</td><td>A finished project's material cannot be archived, deleted or moved to another workspace together; it is one by one.</td></tr>
+<tr><td>Exporting</td><td>A project's material cannot be exported as one set to Markdown or PDF.</td></tr>
+<tr><td>Watching</td><td>There is no unit for "tell me when something in this project changes" (once there are notifications).</td></tr>
 </tbody></table></div>
-<p>もう 1 つ、<b>まとまりごとの「まとめ」を定義しにくい</b>。案件の概要、資料の目次、現状の結論のような、まとまり全体について書く場所がない。フラットでは「まとめ用のペーパー」を作っても、どの資料のまとめなのかが構造として表れない（入れ子なら親ペーパーの本文がまとめになる）。</p>
-<p>さらに、<b>正本と使い捨てが混ざる</b>。AI は議事メモ・調査の途中経過・下書きを大量に作るので、整理された知識がその中に埋もれる。ただしこれは置き場所ではなく「ペーパーがどこまで固まったか」の問題で、階層ではなく状態で表すほうが筋が良い（<a href="#d-status">D26</a>）。</p>
-<h3>問題としない（検討済み）</h3>
+<p>Also, <b>a summary of a group is hard to define</b>: there is no place for writing about a group as a whole, such as the project's overview, an index of its material and its current conclusions. A "summary paper" in a flat space does not show structurally what it summarizes (when nested, the parent's body is the summary).</p>
+<p>And <b>canonical and throwaway papers mix</b>. AI produces many meeting notes, interim findings and drafts, and organized knowledge gets buried among them. That is a matter of how settled a paper is, not of where it is, and is better expressed by a state than by the hierarchy (<a href="#d-status">D26</a>).</p>
+<h3>Not a problem (considered)</h3>
 <ul>
-<li><b>一部の人だけに見せる資料</b>: ワークスペースで表す。まとまりにアクセスの範囲は持たせない。</li>
-<li><b>範囲ごとの書き方の決まり</b>: 本質ではない。決まりはワークスペースの description で足りる。</li>
-<li><b>まとまりの中の順序</b>: 本質ではない。</li>
-<li><b>パスで指す</b>: URL で足りる。</li>
-<li><b>同じ名前の衝突</b>: 検索結果に作成者と更新時刻を出せば足りる。</li>
+<li><b>Material for only some people</b>: expressed by workspaces. Groups do not carry access scopes.</li>
+<li><b>Writing rules per scope</b>: not essential; the workspace's description is enough.</li>
+<li><b>Order within a group</b>: not essential.</li>
+<li><b>Referring by path</b>: URLs are enough.</li>
+<li><b>Clashing names</b>: showing the creator and the updated time in search results is enough.</li>
 </ul>
-<p>したがって必要なのは「ペーパーの集合を名前で指せること」と「その集合のまとめを持てること」で、上の場面だけなら 1 段のまとまりでも満たせる。しかし<b>整理という観点では入れ子の構造が要る</b>。理由は<b>人が認知できる形がそれくらいしかない</b>から。人は数百の並びを一度に把握できず、数個〜十数個ずつのまとまりに分け、それをさらにまとめる形でしか全体をつかめない。AI は検索と目次で平らな集合を扱えるが、人が全体を見渡して「どこに何があるか」を持つには入れ子が要る（案件の中に調査・手順・振り返りを分ける、など）。そこでペーパーを入れ子にする（<a href="#d-shape">D19</a>）。深さは制限しない（<a href="#d-depth">D20</a>）。まとまりの所属が 1 つに決まっている（タグのように複数ではない）ほうが、片付けと書き出しで「どれが含まれるか」が明確になる。</p>
-<p>ワークスペースを細かく分けて代わりにする手もあるが、ワークスペースは設定ファイルで定義する（管理者の領分）ので、日々の整理には使えない。</p>
+<p>So what is needed is "naming a set of papers" and "having a summary of that set", which a single level of groups could satisfy for the situations above. But <b>organizing needs nesting</b>, because <b>that is the only shape people can grasp</b>: nobody takes in hundreds of items at once; people split them into groups of a few to a dozen and group those again. AI handles flat sets with search and outlines, but for people to see the whole and know where things are, nesting is needed (a project split into research, procedures and retrospectives, say). So papers nest (<a href="#d-shape">D19</a>), with no depth limit (<a href="#d-depth">D20</a>). Belonging to exactly one group (not several, as with tags) makes it clear what a cleanup or an export includes.</p>
+<p>Splitting into finer workspaces could stand in for this, but workspaces are defined in configuration files (an administrator's job), so they cannot serve everyday organizing.</p>
 </section>
 
 <section id="shapes">
-<h2>形の候補</h2>
+<h2>Candidate shapes</h2>
 <div class="shapes">
-<div class="shape"><h4>A. タグ</h4><svg viewBox="0 0 220 106" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12">障害対応手順 #手順 #DB</text><rect x="9" y="30" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="40" font-size="12">振り返り 2026-10 #振り返り</text><rect x="9" y="52" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="62" font-size="12">DB 切り替え手順 #手順 #DB</text><rect x="9" y="74" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="84" font-size="12">… すべて同じ高さ</text></svg><p>階層なし。ペーパーに複数のタグを付け、タグで絞る。</p></div>
-<div class="shape"><h4>B. フォルダ</h4><svg viewBox="0 0 220 150" role="img" aria-hidden="true"><path d="M8 9h6l2 2h8v9h-16z" fill="none" stroke="currentColor"/><text x="30" y="18" font-size="12">手順</text><rect x="31" y="30" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="40" font-size="12">DB 切り替え</text><rect x="31" y="52" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="62" font-size="12">障害対応</text><path d="M8 75h6l2 2h8v9h-16z" fill="none" stroke="currentColor"/><text x="30" y="84" font-size="12">振り返り</text><path d="M30 97h6l2 2h8v9h-16z" fill="none" stroke="currentColor"/><text x="52" y="106" font-size="12">2026</text><rect x="53" y="118" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="74" y="128" font-size="12">10 月の障害</text></svg><p>ペーパーとは別の入れ物。フォルダは入れ子にでき、ペーパーはちょうど 1 つのフォルダに入る。</p></div>
-<div class="shape"><h4>C. ペーパーの入れ子</h4><svg viewBox="0 0 220 128" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12">手順（本文あり）</text><rect x="31" y="30" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="40" font-size="12">DB 切り替え</text><rect x="53" y="52" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="74" y="62" font-size="12">付録: コマンド</text><rect x="9" y="74" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="84" font-size="12">振り返り（本文あり）</text><rect x="31" y="96" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="106" font-size="12">10 月の障害</text></svg><p>ペーパーが親を持つ。子の一覧は本文の外（本文の下やサイドバー）に出る。</p></div>
-<div class="shape pick"><h4>F. 子ペーパーをブロックで埋め込む</h4><svg viewBox="0 0 220 128" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12" font-weight="600">DB 切り替え</text><text x="30" y="40" font-size="11" style="fill:var(--soft)">切り替えの手順のまとめ…</text><rect x="28" y="50" width="180" height="20" rx="3" fill="none" stroke="var(--human)"/><text x="36" y="64" font-size="12">▤ 付録: コマンド</text><text x="30" y="88" font-size="11" style="fill:var(--soft)">失敗したら次に従う。</text><rect x="28" y="96" width="180" height="20" rx="3" fill="none" stroke="var(--human)"/><text x="36" y="110" font-size="12">▤ 切り戻し</text></svg><p>Notion の方式。子ペーパーは親の本文の中の「ペーパー」ブロックとして、書いた位置に並ぶ。</p></div>
-<div class="shape"><h4>D. 目次ペーパーとリンク</h4><svg viewBox="0 0 220 128" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12">目次: 手順</text><path d="M32 37h10m-4-4l4 4-4 4" fill="none" stroke="var(--soft)"/><text x="52" y="40" font-size="12">DB 切り替え</text><path d="M32 59h10m-4-4l4 4-4 4" fill="none" stroke="var(--soft)"/><text x="52" y="62" font-size="12">障害対応</text><rect x="9" y="74" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="84" font-size="12">DB 切り替え</text><rect x="9" y="96" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="106" font-size="12">障害対応</text></svg><p>構造は持たず、ペーパーへのリンクを並べた「目次」のペーパーで束ねる（Wiki の方式）。</p></div>
+<div class="shape"><h4>A. Tags</h4><svg viewBox="0 0 220 106" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12">Incident steps #steps #DB</text><rect x="9" y="30" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="40" font-size="12">Retro 2026-10 #retro</text><rect x="9" y="52" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="62" font-size="12">DB switchover #steps #DB</text><rect x="9" y="74" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="84" font-size="12">… all at one level</text></svg><p>No hierarchy. Papers get several tags and are filtered by them.</p></div>
+<div class="shape"><h4>B. Folders</h4><svg viewBox="0 0 220 150" role="img" aria-hidden="true"><path d="M8 9h6l2 2h8v9h-16z" fill="none" stroke="currentColor"/><text x="30" y="18" font-size="12">Steps</text><rect x="31" y="30" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="40" font-size="12">DB switchover</text><rect x="31" y="52" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="62" font-size="12">Incidents</text><path d="M8 75h6l2 2h8v9h-16z" fill="none" stroke="currentColor"/><text x="30" y="84" font-size="12">Retros</text><path d="M30 97h6l2 2h8v9h-16z" fill="none" stroke="currentColor"/><text x="52" y="106" font-size="12">2026</text><rect x="53" y="118" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="74" y="128" font-size="12">October outage</text></svg><p>A container separate from papers. Folders nest, and a paper is in exactly one folder.</p></div>
+<div class="shape"><h4>C. Nested papers</h4><svg viewBox="0 0 220 128" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12">Steps (with text)</text><rect x="31" y="30" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="40" font-size="12">DB switchover</text><rect x="53" y="52" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="74" y="62" font-size="12">Appendix: commands</text><rect x="9" y="74" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="84" font-size="12">Retros (with text)</text><rect x="31" y="96" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="52" y="106" font-size="12">October outage</text></svg><p>A paper has a parent. The list of children shows outside the body (below it, or in the sidebar).</p></div>
+<div class="shape pick"><h4>F. Child papers embedded as blocks</h4><svg viewBox="0 0 220 128" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12" font-weight="600">DB switchover</text><text x="30" y="40" font-size="11" style="fill:var(--soft)">Summary of the switchover…</text><rect x="28" y="50" width="180" height="20" rx="3" fill="none" stroke="var(--human)"/><text x="36" y="64" font-size="12">▤ Appendix: commands</text><text x="30" y="88" font-size="11" style="fill:var(--soft)">If it fails, follow this.</text><rect x="28" y="96" width="180" height="20" rx="3" fill="none" stroke="var(--human)"/><text x="36" y="110" font-size="12">▤ Rollback</text></svg><p>The Notion way. A child paper is a "paper" block in the parent's body, placed where it was written.</p></div>
+<div class="shape"><h4>D. Index papers and links</h4><svg viewBox="0 0 220 128" role="img" aria-hidden="true"><rect x="9" y="8" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="18" font-size="12">Index: steps</text><path d="M32 37h10m-4-4l4 4-4 4" fill="none" stroke="var(--soft)"/><text x="52" y="40" font-size="12">DB switchover</text><path d="M32 59h10m-4-4l4 4-4 4" fill="none" stroke="var(--soft)"/><text x="52" y="62" font-size="12">Incidents</text><rect x="9" y="74" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="84" font-size="12">DB switchover</text><rect x="9" y="96" width="12" height="13" rx="1.5" fill="none" stroke="var(--human)"/><text x="30" y="106" font-size="12">Incidents</text></svg><p>No structure; an "index" paper listing links to papers ties them together (the wiki way).</p></div>
 </div>
 </section>
 
 <section id="compare">
-<h2>比較</h2>
+<h2>Comparison</h2>
 <div class="scroll"><table>
-<thead><tr><th>観点</th><th>A. タグ</th><th>B. フォルダ</th><th>C. 入れ子</th><th>D. 目次とリンク</th></tr></thead>
+<thead><tr><th>Aspect</th><th>A. Tags</th><th>B. Folders</th><th>C. Nesting</th><th>D. Index and links</th></tr></thead>
 <tbody>
-<tr><td>人が全体を入れ子で見渡せる</td><td class="n">できない</td><td class="y">できる</td><td class="y">できる</td><td>目次を辿れば一部できる</td></tr>
-<tr><td>まとまりの「まとめ」</td><td class="n">書く場所がない</td><td>フォルダとは別に、まとめのペーパーを指定する必要がある</td><td class="y">親ペーパーの本文がそのまままとめになる</td><td class="y">目次ペーパーがまとめになる</td></tr>
-<tr><td>概念の数</td><td>タグが増える</td><td class="n">フォルダが増える（まとめのペーパーと役割が重なる）</td><td class="y">増えない（ペーパーだけ）</td><td>リンクが増える</td></tr>
-<tr><td>置き場所が 1 つに決まる</td><td class="n">決まらない</td><td class="y">決まる</td><td class="y">決まる</td><td class="n">決まらない</td></tr>
-<tr><td>公開範囲・削除・履歴</td><td>影響なし</td><td>フォルダ自体は公開範囲も版も持たないので単純</td><td>ルールが要る（<a href="#nest">次節</a>で解く）</td><td>リンク切れ・見えないリンク先の扱いが要る</td></tr>
-<tr><td>読み込み</td><td>タグの索引</td><td colspan="2">同じ。開いた段だけ読み、パンくずは親を辿る（<a href="#d-ancestors">D28</a>）</td><td>リンクの逆引きの索引</td></tr>
+<tr><td>People can see the whole as a nested structure</td><td class="n">no</td><td class="y">yes</td><td class="y">yes</td><td>partly, by following indexes</td></tr>
+<tr><td>A summary of a group</td><td class="n">nowhere to write it</td><td>a summary paper must be named besides the folder</td><td class="y">the parent's body is the summary</td><td class="y">the index paper is the summary</td></tr>
+<tr><td>Number of concepts</td><td>tags are added</td><td class="n">folders are added (overlapping with summary papers)</td><td class="y">none added (papers only)</td><td>links are added</td></tr>
+<tr><td>One place per paper</td><td class="n">no</td><td class="y">yes</td><td class="y">yes</td><td class="n">no</td></tr>
+<tr><td>Visibility, deletion, history</td><td>unaffected</td><td>simple: folders have neither visibility nor versions</td><td>needs rules (solved in <a href="#nest">the next section</a>)</td><td>broken links and links to invisible papers need handling</td></tr>
+<tr><td>Reading</td><td>a tag index</td><td colspan="2">the same: read only the open levels; breadcrumbs walk up the parents (<a href="#d-ancestors">D28</a>)</td><td>an index of back links</td></tr>
 </tbody></table></div>
-<p>B と C の違いは、入れ物を別の概念にするかどうかだけ。B のフォルダは、まとめを持たせた時点で「まとめのペーパー + 子の一覧」と同じになり、冗長になる。</p>
+<p>B and C differ only in whether the container is a separate concept. A folder with a summary becomes "a summary paper plus a list of children", so it is redundant.</p>
 </section>
 
 <section id="nest">
-<h2>埋め込み（F）の懸念と解き方</h2>
+<h2>Concerns with embedding (F) and how they are solved</h2>
 <div class="scroll"><table>
-<thead><tr><th>懸念</th><th>解き方（推奨）</th></tr></thead>
+<thead><tr><th>Concern</th><th>Solution (recommended)</th></tr></thead>
 <tbody>
-<tr><td>子の置き場所が、親の本文（ブロックの版）に混ざる</td><td>混ざることを受け入れる。子の追加・削除・並びの変更は親の本文の変更として親の履歴に残り、文脈の中で「いつ子が増えたか」が分かる。子の中身は親の版に入らない（ペーパーブロックは子の ID しか持たない）。</td></tr>
-<tr><td>ペーパーブロックを消したら子はどうなるか</td><td>子を配下ごとゴミ箱に入れる（<a href="#d-delete-parent">D21</a>）。画面は消す前に「子ペーパー n 件もゴミ箱に入ります」と確かめる。親の版を戻して（restore）ブロックが戻れば、子も一緒に戻る。</td></tr>
-<tr><td>衝突の判定に巻き込まれる</td><td>ペーパーブロックの中身（子の ID）は変わらないので、内容の衝突は起きない。並びの変更は他のブロックと同じく後勝ち。子のタイトルは子のものを表示するだけで、ブロックには持たない。</td></tr>
-<tr><td>同じ子を 2 か所に置く（コピー・貼り付け）</td><td>できない。子のペーパーブロックはちょうど 1 つ。他の場所から指したいときは普通のリンク。</td></tr>
-<tr><td>移動が 2 つのペーパーにまたがる</td><td>元の親からペーパーブロックを消し、新しい親に足し、子の親を書き換える。これを 1 つのトランザクションで行う（commit の持ち方は <a href="#d-move-commit">D32</a>）。</td></tr>
-<tr><td>private</td><td>private は木の外にフラットに置く（<a href="#d-private">D27</a>）。private のペーパーはペーパーブロックを持たず、どこにも埋め込まれない。</td></tr>
-<tr><td>循環（自分の子孫の下へ動かす）</td><td>移動のトランザクションの中で、移動先から親を辿り、自分に行き当たらないことを確かめる。</td></tr>
-<tr><td>AI が「親の本文に書くか、子にするか」で迷う</td><td><code>papers_guide</code> に「親の本文はまとめ（概要・各子の紹介・現状の結論）、詳細は子に書く」と書く。子を作るのは「親の本文のこの位置にペーパーブロックを足す」操作なので、まとめの文脈と一緒に置ける。</td></tr>
+<tr><td>Where children are mixes into the parent's body (block versions)</td><td>Accept it. Adding, removing and reordering children are changes of the parent's body and appear in its history, so it shows in context when a child arrived. A child's contents are not part of the parent's versions (a paper block holds only the child's ID).</td></tr>
+<tr><td>What happens to the child when its paper block is deleted</td><td>The child goes to the trash with everything under it (<a href="#d-delete-parent">D21</a>). The UI confirms first: "n child papers go to the trash too". If restoring the parent brings the block back, the child comes back too.</td></tr>
+<tr><td>Caught up in conflict checks</td><td>A paper block's contents (the child's ID) never change, so there is no content conflict. Order is last-writer-wins like other blocks. The child's title is shown from the child, not stored in the block.</td></tr>
+<tr><td>The same child in two places (copy and paste)</td><td>Not possible: a child has exactly one paper block. Elsewhere, use an ordinary link.</td></tr>
+<tr><td>A move spans two papers</td><td>Remove the paper block from the old parent, add one to the new parent and change the child's parent, in one transaction (how commits record it: <a href="#d-move-commit">D32</a>).</td></tr>
+<tr><td>private</td><td>Private papers sit flat outside the tree (<a href="#d-private">D27</a>). A private paper has no paper block and is embedded nowhere.</td></tr>
+<tr><td>Cycles (moving under one's own descendant)</td><td>Inside the move's transaction, walk up from the target and check that the paper itself is not reached.</td></tr>
+<tr><td>AI unsure whether to write in the parent's body or a child</td><td><code>papers_guide</code> says: "the parent's body is the summary (overview, an introduction of each child, current conclusions); details go into children". Creating a child is adding a paper block at a place in the parent's body, so it sits next to the summary's context.</td></tr>
 </tbody></table></div>
 </section>
 
 <section id="move">
-<h2>移動で起きること</h2>
-<p>この節では、次の記号を使う。</p>
+<h2>What a move does</h2>
+<p>This section uses these names.</p>
 <ul>
-<li><b>P</b>: 動かすペーパー（配下に n 件のペーパーを持つ）</li>
-<li><b>O</b>: P の元の親（O の本文に P のペーパーブロックがある）</li>
-<li><b>N</b>: P の新しい親（N の本文に P のペーパーブロックを置く）</li>
-<li><b>X</b>: N の本文の中で、P を置く位置の直前のブロック</li>
+<li><b>P</b>: the paper being moved (with n papers under it)</li>
+<li><b>O</b>: P's old parent (O's body holds P's paper block)</li>
+<li><b>N</b>: P's new parent (P's paper block goes into N's body)</li>
+<li><b>X</b>: the block in N's body right before where P goes</li>
 </ul>
-<p>例: 「手順」（O）の下の「DB 切り替え」（P）を、「インフラ」（N）の本文の「概要」の段落（X）の後へ動かす。</p>
+<p>Example: move "DB switchover" (P) under "Steps" (O) to after the "Overview" paragraph (X) in the body of "Infrastructure" (N).</p>
 
-<h3>書き込むもの</h3>
+<h3>What is written</h3>
 <div class="scroll"><table>
-<thead><tr><th>対象</th><th>変化</th><th>同じトランザクションか</th></tr></thead>
+<thead><tr><th>Target</th><th>Change</th><th>Same transaction?</th></tr></thead>
 <tbody>
-<tr><td>O の本文</td><td>P のペーパーブロックを削除（ブロックの版が 1 つ増える）。O に commit</td><td rowspan="3">同じ（3 つで 1 つ）</td></tr>
-<tr><td>N の本文</td><td>X の後に P のペーパーブロックを<b>新しいブロックとして</b>挿入（ブロックはペーパーをまたがないので、O のブロックを動かすのではない）。N に commit</td></tr>
-<tr><td>P</td><td><code>ParentID</code> を書き換え。P に <code>move_paper</code> の commit。3 つの commit は同じ移動の ID で結ぶ（<a href="#d-move-commit">D32</a>）</td></tr>
-<tr><td>P の配下 n 件</td><td><b>何も書かない</b>。配下は親（P）を指しているだけなので、P が動けば配下もそのまま付いていく</td><td>—</td></tr>
-<tr><td>検索エントリ</td><td>変えない。祖先を持たせないので、移動で書き直す必要がない。「この配下で探す」は、検索で当たったペーパーそれぞれの親を辿って絞る（当たりは少数なので辿る量も少ない）</td><td>—</td></tr>
+<tr><td>O's body</td><td>P's paper block is deleted (one more block version). A commit on O</td><td rowspan="3">yes (three in one)</td></tr>
+<tr><td>N's body</td><td>P's paper block is inserted after X <b>as a new block</b> (blocks never cross papers, so O's block is not moved). A commit on N</td></tr>
+<tr><td>P</td><td><code>ParentID</code> changes. A <code>move_paper</code> commit on P. The three commits are tied by one move ID (<a href="#d-move-commit">D32</a>)</td></tr>
+<tr><td>The n papers under P</td><td><b>Nothing is written</b>. They only point to their parent (P), so they follow P</td><td>—</td></tr>
+<tr><td>Search entries</td><td>Unchanged. Papers keep no ancestors, so a move rewrites nothing. "Search under this paper" walks up from each hit (hits are few, so the walk is short)</td><td>—</td></tr>
 </tbody></table></div>
 
-<h3>受け付ける前の検査</h3>
+<h3>Checks before accepting</h3>
 <ul>
-<li>P はホームではない。P は public（private は木にない。private を public にするのは「どこにもない所から N へ置く」移動）。</li>
-<li>N は同じワークスペースの public のペーパーで、ゴミ箱にない。ワークスペースをまたぐ移動は写して消す別の処理（<a href="#d-cross-ws">D35</a>）。</li>
-<li>循環しない: N が P 自身でも、P の配下でもない（N から親を辿って P に行き当たらない）。</li>
-<li>動かした後の深さが安全弁（100）を超えない。配下の深さは数えないので、安全弁は「辿るときに 100 段で打ち切る」として働く。</li>
-<li>N がアーカイブ済みでも置ける。アーカイブは各ペーパーの印で、配下に継がない（P はアーカイブされない）。</li>
+<li>P is not the home. P is public (private papers are not in the tree; making one public is a move "from nowhere to N").</li>
+<li>N is a public paper of the same workspace, not in the trash. Moving across workspaces is a separate copy-and-delete (<a href="#d-cross-ws">D35</a>).</li>
+<li>No cycle: N is neither P nor under P (walking up from N never reaches P).</li>
+<li>The depth after the move stays within the safety valve (100). The depth under P is not counted; the valve works as "stop walking after 100 levels".</li>
+<li>N may be archived. Archiving is a mark on each paper and is not inherited (P is not archived).</li>
 </ul>
 
-<h3>同時に起きたとき</h3>
+<h3>When things happen at the same time</h3>
 <div class="scroll"><table>
-<thead><tr><th>同時に起きること</th><th>結果</th></tr></thead>
+<thead><tr><th>Concurrent events</th><th>Result</th></tr></thead>
 <tbody>
-<tr><td>2 人が同じ P を別々の場所へ動かす</td><td>後勝ち。トランザクションが P を読み書きするので、後の方は先の結果（新しい O）から改めて動かす。</td></tr>
-<tr><td>A が X を Y の下へ、B が Y を X の下へ（循環になる組み合わせ）</td><td>両方のトランザクションが相手を読むので、片方がやり直しになり、やり直しで循環を見つけて拒否する。</td></tr>
-<tr><td>P の移動中に、誰かが O の本文で P のペーパーブロックを削除（= 配下ごとゴミ箱）</td><td>先に終わった方が勝つ。移動が先なら削除は「もうない」で何も起きない。削除が先なら移動は「P はゴミ箱」で拒否。</td></tr>
-<tr><td>P の移動中に、N の祖先が動く</td><td>P のトランザクションは N から根までの親を読むので、そのどれかが書き換わればやり直しになり、新しい親の並びで確かめ直す。</td></tr>
-<tr><td>N の本文で X が同時に削除・移動される</td><td>普通の挿入と同じ規則（X がなければその直前の生きているブロックの後、なければ先頭）。</td></tr>
-<tr><td>O や N の本文が同時に編集される</td><td>ペーパーブロックの追加・削除は他のブロックの内容と衝突しない。並びは後勝ち。</td></tr>
+<tr><td>Two people move the same P to different places</td><td>The last wins. The transaction reads and writes P, so the later one moves it again from the earlier result (the new O).</td></tr>
+<tr><td>A moves X under Y while B moves Y under X (a cycle together)</td><td>Each transaction reads the other's paper, so one is retried, finds the cycle and is refused.</td></tr>
+<tr><td>During P's move, someone deletes P's paper block in O's body (= trash with its subtree)</td><td>Whichever finishes first wins. If the move is first, the deletion finds nothing; if the deletion is first, the move is refused because P is in the trash.</td></tr>
+<tr><td>During P's move, an ancestor of N moves</td><td>P's transaction reads the parents from N up to the root, so a change in any of them retries it with the new chain.</td></tr>
+<tr><td>X is deleted or moved at the same time in N's body</td><td>The rule of any insert (after the closest live block before X, else at the top).</td></tr>
+<tr><td>O's or N's body is edited at the same time</td><td>Adding or removing a paper block conflicts with no other block's contents; order is last-writer-wins.</td></tr>
 </tbody></table></div>
 
-<h3>履歴とリリース</h3>
+<h3>History and releases</h3>
 <ul>
-<li>O・N・P それぞれの履歴に移動が残り、移動の ID で互いに辿れる。「誰が、どこから、どこへ」が分かる。</li>
-<li><b>O の古いリリース</b>（v2 など）には P のペーパーブロックが含まれる。v2 を開くと P は「現在は N の下」として今の P へのリンクで出す。</li>
-<li><b>O を古い版に戻して</b>も、P のペーパーブロックは戻らない。P は移動した時点で O の管理から外れている（<a href="#d-restore-moved">D34</a>）。</li>
-<li>P 自身のリリースは変わらない（親はリリースに含めない）。P の <code>/v/{番号}</code> のパンくずは今の場所を出す。</li>
+<li>The move appears in the histories of O, N and P, which point to each other through the move's ID: who moved what from where to where.</li>
+<li><b>O's older releases</b> (v2, say) contain P's paper block. Opening v2 shows P as "now under N", linking to today's P.</li>
+<li><b>Restoring O to an older version</b> does not bring P's paper block back: P left O's care when it moved (<a href="#d-restore-moved">D34</a>).</li>
+<li>P's own releases do not change (the parent is not part of a release). The breadcrumbs of P's <code>/v/{n}</code> show where it is now.</li>
 </ul>
 
-<h3>派生データと画面</h3>
+<h3>Derived data and screens</h3>
 <ul>
-<li>パンくず・パスが変わる。パスは保存していないので書き換えは要らないが、人が覚えていた「場所」は変わる。URL とリンクは ID なので切れない。</li>
-<li>お気に入りは ID なので残る。P が他のお気に入りの配下に入れば、サイドバーで 2 か所に見える（同じペーパー）。</li>
-<li>O・N・P と、配下を開いている画面に変更フィードで届き、サイドバーとパンくずが更新される。</li>
-<li>「この配下で探す・アーカイブ・書き出す」の範囲が変わる（O の配下から外れ、N の配下に入る）。将来の「配下の変更を見守る」も同じ。</li>
-<li>公開範囲とアクセスは変わらない（同じワークスペースの中で、public のまま）。</li>
-<li>元に戻す特別な操作はない。戻すのは「元の場所へもう一度動かす」。</li>
+<li>Breadcrumbs and paths change. Paths are not stored, so nothing is rewritten, but the "place" people remembered changes. URLs and links use IDs and do not break.</li>
+<li>Pins are IDs and stay. If P lands under another pinned paper, it shows twice in the sidebar (the same paper).</li>
+<li>Pages showing O, N, P or what is under them get the change through the feed, and their sidebars and breadcrumbs update.</li>
+<li>The scope of "search, archive or export under this paper" changes (P leaves O's subtree and joins N's); so would a future "watch this subtree".</li>
+<li>Visibility and access do not change (same workspace, still public).</li>
+<li>There is no special undo; undoing is "move it back".</li>
 </ul>
 </section>
 
 <section id="tree" class="block human">
-<h2>推奨: 子ペーパーをブロックで埋め込む（F）</h2>
-<p>入れ物の概念は作らない。子ペーパーは、親の本文の中の「ペーパー」ブロックとして存在する。親の本文がそのまま、子を紹介しながらまとめる場所になる。</p>
-<h3>画面での見え方</h3>
+<h2>Recommended: child papers embedded as blocks (F)</h2>
+<p>No container concept. A child paper exists as a "paper" block in its parent's body, so the parent's body is where the children are introduced and summarized.</p>
+<h3>On screen</h3>
 <figure>
-<svg viewBox="0 0 860 380" role="img" aria-label="F の画面。左のサイドバーにお気に入りとその配下、自分だけの private。右に開いたペーパー。本文の流れの中に子ペーパーのブロックが埋まっている。">
+<svg viewBox="0 0 860 380" role="img" aria-label="Screen with F. The sidebar on the left shows pins with what is under them and the user's private papers. On the right, an open paper with child paper blocks embedded in the flow of its text.">
 <g fill="none" stroke="currentColor" stroke-width="1.2"><rect x="10" y="10" width="840" height="360" rx="8"/><path d="M220 10V370"/></g>
 <g fill="none" stroke="var(--human)" stroke-width="1.2"><rect x="250" y="134" width="570" height="34" rx="5"/><rect x="250" y="226" width="570" height="34" rx="5"/></g>
 <g font-size="13">
-<text x="26" y="38" font-weight="600">お気に入り</text>
-<text x="34" y="64">▾ 手順</text>
+<text x="26" y="38" font-weight="600">Pinned</text>
+<text x="34" y="64">▾ Steps</text>
 <rect x="44" y="74" width="168" height="24" rx="4" style="fill:var(--wash)"/>
-<text x="52" y="91" font-weight="600">▾ DB 切り替え</text>
-<text x="76" y="118">付録: コマンド</text><text x="76" y="144">切り戻し</text>
-<text x="34" y="172">▸ 10 月の障害の振り返り</text>
-<text x="26" y="214" font-weight="600">ホーム</text><text x="34" y="240">security</text>
-<text x="26" y="282" style="fill:var(--soft)">自分だけ（private）</text>
-<text x="34" y="308" style="fill:var(--soft)">メモ 11/20</text><text x="34" y="334" style="fill:var(--soft)">下書き: 監視の見直し</text>
+<text x="52" y="91" font-weight="600">▾ DB switchover</text>
+<text x="76" y="118">Appendix: commands</text><text x="76" y="144">Rollback</text>
+<text x="34" y="172">▸ October outage retro</text>
+<text x="26" y="214" font-weight="600">Home</text><text x="34" y="240">security</text>
+<text x="26" y="282" style="fill:var(--soft)">Only me (private)</text>
+<text x="34" y="308" style="fill:var(--soft)">Memo 11/20</text><text x="34" y="334" style="fill:var(--soft)">Draft: monitoring review</text>
 </g>
-<g font-size="12" style="fill:var(--soft)"><text x="250" y="38">security / 手順 / DB 切り替え</text><text x="760" y="38">v3 · 正本</text></g>
-<text x="250" y="72" font-size="22" font-weight="600">DB 切り替え</text>
+<g font-size="12" style="fill:var(--soft)"><text x="250" y="38">security / Steps / DB switchover</text><text x="760" y="38">v3 · canonical</text></g>
+<text x="250" y="72" font-size="22" font-weight="600">DB switchover</text>
 <g font-size="13">
-<text x="250" y="104">本番 DB を新しいクラスタへ切り替える手順のまとめ。</text>
-<text x="250" y="124">作業の前に、使うコマンドを次で確認する。</text>
-<text x="266" y="156">▤ 付録: コマンド</text><text x="700" y="156" style="fill:var(--soft)">正本 · 11/19</text>
-<text x="250" y="192">1. 書き込みを止める　2. レプリカの遅れが 0 になるのを待つ　3. …</text>
-<text x="250" y="214">失敗したら次に従う。</text>
-<text x="266" y="248">▤ 切り戻し</text><text x="700" y="248" style="fill:var(--soft)">下書き · 11/02</text>
-<text x="250" y="292" style="fill:var(--faint)">青枠がペーパーブロック（子ペーパー）。本文の流れの中に、書いた位置に並ぶ。</text>
+<text x="250" y="104">Summary of switching the production DB to the new cluster.</text>
+<text x="250" y="124">Before starting, check the commands below.</text>
+<text x="266" y="156">▤ Appendix: commands</text><text x="700" y="156" style="fill:var(--soft)">canonical · 11/19</text>
+<text x="250" y="192">1. Stop writes   2. Wait for replica lag to reach 0   3. …</text>
+<text x="250" y="214">If it fails, follow this.</text>
+<text x="266" y="248">▤ Rollback</text><text x="700" y="248" style="fill:var(--soft)">draft · 11/02</text>
+<text x="250" y="292" style="fill:var(--faint)">Blue frames are paper blocks (child papers), placed where they were written in the flow of the text.</text>
 </g>
 </svg>
-<figcaption>F の画面。子ペーパーは本文の中のブロックとして並び、開くとその子に移る。サイドバーは木全体ではなく、お気に入りとその配下だけ（<a href="#d-sidebar">D33</a>）。</figcaption>
+<figcaption>The screen with F. Child papers are blocks in the text; opening one goes to that child. The sidebar shows pins and what is under them, not the whole tree (<a href="#d-sidebar">D33</a>).</figcaption>
 </figure>
 <ul>
-<li><b>子を作る</b>: 本文の好きな位置で「ペーパーを足す」。その位置にペーパーブロックができ、新しい子ペーパーが開く。</li>
-<li><b>子を動かす</b>: ペーパーブロックを親の本文の中でドラッグすれば並びが変わる。別の親へは「移動」で選ぶ（パスでも指せる）。</li>
-<li><b>ペーパーを開くと</b>: 上にパス（パンくず）と状態（v3・正本など）、次に本文。</li>
-<li><b>木全体は見せない</b>。サイドバーには、ユーザーが選んだお気に入りのペーパーとその配下だけを出す（<a href="#d-sidebar">D33</a>）。入口はワークスペースのホーム（<a href="#d-home">D31</a>）、お気に入り、検索、パンくず。</li>
+<li><b>Creating a child</b>: "Add a paper" anywhere in the text. A paper block appears there and the new child opens.</li>
+<li><b>Moving a child</b>: dragging its paper block within the parent's body reorders it; another parent is chosen with "Move" (a path works too).</li>
+<li><b>Opening a paper</b>: the path (breadcrumbs) and state (v3, canonical, …) at the top, then the text.</li>
+<li><b>The whole tree is never shown</b>. The sidebar shows only the papers the user pinned and what is under them (<a href="#d-sidebar">D33</a>). The ways in are the workspace's home (<a href="#d-home">D31</a>), pins, search and breadcrumbs.</li>
 </ul>
-<h3>ブロックの種類に足すもの</h3>
+<h3>Added block type</h3>
 <dl class="fields">
-<dt>paper</dt><dd>子ペーパーのブロック。属性は子の ID だけ。タイトル・状態は子のものを表示する。本文の一番上の段にだけ置ける（表のセルには置けない）。</dd>
+<dt>paper</dt><dd>A child paper's block. Its only property is the child's ID; the title and state shown are the child's. It sits only at the top level of a body (not in table cells).</dd>
 </dl>
-<h3>ペーパーに足すもの</h3>
+<h3>Added to papers</h3>
 <dl class="fields">
-<dt>ParentID</dt><dd>親ペーパー。親の本文にあるペーパーブロックと常に一致する（同じトランザクションで書く）。ホームのペーパーと private のペーパーは空。</dd>
-<dt>ReleaseNumber</dt><dd>最新のリリースの番号。0 なら下書き、1 以上なら正本（<a href="#d-status">D26</a>）。</dd>
-<dt>ArchivedAt</dt><dd>アーカイブした時刻。空でなければアーカイブ。</dd>
+<dt>ParentID</dt><dd>The parent paper. Always matches the paper block in the parent's body (written in the same transaction). Empty for the home and for private papers.</dd>
+<dt>ReleaseNumber</dt><dd>The latest release. 0 is a draft, 1 or more canonical (<a href="#d-status">D26</a>).</dd>
+<dt>ArchivedAt</dt><dd>When it was archived; set means archived.</dd>
 </dl>
-<p>子の並び順は、親の本文のブロックの並びがそのまま使われる（別に持たない）。</p>
-<h3>決まりごと</h3>
+<p>The order of children is the order of blocks in the parent's body (not stored separately).</p>
+<h3>Rules</h3>
 <ul>
-<li>public のペーパーは、ホームを除いて、ちょうど 1 つの親の本文にちょうど 1 つのペーパーブロックとして置かれる。</li>
-<li>子を作る・動かすのは、親（と動かす元）のペーパーを使える人と、その代理の AI。管理者の権限は要らない。</li>
-<li>深さは制限しない（<a href="#d-depth">D20</a>）。</li>
-<li>移動は後勝ち。ワークスペースをまたいでは動かせない。</li>
-<li>親のリリースはペーパーブロック（子の ID）を含むが、子の中身は含まない。子はそれぞれのリリースを持つ。</li>
+<li>Every public paper except the home sits in exactly one parent's body as exactly one paper block.</li>
+<li>Children are created and moved by whoever may use the parent (and the paper being moved), and AI acting for them. No administrator rights are needed.</li>
+<li>No depth limit (<a href="#d-depth">D20</a>).</li>
+<li>Moves are last-writer-wins. Papers cannot move across workspaces.</li>
+<li>A parent's release contains paper blocks (child IDs) but not the children's contents; each child has its own releases.</li>
 </ul>
-<h3>読み込み</h3>
-<p>全体の件数に左右されない形にする。</p>
+<h3>Reading</h3>
+<p>Nothing depends on the total number of papers.</p>
 <ul>
-<li>子の一覧は親の本文を読めば分かる。子のタイトル・状態は、ペーパーブロックの子 ID を一括取得で 1 回読む。</li>
-<li>サイドバーで枝を開くときは、その子だけを <code>(ParentID, …)</code> の索引で読む。</li>
-<li>パンくず: 親を 1 段ずつ辿る（深さの分だけ読む）。サーバーは「ペーパー → 親」の対応を手元に覚えておき、変更フィードで更新するので、多くの場合は読み取りなしで組める（<a href="#d-ancestors">D28</a>）。</li>
-<li>「この配下で探す」: 検索の当たりそれぞれの親を辿り、対象の配下のものだけ残す。</li>
-<li>「この配下をまとめてアーカイブ・書き出す」: 対象から子の索引で 1 段ずつ降りて集める。まれな操作なので、裏で進める処理にする。</li>
+<li>The children are known from the parent's body; their titles and states come from one batch read of the child IDs in the paper blocks.</li>
+<li>Opening a branch in the sidebar reads only its children, with the <code>(ParentID, …)</code> index.</li>
+<li>Breadcrumbs walk up one parent at a time (as many reads as the depth). The server keeps a "paper → parent" map, updated from the change feed, so usually no reads are needed (<a href="#d-ancestors">D28</a>).</li>
+<li>"Search under this paper": walk up from each hit and keep those under the target.</li>
+<li>"Archive or export everything under this paper": descend from the target one level at a time with the children index. It is rare, so it runs in the background.</li>
 </ul>
-<h3>パスで見せる・指す</h3>
+<h3>Showing and naming by path</h3>
 <ul>
-<li><b>見せる</b>: 祖先のタイトルをつないで <code>security / 手順 / DB 切り替え</code> と出す。パスは保存しないので、途中のタイトルを変えても配下は書き換えない。</li>
-<li><b>指す（AI・検索）</b>: AI はパスで親を指定できる（<code>parent_path: "手順/DB 切り替え"</code>）。同じ親の下に同じタイトルが複数あれば、候補を返して ID で選び直してもらう。</li>
-<li>URL は ID のまま（<code>/ws/{ws}/p/{id}</code>）。</li>
+<li><b>Showing</b>: ancestors' titles joined as <code>security / Steps / DB switchover</code>. Paths are not stored, so renaming a paper on the way rewrites nothing under it.</li>
+<li><b>Naming (AI, search)</b>: AI may give a parent by path (<code>parent_path: "Steps/DB switchover"</code>). If a parent has several children with the same title, the candidates come back and the AI picks one by ID.</li>
+<li>URLs stay IDs (<code>/ws/{ws}/p/{id}</code>).</li>
 </ul>
-<h3 class="block agent">AI からの使い方</h3>
+<h3 class="block agent">How AI uses it</h3>
 <ul>
-<li><code>papers_guide</code> はホームの本文を返す。AI はまとめを読み、ペーパーブロックを辿って必要な枝を降りていく。</li>
-<li>子を作るのは commit の操作の 1 つ（<code>insert</code> の種類 <code>paper</code>、子のタイトルつき）。親の本文のどこに置くかを <code>after</code> で決める。</li>
-<li>読み取りと検索に「このペーパーの配下」の範囲を渡せる。</li>
+<li><code>papers_guide</code> returns the home's text. The AI reads the summary and follows paper blocks down the branches it needs.</li>
+<li>Creating a child is one commit op (<code>insert</code> of type <code>paper</code>, with the child's title); <code>after</code> decides where in the parent's body it goes.</li>
+<li>Reads and searches can be scoped to "under this paper".</li>
 </ul>
 </section>
 
 <section id="decide">
-<h2>決めること</h2>
+<h2>Decisions</h2>
 
 <div class="decision" id="d-shape" style="border-left-color:var(--human)">
-<h3>D19. 整理の形（決定: F 子ペーパーをブロックで埋め込む）</h3>
-<p>A（タグ）・B（フォルダ）・D（目次とリンク）・G（AI が木を作る）は却下。</p>
+<h3>D19. The shape of organization (decided: F, child papers embedded as blocks)</h3>
+<p>A (tags), B (folders), D (index and links) and G (AI builds the tree) were rejected.</p>
 <div class="scroll"><table>
-<thead><tr><th>案</th><th>形</th><th>良い点</th><th>気になる点</th></tr></thead>
+<thead><tr><th>Option</th><th>Shape</th><th>Good</th><th>Concerns</th></tr></thead>
 <tbody>
-<tr><td>C. ペーパーの入れ子</td><td>ペーパーが <code>ParentID</code> を持つ。親の本文がまとめ</td><td>概念が増えない。位置（親）と内容（本文）が分かれている</td><td>親の本文の中で子に触れても、子の一覧とは別物になる</td></tr>
-<tr><td>E. パスの名前空間</td><td>ペーパーが <code>security/手順/DB 切り替え</code> のようなパス名を持ち、階層はパスから決まる（S3 の prefix、ファイルシステム）。同じパスのペーパーがその段のまとめ</td><td>人にも AI にも読める。AI はパスを書くだけで置ける</td><td>途中の段の名前を変えると配下のパスを全部書き換える。まとめのペーパーがない段は名前だけの空の段になる。URL がパスに引きずられる</td></tr>
-<tr><td>F. 子ペーパーをブロックとして埋め込む</td><td>子ペーパーは親の本文の中の「ペーパー」ブロックとして存在する（Notion の実際の仕組み）。並びも本文の順</td><td>まとめの文章と子が同じ流れに並び、文脈の中で子を紹介できる。並び順も自然に持てる</td><td>位置が内容（ブロックの版）に混ざる。ブロックを消すと子はどうなるか、衝突の判定に移動が巻き込まれる、など C で分けた問題が戻る</td></tr>
-<tr><td>G. AI が木を作る（却下）</td><td>人は木を作らない。AI が内容から分類の木を作って保つ</td><td>—</td><td><b>人のメンタルモデルとかけ離れる</b>。構造は人が「どこに何があるか」を持つためのもので、人が作って人が覚えるものでなければ意味がない。AI は人が作った木の中で置き場所を選ぶだけにし、木の形を変えるのは人の操作に限る（AI が移動するのは人に頼まれたとき）。</td></tr>
+<tr><td>C. Nested papers</td><td>A paper has a <code>ParentID</code>; the parent's body is the summary</td><td>No new concept. Place (parent) and contents (body) are separate</td><td>Mentioning a child in the parent's body is separate from the list of children</td></tr>
+<tr><td>E. Path namespace</td><td>A paper has a path name like <code>security/Steps/DB switchover</code>, and the hierarchy follows from paths (S3 prefixes, file systems). A paper with the same path summarizes its level</td><td>Readable for people and AI; AI places a paper just by writing a path</td><td>Renaming a level rewrites every path under it. A level without a summary paper is an empty name. URLs follow paths</td></tr>
+<tr><td>F. Child papers embedded as blocks</td><td>A child paper exists as a "paper" block in its parent's body (how Notion actually works). Order is the order in the body</td><td>The summary text and the children share one flow, so children are introduced in context; order comes naturally</td><td>Place mixes into contents (block versions). The problems C separated come back: what deleting the block does to the child, moves caught up in conflict checks, and so on</td></tr>
+<tr><td>G. AI builds the tree (rejected)</td><td>People never build the tree; AI builds and keeps a classification from the contents</td><td>—</td><td><b>Far from people's mental model</b>. Structure exists so that people know where things are, so people must build it and remember it. AI only chooses places within the tree people built, and only people change the tree's shape (AI moves papers when asked).</td></tr>
 </tbody></table></div>
-<div class="rec"><b>決定: F</b>（C の画面を見たうえでのユーザー判断）。子を本文の外に出す C は、結局「子の一覧ブロックを本文に置きたい」になり、それなら最初から埋め込むほうが自然。F で戻ってくる問題（位置が版に混ざる、ブロックの削除と子、移動）は<a href="#nest">埋め込みの懸念</a>で解く。E の読みやすさはパスをその場で組み立てて得る。</div>
+<div class="rec"><b>Decided: F</b> (the user's choice after seeing C's screens). C, with children outside the body, ends up wanting "a block listing the children in the body"; embedding from the start is more natural. The problems F brings back (place in versions, deleting blocks and children, moves) are solved in <a href="#nest">Concerns with embedding</a>. E's readability comes from building paths on the fly.</div>
 </div>
 
 <div class="decision" id="d-depth" style="border-left-color:var(--human)">
-<h3>D20. 深さ（決定）</h3>
-<p><b>制限しない</b>。実装上の安全弁として 100 段で止めるが、壊れたデータや暴走した AI から守るためのもので、仕様の上限ではない。パンくずは深いときに途中を省略する。</p>
+<h3>D20. Depth (decided)</h3>
+<p><b>No limit</b>. The implementation stops at 100 levels as a safety valve against broken data or a runaway AI; it is not a limit of the specification. Deep breadcrumbs elide the middle.</p>
 </div>
 
 <div class="decision" id="d-delete-parent" style="border-left-color:var(--human)">
-<h3>D21. 子のあるペーパーの削除（決定: 子ごとゴミ箱へ）</h3>
-<p>子のあるペーパーを削除すると、配下全体がゴミ箱に入り、戻すときも一緒に戻る。モデルの D4-A（ペーパーのゴミ箱、30 日後に本当に消す）を前提にする。</p>
-<p class="callout">追記: 削除（ゴミ箱へ・戻す・完全に消す）は作成者本人だけ。配下ごとの削除は、配下がすべて本人のペーパーのときだけ。他の人はアーカイブする（モデルの D18）。</p>
+<h3>D21. Deleting a paper with children (decided: to the trash with its children)</h3>
+<p>Deleting a paper with children sends everything under it to the trash, and restoring brings it all back. Assumes the model's D4-A (papers go to a trash and are deleted for good after 30 days).</p>
+<p class="callout">Note: deleting (to the trash, restoring, purging) is the creator's alone, and a subtree only when everything in it is theirs. Others archive (D18 in the model).</p>
 <ul>
-<li><b>一緒に消えたものを覚える</b>: 配下の各ペーパーに <code>DeletedAt</code> と <code>DeletedWith</code>（削除を始めたペーパーの ID）を付ける。戻すときは <code>DeletedWith</code> が同じものだけを戻す。それより前に個別に消されていた子は戻さない。</li>
-<li><b>大きな配下</b>: 1 トランザクションに収まらなければ分けて書く。配下から先に印を付け、最後に削除を始めたペーパーに付ける。途中で止まっても、同じ削除をやり直せば続きから終わる（同じ印を付けるだけなので何度やっても同じ）。</li>
-<li><b>子だけを戻す</b>: 親がまだゴミ箱にある子を戻すと、ゴミ箱にない一番近い祖先の下（なければ直下）に戻る。</li>
-<li><b>見え方</b>: 一覧・検索・読み取りは <code>DeletedAt</code> のあるペーパーを除く。検索エントリは消さず、検索の後で除く（大きな配下で検索エントリを一斉に書き直さないため）。</li>
-<li><b>本当に消す</b>: 30 日たったら、<code>DeletedWith</code> ごとに配下のブロック・版・commit・検索エントリまで消す。</li>
+<li><b>Remembering what went together</b>: each paper under it gets <code>DeletedAt</code> and <code>DeletedWith</code> (the ID of the paper whose deletion started it). Restoring brings back only those with the same <code>DeletedWith</code>; children deleted on their own earlier stay.</li>
+<li><b>Large subtrees</b>: written in parts when one transaction is not enough. Marks go on the subtree first and on the starting paper last. If it stops midway, repeating the same deletion finishes it (it only sets the same marks, so repeating is harmless).</li>
+<li><b>Restoring only a child</b>: a child whose parent is still in the trash goes under the nearest ancestor that is not (or the top).</li>
+<li><b>Visibility</b>: lists, search and reads leave out papers with <code>DeletedAt</code>. Search entries are kept and filtered after searching (so large subtrees do not rewrite all their search entries).</li>
+<li><b>Purging</b>: after 30 days, everything with the same <code>DeletedWith</code> is deleted down to blocks, versions, commits and search entries.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-move-history" style="border-left-color:var(--human)">
-<h3>D22. ペーパーの移動を履歴に残す（決定）</h3>
+<h3>D22. Recording paper moves in history (decided)</h3>
 <ul>
-<li>移動は動かしたペーパーの commit として残す。操作 <code>move_paper</code>、変更は「元の親 → 新しい親」。誰が（AI なら誰の代理で）動かしたかは、他の commit と同じく書き手として残る。</li>
-<li>配下のペーパーには何も書かないので、配下には commit を作らない。配下の履歴では、動いたのは起点の commit で分かる。</li>
-<li>同じ扱いで、配下ごとの削除と復元（D21）も起点のペーパーの commit に残す。</li>
-<li>位置は内容ではないので、移動は衝突の対象にしない（後勝ち）。</li>
+<li>A move is a commit on the moved paper: op <code>move_paper</code>, change "old parent → new parent". Who moved it (and for whom, for AI) is its writer, as with other commits.</li>
+<li>Nothing is written to the papers under it, so they get no commits; their histories show the move through the commit on the paper it started from.</li>
+<li>Likewise, deleting and restoring a subtree (D21) is a commit on the starting paper.</li>
+<li>A position is not contents, so moves are never conflicts (last writer wins).</li>
 </ul>
 </div>
 
-<p class="meta">D23（フォルダを誰が作れるか）・D24（直下に置けるか）・D25（フォルダのまとめ）は、フォルダをやめたので取り下げた。子を作れる人は「親を使える人」、直下には置ける、まとめは親の本文。</p>
+<p class="meta">D23 (who may create folders), D24 (whether papers can sit at the top) and D25 (folder summaries) were withdrawn with folders. Whoever may use the parent creates children, papers can sit at the top, and the summary is the parent's body.</p>
 
 <div class="decision" id="d-status" style="border-left-color:var(--human)">
-<h3>D26. 正本と使い捨てを分ける（方向は決定: リリースで版を重ねる）</h3>
-<p>正本という状態を持つなら、ちゃんと版管理をする。<b>正本になったときが v1</b> で、以後は<b>ユーザーが指定したときに v2、v3 … と版を重ねる</b>。ブロックの版（編集のたびに自動で増える）とは別のもので、紛らわしいので<b>リリース</b>と呼ぶ（表示は v1, v2 …）。</p>
-<h4>状態</h4>
+<h3>D26. Separating canonical from throwaway (direction decided: releases stack versions)</h3>
+<p>A canonical state needs proper versioning. <b>Becoming canonical is v1</b>, and afterwards <b>versions stack as v2, v3 … when users say so</b>. This is separate from block versions (bumped automatically on every edit), so to avoid confusion it is called a <b>release</b> (shown as v1, v2 …).</p>
+<h4>States</h4>
 <div class="scroll"><table>
-<thead><tr><th>状態</th><th>条件</th><th>一覧・検索（既定）</th></tr></thead>
+<thead><tr><th>State</th><th>Condition</th><th>Lists and search (default)</th></tr></thead>
 <tbody>
-<tr><td>下書き</td><td>リリースがない（<code>ReleaseNumber = 0</code>）</td><td>出さない（切り替えで出す）</td></tr>
-<tr><td>正本</td><td>リリースが 1 つ以上ある</td><td>出す</td></tr>
-<tr><td>アーカイブ</td><td><code>ArchivedAt</code> がある（リリースの有無によらない）</td><td>出さない（切り替えで出す）</td></tr>
+<tr><td>Draft</td><td>No release (<code>ReleaseNumber = 0</code>)</td><td>hidden (a toggle shows them)</td></tr>
+<tr><td>Canonical</td><td>At least one release</td><td>shown</td></tr>
+<tr><td>Archived</td><td><code>ArchivedAt</code> set (with or without releases)</td><td>hidden (a toggle shows them)</td></tr>
 </tbody></table></div>
-<p>正本から下書きには戻らない（リリースは取り消さない）。要らなくなったらアーカイブする。アーカイブは配下ごとの片付けにも使う。</p>
-<h4>リリースが持つもの</h4>
+<p>Canonical never goes back to draft (releases are not withdrawn). What is no longer needed is archived; archiving also tidies up subtrees.</p>
+<h4>What a release holds</h4>
 <dl class="fields">
-<dt>Number</dt><dd>1 から欠番なし。</dd>
-<dt>Note</dt><dd>この版で何が変わったか（任意。AI に下書きさせてもよい）。</dd>
-<dt>Title / Blocks</dt><dd>その時点のタイトルと、全ブロックの (ブロック ID, ブロックの版, 位置) の列。ブロックの版は不変なので、本文は写さず版を指すだけでよい。</dd>
-<dt>CommitID</dt><dd>リリースした時点の最後の commit。</dd>
-<dt>CreatedBy / CreatedAt</dt><dd>リリースした人と時刻。</dd>
+<dt>Number</dt><dd>From 1, with no gaps.</dd>
+<dt>Note</dt><dd>What changed in this version (optional; an AI may draft it).</dd>
+<dt>Title / Blocks</dt><dd>The title at that moment and (block ID, block version, position) for every block. Block versions are immutable, so the text is not copied; the release points to versions.</dd>
+<dt>CommitID</dt><dd>The last commit when the release was made.</dd>
+<dt>CreatedBy / CreatedAt</dt><dd>Who released it, and when.</dd>
 </dl>
-<h4>できること</h4>
+<h4>What it allows</h4>
 <ul>
-<li>任意の 2 つのリリースの差分（ブロックの版を比べる）。リリース以後の変更（未リリースの変更）の差分。</li>
-<li>ペーパーをあるリリースの状態に戻す: 各ブロックをその版へ復元する commit を作る（履歴は書き換えない）。</li>
-<li>リリースを指す URL（<code>…/p/{ID}/v/2</code>、<a href="#d-release-view">D29</a>）。参照先として安定する。</li>
+<li>The difference between any two releases (comparing block versions), and the changes since the last release.</li>
+<li>Setting a paper back to a release: a commit restoring each block to that version (history is not rewritten).</li>
+<li>URLs pointing to a release (<code>…/p/{ID}/v/2</code>, <a href="#d-release-view">D29</a>), stable as references.</li>
 </ul>
-<h4>まだ決めること</h4>
+<h4>Still to decide</h4>
 <ul>
-<li><b>読む人に何を見せるか</b>（<a href="#d-release-view">D29</a>）。</li>
-<li><b>誰がリリースできるか</b>（<a href="#d-release-who">D30</a>）。</li>
+<li><b>What readers see</b> (<a href="#d-release-view">D29</a>).</li>
+<li><b>Who may release</b> (<a href="#d-release-who">D30</a>).</li>
 </ul>
 </div>
 
 <div class="decision" id="d-release-view" style="border-left-color:var(--human)">
-<h3>D29. URL と、それぞれが見せるもの（決定）</h3>
+<h3>D29. URLs and what each shows (decided)</h3>
 <div class="scroll"><table>
-<thead><tr><th>URL</th><th>見せるもの</th><th>編集</th></tr></thead>
+<thead><tr><th>URL</th><th>Shows</th><th>Editing</th></tr></thead>
 <tbody>
-<tr><td><code>/ws/{ws}/p/{id}</code>（末尾の <code>/</code> も同じ）</td><td><b>今の状態</b>。リアルタイムで更新される編集中の最新版</td><td>できる</td></tr>
-<tr><td><code>/ws/{ws}/p/{id}/latest</code></td><td><b>最新のリリース</b>を指す。リリースが進めば次の版を指す</td><td>できない（「編集する」で何も付けない URL へ）</td></tr>
-<tr><td><code>/ws/{ws}/p/{id}/v/{番号}</code></td><td>リリース vN。中身が変わらない</td><td>できない</td></tr>
-<tr><td><code>/ws/{ws}</code></td><td>そのワークスペースのホーム（<a href="#d-home">D31</a>）の今の状態</td><td>できる</td></tr>
-<tr><td><code>/</code></td><td>最後に開いたワークスペースのホーム。初めてなら使えるワークスペースの一覧</td><td>—</td></tr>
+<tr><td><code>/ws/{ws}/p/{id}</code> (also with a trailing <code>/</code>)</td><td><b>The current state</b>, updated live</td><td>yes</td></tr>
+<tr><td><code>/ws/{ws}/p/{id}/latest</code></td><td><b>The latest release</b>; moves on with each release</td><td>no ("Edit" goes to the plain URL)</td></tr>
+<tr><td><code>/ws/{ws}/p/{id}/v/{n}</code></td><td>Release vN; never changes</td><td>no</td></tr>
+<tr><td><code>/ws/{ws}</code></td><td>The current state of the workspace's home (<a href="#d-home">D31</a>)</td><td>yes</td></tr>
+<tr><td><code>/</code></td><td>The home of the workspace opened last; the first time, the list of usable workspaces</td><td>—</td></tr>
 </tbody></table></div>
-<p><code>/edit</code> は設けない（何も付けない URL がその役）。使い分けは、<b>一緒に書く・今を見るなら何も付けない URL、確定した内容を指すなら <code>/latest</code>、その文面そのものを指すなら <code>/v/{番号}</code></b>。</p>
+<p>There is no <code>/edit</code> (the plain URL does that). Use <b>the plain URL to write together and see the present, <code>/latest</code> to point to settled contents, and <code>/v/{n}</code> to point to exact wording</b>.</p>
 <ul>
-<li><b>下書き</b>（リリースがない）の <code>/latest</code>: 「まだリリースがありません」と出し、何も付けない URL へ案内する。</li>
-<li><b>何も付けない URL での表示</b>: リリースがあれば「v3 からの変更 n 件（うち AI n 件）」を出し、差分と <code>/latest</code> に移れるようにする。これが書く人へのリリースの促しにもなる。</li>
-<li><b>本文中のリンク・ペーパーブロック・サイドバー・検索結果</b>: 何も付けない URL へ。リンクを書くときに <code>/latest</code> や <code>/v/{番号}</code> を選ぶこともできる。</li>
-<li><b>検索</b>: 今の状態から探す。</li>
-<li><b>AI の読み取り（MCP）</b>: 既定は今の状態。<code>at</code>（<code>current</code> / <code>latest</code> / 番号）で指定もできる。AI が回答の根拠として示すのは <code>/v/{番号}</code>（後で中身が変わらない）。</li>
+<li><b><code>/latest</code> of a draft</b> (no release): says "No release yet" and leads to the plain URL.</li>
+<li><b>The plain URL</b>: with releases, shows "n changes since v3 (n by AI)" and links to the diff and <code>/latest</code>; this also nudges writers to release.</li>
+<li><b>Links in text, paper blocks, the sidebar and search results</b>: to the plain URL. A link can also be written to <code>/latest</code> or <code>/v/{n}</code>.</li>
+<li><b>Search</b>: in the current state.</li>
+<li><b>AI reads (MCP)</b>: the current state by default; <code>at</code> (<code>current</code> / <code>latest</code> / a number) chooses. An AI cites <code>/v/{n}</code> as the source of an answer (it never changes later).</li>
 </ul>
 </div>
 
 <div class="decision" id="d-release-who" style="border-left-color:var(--human)">
-<h3>D30. 誰がリリースできるか（決定: 誰でも）</h3>
-<p class="callout"><b>リリース</b>とは、ユーザーが「ここで版を重ねる」と指定したときに、そのペーパーのその時点の中身（タイトルと全ブロック）を v1、v2 … として固定したもの。最初のリリース（v1）を作ったときに、ペーパーは下書きから正本になる（<a href="#d-status">D26</a>）。編集のたびに自動で増える「ブロックの版」とは別物なので、名前を分けている。</p>
-<p><b>決定: そのペーパーを使える人なら誰でもリリースできる</b>（ロールを持たないので、他と同じ扱い）。</p>
+<h3>D30. Who may release (decided: anyone)</h3>
+<p class="callout">A <b>release</b> fixes a paper's contents at that moment (title and all blocks) as v1, v2 … when a user says "stack a version here". The first release (v1) turns the paper from a draft into a canonical paper (<a href="#d-status">D26</a>). It has its own name because it differs from block versions, which go up automatically on every edit.</p>
+<p><b>Decided: anyone who may use the paper may release it</b> (there are no roles, so as everywhere else).</p>
 <ul>
-<li>リリースには、した書き手（人か AI か、AI なら誰の代理か）が残り、画面の版の一覧と何も付けない URL の表示に出る（「v3 · Alice」「v4 · Claude（Alice の代理）」）。</li>
-<li>リリースも commit と同じく取り消さない。気に入らなければ、前のリリースの状態に戻してから次のリリースを作る。</li>
+<li>A release records its writer (person or AI, and for whom), shown in the list of versions and on the plain URL ("v3 · Alice", "v4 · Claude (for Alice)").</li>
+<li>Like commits, releases are never withdrawn. If one is unwanted, set the paper back to the previous release and release again.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-private" style="border-left-color:var(--human)">
-<h3>D27. private は木の外にフラットに置く（決定）</h3>
-<p>Notion の「プライベート」欄と同じく、private のペーパーは共有の木に入れず、ワークスペースの中の<b>自分だけの平らな一覧</b>に置く。</p>
+<h3>D27. Private papers sit flat outside the tree (decided)</h3>
+<p>Like Notion's "Private" section, private papers stay out of the shared tree, in a <b>flat list of one's own</b> within the workspace.</p>
 <ul>
-<li>private のペーパーは親も子も持たない（<code>ParentID</code> は空）。共有の木にあるのは public のペーパーだけ。</li>
-<li><b>public にする</b>ことは、木のどこかに置くことと同じ。親を選んで（または直下に）置く。1 つの commit に「公開範囲の変更」と「移動」の両方が残る。</li>
-<li><b>private にする</b>のは、子のない public のペーパーだけ。木から外れて自分の一覧に移る。子のあるペーパーは、先に子を動かす。</li>
-<li>これで木の中に「見えない親」も「見えない子」も生じない。配下ごとの削除（D21）に他の人の private が含まれることもなくなる。</li>
+<li>A private paper has neither parent nor children (<code>ParentID</code> is empty). Only public papers are in the shared tree.</li>
+<li><b>Making a paper public</b> is placing it somewhere in the tree: choose a parent (or the top). One commit records both the visibility change and the move.</li>
+<li><b>Only a public paper without children can become private</b>; it leaves the tree for one's own list. A paper with children has its children moved first.</li>
+<li>So the tree never has an "invisible parent" or "invisible child", and deleting a subtree (D21) never involves someone else's private paper.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-ancestors" style="border-left-color:var(--human)">
-<h3>D28. 木の読み方（決定: 親だけを持つ）</h3>
-<p>移動で数千〜数万のペーパーが動くこと（上の段の大きな枝の付け替え）を想定する。</p>
+<h3>D28. Reading the tree (decided: only the parent is kept)</h3>
+<p>Moves may carry thousands or tens of thousands of papers (re-hanging a large branch near the top).</p>
 <ul>
-<li><b>A. 各ペーパーに祖先の ID 列を持つ</b>: パンくずも配下の範囲も 1 回で読める。代わりに、枝を動かすと配下の全ペーパーを書き直す。数万件なら数分かかる裏の処理になり、その間は配下の移動・削除を止め、パンくずもずれる。</li>
-<li><b>B. 親だけを持つ</b>: 移動は元の親・新しい親・動かすペーパーの 3 件を書くだけで、配下が何件でも一瞬で終わる。代わりに、パンくずは深さの分だけ親を辿り、配下の範囲は 1 段ずつ降りる。</li>
+<li><b>A. Each paper keeps its ancestors' IDs</b>: breadcrumbs and subtree scopes take one read, but moving a branch rewrites every paper under it: minutes of background work for tens of thousands of papers, during which moves and deletions under it must stop and breadcrumbs are off.</li>
+<li><b>B. Only the parent is kept</b>: a move writes three documents (old parent, new parent, the paper) and is instant however large the subtree. Breadcrumbs walk up as many parents as the depth, and subtree scopes descend one level at a time.</li>
 </ul>
-<div class="rec"><b>決定: B</b>。以前は「移動は少ない」としか見ておらず、件数を見積もっていなかった。数万件が動くなら、A は移動のたびに大きな裏の処理と、途中の不整合の扱い（止める・再開する）を抱える。B なら移動はいつも 3 件で、ロックの要らない今の設計とも揃う。B の読み取りの費用は次のように抑える。
+<div class="rec"><b>Decided: B</b>. Earlier, moves were only assumed to be rare and their size was not estimated. If tens of thousands of papers move, A brings a large background job with every move and the handling of inconsistencies midway (stopping, resuming). With B a move is always three writes, in line with the lock-free design. B's read costs are kept down like this.
 <ul>
-<li>パンくずと循環の検査: サーバーが「ペーパー → 親」の対応を手元に覚え、変更フィードで更新する。ずれていても親が正本なので、トランザクションの中では読み直して確かめる。</li>
-<li>「この配下で探す」: 当たりの親を辿って絞る。当たりは上位の数十件なので辿る量は小さい。</li>
-<li>配下をまとめて扱う（アーカイブ・書き出し）: まれな操作なので、子の索引で 1 段ずつ降りる裏の処理にする。</li>
+<li>Breadcrumbs and cycle checks: the server keeps a "paper → parent" map updated from the change feed. The parent is the truth, so transactions read it again to confirm.</li>
+<li>"Search under this paper": walk up from the hits; hits are the top few dozen, so the walk is small.</li>
+<li>Handling a whole subtree (archive, export): rare, so a background job that descends one level at a time with the children index.</li>
 </ul></div>
 </div>
 
 <div class="decision" id="d-home" style="border-left-color:var(--human)">
-<h3>D31. ワークスペースには必ずホームのペーパーを作る（決定）</h3>
-<p>ワークスペースごとに根のペーパー（ホーム）を 1 つ持つ。いちばん上の段のペーパーはホームの本文に埋め込まれる。「ホーム以外の public のペーパーはちょうど 1 つの親の本文にある」という 1 つの決まりで木全体を説明できる。</p>
+<h3>D31. Every workspace has a home paper (decided)</h3>
+<p>Each workspace has one root paper, the home. Top-level papers are embedded in the home's body. One rule then describes the whole tree: "every public paper except the home is in exactly one parent's body".</p>
 <ul>
-<li><b>作るとき</b>: ワークスペースは設定ファイルで定義するので、起動時に設定のワークスペースそれぞれについて、ホームがなければ作る（何度起動しても 1 つだけ。トランザクションで「なければ作る」）。最初のタイトルは設定の name、本文は空。</li>
-<li><b>どれがホームか</b>: 保存先にワークスペースの記録（<code>workspaces/{ws}</code>）を置き、<code>HomePaperID</code> を持たせる。ホームも ID は普通のペーパーと同じ形式。</li>
-<li><b>できること</b>: 本文とタイトルの編集、リリース、ペーパーブロックで子を置く、は普通のペーパーと同じ。</li>
-<li><b>できないこと</b>: 削除（ゴミ箱を含む）、移動、private にすること。ホームの中のペーパーブロックを消すのは子の削除（配下ごとゴミ箱）で、ホーム自体は残る。</li>
-<li><b>役割の分け方</b>: 設定の description は「AI への決まりごと」（デプロイで変える）。ホームの本文は「人と AI が読むワークスペースのまとめと入口」（誰でも書ける）。</li>
-<li>設定からワークスペースを外しても、ホームを含むデータは残る（モデルの D13）。</li>
+<li><b>Creation</b>: workspaces are defined in configuration, so at startup each configured workspace gets a home if it has none (exactly one however often the server starts; "create if missing" in a transaction). Its first title is the configured name, with an empty body.</li>
+<li><b>Which is the home</b>: storage keeps a workspace record (<code>workspaces/{ws}</code>) with <code>HomePaperID</code>. The home's ID has the same format as any paper's.</li>
+<li><b>What it allows</b>: editing its text and title, releasing, and placing children with paper blocks, like any paper.</li>
+<li><b>What it does not allow</b>: deletion (including the trash), moves, and becoming private. Deleting a paper block in the home deletes the child (to the trash with its subtree); the home stays.</li>
+<li><b>Division of roles</b>: the configured description holds "rules for AI" (changed by deploying). The home's text is "the workspace's summary and entrance, for people and AI" (anyone may write it).</li>
+<li>Removing a workspace from the configuration keeps its data, home included (D13 in the model).</li>
 </ul>
 </div>
 
 <div class="decision" id="d-move-commit" style="border-left-color:var(--human)">
-<h3>D32. 移動の commit は 3 つのペーパーそれぞれに作り、移動の ID で結ぶ（決定）</h3>
-<p>移動は、元の親（ブロックを消す）・新しい親（ブロックを足す）・動かすペーパー（親が変わる）の 3 つにまたがる。commit はペーパーに属するという今のモデルを崩さず、それぞれのペーパーに commit を作る。</p>
+<h3>D32. A move makes a commit on each of the three papers, tied by the move's ID (decided)</h3>
+<p>A move spans the old parent (block removed), the new parent (block added) and the paper itself (parent changed). Keeping the model in which commits belong to papers, each paper gets a commit.</p>
 <ul>
-<li>3 つの commit は同じ <code>MoveID</code> を持ち、どれからでも他の 2 つに辿れる。書き手・時刻・メッセージは 3 つとも同じ。</li>
-<li>3 つは 1 つのトランザクションで書くので、どれかだけが残ることはない。</li>
-<li>同じ扱いを、private から public にする（親に置く）・public から private にする（親から外す）にも使う。こちらは 2 つ（親と本人）。</li>
+<li>The three commits share a <code>MoveID</code>, so each leads to the others. Writer, time and message are the same.</li>
+<li>They are written in one transaction, so none survives alone.</li>
+<li>The same applies to making a private paper public (placing it under a parent) and a public one private (taking it out). Those are two (the parent and the paper).</li>
 </ul>
 </div>
 
 <div class="decision" id="d-sidebar" style="border-left-color:var(--human)">
-<h3>D33. サイドバーはお気に入りとその配下、最近開いたもの（決定）</h3>
-<p>木全体は出さない。</p>
+<h3>D33. The sidebar shows pins with what is under them, and recent papers (decided)</h3>
+<p>The whole tree is not shown.</p>
 <ul>
-<li><b>お気に入り（ピン）</b>: ユーザーが選んだペーパー。ユーザーごと・ワークスペースごとで、並びも本人が決める。モデルに <code>Pin</code>（ユーザー・ワークスペース・ペーパー・並び順キー）を足す。他の人には影響しない（ロールも要らない）。</li>
-<li><b>配下</b>: ピンの下は、開いた段だけ子の索引で読む。</li>
-<li><b>最近開いたもの</b>: 最近開いたペーパーを数件（例: 10）自動で出す。端末をまたいで同じにするため保存先に持つ（ユーザーとワークスペースごとに 1 件の記録を、開くたびに更新）。</li>
-<li><b>入口</b>: ホーム（D31）は常に出す。新しく入った人の最初の入口になる。</li>
-<li>ピンしたペーパーがゴミ箱に入ったら出さない（戻れば出る）。移動してもピンは ID なので残る。自分の private もピンできる。</li>
+<li><b>Pins</b>: papers the user chose, per user and workspace, in the user's own order. The model gets <code>Pin</code> (user, workspace, paper, order key). Nobody else is affected (no roles needed).</li>
+<li><b>Under a pin</b>: only the open levels are read, with the children index.</li>
+<li><b>Recent</b>: the few papers opened most recently (say 10), shown automatically. Stored so that it is the same on every device (one record per user and workspace, updated on every open).</li>
+<li><b>Entrance</b>: the home (D31) is always shown; it is a newcomer's first way in.</li>
+<li>A pinned paper in the trash is not shown (it is again once restored). Pins are IDs, so they survive moves. One's own private papers can be pinned.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-restore-moved" style="border-left-color:var(--human)">
-<h3>D34. 古い版を戻したとき、よそへ移った子は戻さない（決定）</h3>
-<p class="callout">例: ペーパー「手順」の本文には、10 月 1 日の時点で子ペーパー「DB 切り替え」のペーパーブロックがあった。その後、誰かが「DB 切り替え」を別のペーパー「インフラ」の下へ移動した（「手順」の本文からはブロックが消え、「インフラ」の本文に足された）。いま「手順」を 10 月 1 日の版に戻すと、「DB 切り替え」のペーパーブロックも戻ろうとするが、「DB 切り替え」は今「インフラ」の下にある。そのまま戻すと、1 つのペーパーが 2 か所に置かれてしまう。</p>
-<p><b>移動した子は、移動した時点で元の親の管理から外れている</b>。「手順」を戻すのは「手順」自身の中身を 10 月 1 日の状態にすることで、他のペーパーの置き場所を変えることではない。</p>
+<h3>D34. Restoring an old version does not bring back children that moved elsewhere (decided)</h3>
+<p class="callout">Example: on October 1 the body of "Steps" held the paper block of its child "DB switchover". Later someone moved "DB switchover" under "Infrastructure" (the block left "Steps" and was added to "Infrastructure"). Restoring "Steps" to October 1 would bring the block back too, but "DB switchover" is now under "Infrastructure": restored as it is, one paper would sit in two places.</p>
+<p><b>A child that moved left its old parent's care when it moved</b>. Restoring "Steps" sets the contents of "Steps" itself to October 1; it does not change where other papers are.</p>
 <ul>
-<li>「手順」の本文・タイトルは 10 月 1 日の状態に戻す。よそへ移った子のペーパーブロックだけは戻さない（その位置には何も置かない）。</li>
-<li>確認なしで戻す。結果には「よそへ移った子 1 件（「DB 切り替え」、今は「インフラ」の下）は戻していません」と添える。AI や API からの復元でも同じ結果を返す。</li>
-<li><b>ゴミ箱に入った子は別</b>: 「手順」の本文でブロックを消して配下ごとゴミ箱に入れた子は、まだ「手順」の管理下にある。版を戻してブロックが戻れば、子もゴミ箱から戻る（D21）。ただし 30 日を過ぎて本当に消えた子は戻らない。</li>
-<li>古い版を<b>見る</b>とき（<code>/v/{番号}</code> や履歴）は、当時あった子の項目をそのまま出し、「現在は「インフラ」の下」と添えて今の場所へリンクする。</li>
+<li>The text and title of "Steps" go back to October 1, except the paper blocks of children that moved elsewhere (nothing is put in their place).</li>
+<li>No confirmation; the result says "1 child that moved elsewhere ("DB switchover", now under "Infrastructure") was not restored". Restoring through AI or the API returns the same.</li>
+<li><b>Children in the trash are different</b>: a child trashed by deleting its block in the body of "Steps" is still in its care. If restoring brings the block back, the child comes back from the trash too (D21), unless it was purged after 30 days.</li>
+<li><b>Viewing</b> an old version (<code>/v/{n}</code> or history) shows the children as they were, noting "now under Infrastructure" with a link to where they are.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-cross-ws" style="border-left-color:var(--human)">
-<h3>D35. ワークスペースをまたぐ移動は「写して消す」（決定）</h3>
-<p>画面と API には「移動」として出すが、中身は、移動先のワークスペースへの写しと、元の配下ごとの削除（D21）。ワークスペースは保存先のパスも分かれているので、同じ ID のまま動かさない。</p>
-<h4>流れ</h4>
+<h3>D35. Moving across workspaces is "copy, then delete" (decided)</h3>
+<p>Screens and the API call it a move, but it is a copy into the target workspace followed by deleting the original with its subtree (D21). Workspaces have separate storage paths, so papers do not keep their IDs.</p>
+<h4>Flow</h4>
 <ol>
-<li>移動する人が移動先のワークスペースを使えるか、移動先で親にするペーパーが置ける状態か（public で、ゴミ箱にない）を確かめる。</li>
-<li>P と配下を、新しい ID で移動先に写す（裏の処理。配下が多ければ時間がかかるので進み具合を出す）。写している間、元は読めるが書けない。</li>
-<li>写し終えたら、元のペーパーを配下ごとゴミ箱へ入れる（30 日は戻せる）。</li>
-<li>元の ID から新しい場所への<b>転送の記録</b>を残す。</li>
+<li>Check that the person may use the target workspace and that the paper chosen as parent there can take it (public, not in the trash).</li>
+<li>Copy P and its subtree with new IDs into the target (a background job; a large subtree takes time, so progress is shown). While copying, the originals can be read but not written.</li>
+<li>When the copy is done, the original goes to the trash with its subtree (restorable for 30 days).</li>
+<li>A <b>forward</b> from each old ID to its new place is kept.</li>
 </ol>
-<h4>何を写すか</h4>
+<h4>What is copied</h4>
 <div class="scroll"><table>
-<thead><tr><th>もの</th><th>扱い</th></tr></thead>
+<thead><tr><th>What</th><th>How</th></tr></thead>
 <tbody>
-<tr><td>タイトル・本文（今の状態）</td><td>写す。</td></tr>
-<tr><td>最新のリリース</td><td>元にリリースがあれば、その内容を写しの v1 にする。今の状態とリリースの差（未リリースの変更）もそのまま保つ。リリースのない元は下書きのまま。</td></tr>
-<tr><td>古いリリース・ブロックの版・commit</td><td>写さない。写しの最初の commit に「{元のワークスペース}/{元の ID} から移動、移動した人」を残す。元の履歴はゴミ箱にある間（30 日）だけ見られる。</td></tr>
-<tr><td>配下の中のペーパーブロック・リンク</td><td>配下の中を指すものは新しい ID に付け替える。配下の外を指すリンクはそのまま（元のワークスペースのペーパーを指し続ける）。</td></tr>
-<tr><td>private</td><td>private のペーパーは、移動先での自分の private の一覧へ写す。</td></tr>
-<tr><td>検索エントリ</td><td>移動先で作り直す。元のものは削除と一緒に除かれる。</td></tr>
+<tr><td>Title and text (current state)</td><td>Copied.</td></tr>
+<tr><td>The latest release</td><td>If the original has one, its contents become the copy's v1, and the difference between the current state and that release is kept. An original without releases stays a draft.</td></tr>
+<tr><td>Older releases, block versions, commits</td><td>Not copied. The copy's first commit records "moved from {workspace}/{ID} by …". The original's history can be seen while it is in the trash (30 days).</td></tr>
+<tr><td>Paper blocks and links within the subtree</td><td>Those pointing inside the subtree are switched to the new IDs; links pointing outside stay (they keep pointing to papers in the old workspace).</td></tr>
+<tr><td>private</td><td>Private papers are copied into one's own private list in the target.</td></tr>
+<tr><td>Search entries</td><td>Made again in the target; the old ones go with the deletion.</td></tr>
 </tbody></table></div>
-<h4>移した後</h4>
+<h4>After the move</h4>
 <ul>
-<li><b>古い URL</b>: 転送の記録を見て新しい場所へ転送する。移動先のワークスペースを使えない人には、今までどおり「存在しない」（404）を返し、移動先を漏らさない。転送の記録は消さない（小さいので）。</li>
-<li><b>お気に入り</b>: 古い ID のピンは、転送の記録を見て新しい ID に付け替える。</li>
-<li><b>見える人が変わる</b>: 移動先のワークスペースの規則で決まる。画面は移動の確認で「見える人が変わります」と出す。</li>
+<li><b>Old URLs</b>: forwarded to the new place through the forward. People who may not use the target workspace still get "not found" (404), so the target does not leak. Forwards are never deleted (they are small).</li>
+<li><b>Pins</b>: a pin on an old ID is switched to the new ID through the forward.</li>
+<li><b>Who can see it changes</b>: the target workspace's rule decides. The move's confirmation says "who can see it will change".</li>
 </ul>
 </div>
 
-<p class="meta">D36（大きな配下の移動）は、D28 を B（親だけを持つ）にすれば配下の書き直しがなくなるので取り下げた。</p>
+<p class="meta">D36 (moving large subtrees) was withdrawn: with B for D28 (only the parent kept), nothing under a moved paper is rewritten.</p>
 </section>
 </article>
 </body>
