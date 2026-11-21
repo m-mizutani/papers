@@ -56,17 +56,23 @@ func (s IndexSpec) String() string {
 // or that range over document IDs need no index.
 var RequiredIndexes = []IndexSpec{
 	{CollectionGroup: colTokens, Fields: []IndexField{{"UserID", IndexAsc}}, Query: "ListTokens"},
-	{CollectionGroup: colGroups, Fields: []IndexField{{"Members", IndexContains}}, Query: "ListGroupsByMember"},
-	{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexAsc}}, Query: "PaperTx.FirstAfter, PaperTx.Children"},
-	{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexDesc}}, Query: "PaperTx.Last"},
-	{CollectionGroup: colVersions, Fields: []IndexField{{"Version", IndexDesc}}, Query: "ListBlockVersions, PaperTx.LatestBlockVersion"},
-	{CollectionGroup: colCommits, Fields: []IndexField{{"CreatedAt", IndexDesc}}, Query: "ListCommits"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListChildren"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"Visibility", IndexAsc}, {"CreatedBy.UserID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListPrivatePapers"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"CreatedBy.UserID", IndexAsc}, {"DeletedAt", IndexAsc}}, Query: "ListTrash"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"DeletedAt", IndexAsc}}, Query: "ListTrashedBefore"},
+	{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexAsc}}, Query: "ListBlocksRange, Tx.FirstAfter, Tx.Children"},
+	{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexDesc}}, Query: "Tx.Last"},
+	{CollectionGroup: colBlocks, Fields: []IndexField{{"Type", IndexAsc}, {"Order", IndexAsc}}, Query: "ListPaperBlocks"},
+	{CollectionGroup: colVersions, Fields: []IndexField{{"Number", IndexDesc}}, Query: "ListVersions"},
+	{CollectionGroup: colEvents, Fields: []IndexField{{"Event.At", IndexAsc}}, Query: "ListEvents, Watch"},
+	{CollectionGroup: colAttachments, Fields: []IndexField{{"SHA256", IndexAsc}}, Query: "FindAttachmentByHash"},
 	{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexText}}, Query: "Search"},
 }
 
 // TTLFields are the fields whose time value expires the document.
 var TTLFields = []struct{ CollectionGroup, Field string }{
 	{colSessions, "ExpiresAt"},
+	{colEvents, "ExpireAt"},
 }
 
 func (s IndexSpec) proto() *adminpb.Index {

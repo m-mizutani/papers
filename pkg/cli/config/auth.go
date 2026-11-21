@@ -21,7 +21,6 @@ type Auth struct {
 	googleHostedDomain string
 	allowedDomains     []string
 	allowedEmails      []string
-	adminEmails        []string
 	sessionTTL         time.Duration
 	noAuthn            bool
 	devUserEmail       string
@@ -35,7 +34,6 @@ func (x *Auth) Flags() []cli.Flag {
 		&cli.StringFlag{Name: "google-hosted-domain", Category: "auth", Usage: "Hint Google to show only accounts of this Workspace domain", Sources: cli.EnvVars("PAPERS_GOOGLE_HOSTED_DOMAIN"), Destination: &x.googleHostedDomain},
 		&cli.StringSliceFlag{Name: "allowed-domain", Category: "auth", Usage: "Email domain allowed to sign in (repeatable)", Sources: cli.EnvVars("PAPERS_ALLOWED_DOMAINS"), Destination: &x.allowedDomains},
 		&cli.StringSliceFlag{Name: "allowed-email", Category: "auth", Usage: "Email address allowed to sign in (repeatable)", Sources: cli.EnvVars("PAPERS_ALLOWED_EMAILS"), Destination: &x.allowedEmails},
-		&cli.StringSliceFlag{Name: "admin-email", Category: "auth", Usage: "System administrator email (repeatable)", Sources: cli.EnvVars("PAPERS_ADMIN_EMAILS"), Destination: &x.adminEmails},
 		&cli.DurationFlag{Name: "session-ttl", Category: "auth", Usage: "Browser session lifetime", Value: 30 * 24 * time.Hour, Sources: cli.EnvVars("PAPERS_SESSION_TTL"), Destination: &x.sessionTTL},
 		&cli.BoolFlag{Name: "no-authn", Category: "auth", Usage: "DEVELOPMENT ONLY: authenticate every request as the dev user", Sources: cli.EnvVars("PAPERS_NO_AUTHN"), Destination: &x.noAuthn},
 		&cli.StringFlag{Name: "dev-user-email", Category: "auth", Usage: "Email of the no-authn dev user", Value: "dev@localhost", Sources: cli.EnvVars("PAPERS_DEV_USER_EMAIL"), Destination: &x.devUserEmail},
@@ -48,7 +46,6 @@ func (x Auth) LogValue() slog.Value {
 		slog.Bool("google", x.googleClientID != ""),
 		slog.Any("allowed_domains", x.allowedDomains),
 		slog.Int("allowed_emails", len(x.allowedEmails)),
-		slog.Any("admin_emails", x.adminEmails),
 		slog.Duration("session_ttl", x.sessionTTL),
 		slog.Bool("no_authn", x.noAuthn),
 	)
@@ -59,16 +56,13 @@ func (x Auth) LogValue() slog.Value {
 func (x *Auth) Configure(ctx context.Context, repo interfaces.Repository, baseURL string) (*usecase.Auth, error) {
 	cfg := usecase.AuthConfig{
 		AllowedDomains: x.allowedDomains, AllowedEmails: x.allowedEmails,
-		AdminEmails: x.adminEmails, SessionTTL: x.sessionTTL,
+		SessionTTL: x.sessionTTL,
 	}
 
 	switch {
 	case x.noAuthn && x.googleClientID != "":
 		return nil, goerr.New("--no-authn cannot be combined with Google sign-in")
 	case x.noAuthn:
-		// The dev user is a system administrator so a fresh instance is
-		// usable immediately.
-		cfg.AdminEmails = append(cfg.AdminEmails, x.devUserEmail)
 		a, err := usecase.NewAuth(repo, nil, cfg)
 		if err != nil {
 			return nil, goerr.Wrap(err, "failed to configure auth")

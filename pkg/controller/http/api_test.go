@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -11,47 +12,72 @@ import (
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-type wsResp struct {
-	ID       model.WorkspaceID   `json:"id"`
-	Name     string              `json:"name"`
-	Role     model.Role          `json:"role"`
-	Bindings []model.RoleBinding `json:"bindings"`
+type paperView struct {
+	Paper  model.Paper `json:"paper"`
+	IsHome bool        `json:"is_home"`
+	Path   []struct {
+		ID model.PaperID `json:"id"`
+	} `json:"path"`
 }
 
-type paperViewResp struct {
-	Paper  model.Paper   `json:"paper"`
+type blocksPage struct {
 	Blocks []model.Block `json:"blocks"`
-	Role   model.Role    `json:"role"`
+	Next   string        `json:"next"`
+	Papers map[model.PaperID]struct {
+		Title string `json:"title"`
+	} `json:"papers"`
 }
 
-type commitResp struct {
-	Commit  *model.Commit   `json:"commit"`
-	Paper   model.Paper     `json:"paper"`
-	Blocks  []model.Block   `json:"blocks"`
-	Deleted []model.BlockID `json:"deleted"`
+type batchResp struct {
+	Paper   model.Paper       `json:"paper"`
+	Blocks  []model.Block     `json:"blocks"`
+	Deleted []model.BlockID   `json:"deleted"`
+	Refs    map[string]string `json:"refs"`
+	Trashed []model.PaperID   `json:"trashed"`
 }
 
+const ws = model.WorkspaceID("team")
+
+// setupPaper signs in alice and bob and has alice create a public paper
+// with a body.
 func setupPaper(t *testing.T, ts *testServer) (*client, *client, model.WorkspaceID, model.PaperID) {
 	t.Helper()
 	alice := ts.login("alice@example.com")
 	bob := ts.login("bob@example.com")
+	var p model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Runbook", "markdown": "# Steps\n\n1. check\n2. fix"}, http.StatusCreated, &p)
+	gt.Equal(t, p.Title, "Runbook")
+	return alice, bob, ws, p.ID
+}
 
-	var me struct {
-		User model.User `json:"user"`
+func TestWorkspaceAPI(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	var list struct {
+		Workspaces []struct {
+			ID          model.WorkspaceID `json:"id"`
+			Name        string            `json:"name"`
+			HomePaperID model.PaperID     `json:"home_paper_id"`
+		} `json:"workspaces"`
 	}
-	bob.expect("GET", "/api/auth/me", nil, http.StatusOK, &me)
+	alice.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, &list)
+	gt.A(t, list.Workspaces).Length(2)
+	gt.Equal(t, list.Workspaces[0].ID, ws)
 
-	var ws wsResp
-	alice.expect("POST", "/api/v1/workspaces", map[string]string{"name": "Team", "emoji": "📚"}, http.StatusCreated, &ws)
-	gt.Equal(t, ws.Role, model.RoleOwner)
-	bindings := append(ws.Bindings, model.RoleBinding{Subject: model.Subject{Kind: model.SubjectUser, ID: string(me.User.ID)}, Role: model.RoleEditor})
-	alice.expect("PATCH", "/api/v1/workspaces/"+string(ws.ID), map[string]any{"bindings": bindings}, http.StatusOK, nil)
+	// workspaces come from the configuration: there is no create API
+	alice.expect("POST", "/api/v1/workspaces", map[string]string{"name": "x"}, http.StatusMethodNotAllowed, nil)
+	alice.expect("GET", "/api/v1/workspaces/nope", nil, http.StatusNotFound, nil)
 
-	var view paperViewResp
-	alice.expect("POST", "/api/v1/workspaces/"+string(ws.ID)+"/papers", map[string]any{"title": "Runbook", "markdown": "# Steps\n\n1. check\n2. fix"}, http.StatusCreated, &view)
-	gt.Equal(t, view.Paper.Title, "Runbook")
-	gt.A(t, view.Blocks).Length(3)
-	return alice, bob, ws.ID, view.Paper.ID
+	var home paperView
+	alice.expect("GET", "/api/v1/workspaces/team/papers/"+string(list.Workspaces[0].HomePaperID), nil, http.StatusOK, &home)
+	gt.True(t, home.IsHome)
+	gt.Equal(t, home.Paper.Title, "Team")
+
+	var meta struct {
+		Palette []string `json:"palette"`
+	}
+	alice.expect("GET", "/api/v1/block-types", nil, http.StatusOK, &meta)
+	gt.A(t, meta.Palette).Length(9)
 }
 
 func TestPaperAPI(t *testing.T) {
@@ -59,207 +85,184 @@ func TestPaperAPI(t *testing.T) {
 	alice, bob, ws, paper := setupPaper(t, ts)
 	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
 
-	var list struct {
-		Papers []struct {
-			ID   model.PaperID `json:"id"`
-			Role model.Role    `json:"role"`
-		} `json:"papers"`
+	var page blocksPage
+	bob.expect("GET", base+"/blocks?limit=100", nil, http.StatusOK, &page)
+	gt.A(t, page.Blocks).Length(3)
+	first := page.Blocks[0]
+
+	// ops with a ref and a child paper
+	var res batchResp
+	bob.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{
+		{"op": "update", "block_id": first.ID, "base_rev": first.Rev, "content": "Steps [now]{.red}"},
+		{"op": "insert", "ref": "n1", "type": "paragraph", "content": "after", "after": ""},
+		{"op": "insert", "type": "paper", "title": "Sub", "after": "ref:n1"},
+	}}, http.StatusOK, &res)
+	gt.True(t, model.ValidID(res.Refs["n1"]))
+	var child model.PaperID
+	for _, b := range res.Blocks {
+		if b.Type == model.BlockPaper {
+			child = b.Props.PaperID
+		}
 	}
-	bob.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers", nil, http.StatusOK, &list)
-	gt.A(t, list.Papers).Length(1)
-	gt.Equal(t, list.Papers[0].Role, model.RoleEditor)
+	bob.expect("GET", base+"/blocks", nil, http.StatusOK, &page)
+	gt.Equal(t, page.Papers[child].Title, "Sub")
+	var sub paperView
+	alice.expect("GET", "/api/v1/workspaces/team/papers/"+string(child), nil, http.StatusOK, &sub)
+	gt.A(t, sub.Path).Length(2)
 
-	var view paperViewResp
-	bob.expect("GET", base, nil, http.StatusOK, &view)
-	first := view.Blocks[0]
-
-	// commit an update and an insert
-	var cr commitResp
-	bob.expect("POST", base+"/commits", map[string]any{
-		"message": "edit",
-		"ops": []map[string]any{
-			{"op": "update", "block_id": first.ID, "content": "Procedure", "base_version": first.Version},
-			{"op": "insert", "type": "callout", "content": "Be careful", "props": map[string]any{"icon": "⚠️"}, "after": first.ID},
-		},
-	}, http.StatusOK, &cr)
-	gt.A(t, cr.Commit.Changes).Length(2)
-	gt.A(t, cr.Blocks).Length(2)
-	gt.Equal(t, cr.Blocks[0].Content, "Procedure")
-	gt.Equal(t, cr.Blocks[0].Version, int64(2))
-	gt.A(t, cr.Deleted).Length(0)
-
-	// block history
-	var versions struct {
-		Versions []model.Block `json:"versions"`
-	}
-	bob.expect("GET", base+"/blocks/"+string(first.ID)+"/versions", nil, http.StatusOK, &versions)
-	gt.A(t, versions.Versions).Length(2)
-	gt.Equal(t, versions.Versions[1].Content, "Steps")
-	bob.expect("GET", base+"/blocks/"+string(first.ID)+"/versions?limit=0", nil, http.StatusBadRequest, nil)
-
-	// history
-	var hist struct {
-		Commits []model.Commit `json:"commits"`
-	}
-	alice.expect("GET", base+"/commits?limit=1", nil, http.StatusOK, &hist)
-	gt.A(t, hist.Commits).Length(1)
-	gt.Equal(t, hist.Commits[0].Actor.Name, "bob")
-	alice.expect("GET", base+"/commits?before="+string(hist.Commits[0].ID), nil, http.StatusOK, &hist)
-	gt.A(t, hist.Commits).Length(1)
-	gt.Equal(t, hist.Commits[0].Message, "Initial content")
-	alice.expect("GET", base+"/commits?limit=x", nil, http.StatusBadRequest, nil)
-
-	// markdown export
-	resp := alice.do("GET", base+"/markdown", nil)
-	gt.Equal(t, resp.StatusCode, http.StatusOK)
-	md := string(gt.R1(io.ReadAll(resp.Body)).NoError(t))
-	gt.True(t, strings.HasPrefix(md, "# Runbook\n\n## Procedure\n\n> [!NOTE]\n> Be careful"))
-
-	// search
-	var hits struct {
-		Hits []struct {
-			Snippet string `json:"snippet"`
-		} `json:"hits"`
-	}
-	bob.expect("GET", "/api/v1/workspaces/"+string(ws)+"/search?q=careful", nil, http.StatusOK, &hits)
-	gt.A(t, hits.Hits).Length(1)
-	bob.expect("GET", "/api/v1/workspaces/"+string(ws)+"/search?q=", nil, http.StatusBadRequest, nil)
-
-	// invalid op and unknown fields
-	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "explode"}}}, http.StatusBadRequest, nil)
-	bob.expect("POST", base+"/commits", map[string]any{"ops": []any{}, "bogus": 1}, http.StatusBadRequest, nil)
-
-	// access: restrict the paper; bob (workspace editor) loses it
-	alice.expect("PUT", base+"/access", map[string]any{"restricted": true, "bindings": []any{}}, http.StatusOK, nil)
-	bob.expect("GET", base, nil, http.StatusNotFound, nil)
-	bob.expect("DELETE", base, nil, http.StatusNotFound, nil)
-
-	alice.expect("DELETE", base, nil, http.StatusNoContent, nil)
-	alice.expect("GET", base, nil, http.StatusNotFound, nil)
-}
-
-func TestCommitConflictAPI(t *testing.T) {
-	ts := newTestServer(t, false)
-	alice, bob, ws, paper := setupPaper(t, ts)
-	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
-	var view paperViewResp
-	alice.expect("GET", base, nil, http.StatusOK, &view)
-	block := view.Blocks[1]
-	update := func(content string, baseVersion int64) map[string]any {
-		return map[string]any{"op": "update", "block_id": block.ID, "content": content, "base_version": baseVersion}
-	}
-
-	// base_version is required
-	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "x"}}}, http.StatusBadRequest, nil)
-
-	// alice saves first; bob's save based on the same version conflicts
-	alice.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{update("alice", block.Version)}}, http.StatusOK, nil)
+	// a stale base revision is a 409 with the current block
 	var conflict struct {
 		Error struct {
 			Code      string `json:"code"`
 			Conflicts []struct {
-				BlockID     model.BlockID `json:"block_id"`
-				BaseVersion int64         `json:"base_version"`
-				Current     *model.Block  `json:"current"`
+				Current *model.Block `json:"current"`
 			} `json:"conflicts"`
 		} `json:"error"`
 	}
-	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{update("bob", block.Version)}}, http.StatusConflict, &conflict)
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": first.ID, "base_rev": first.Rev, "content": "mine"}}}, http.StatusConflict, &conflict)
 	gt.Equal(t, conflict.Error.Code, "conflict")
-	gt.A(t, conflict.Error.Conflicts).Length(1)
-	gt.Equal(t, conflict.Error.Conflicts[0].BlockID, block.ID)
-	gt.Equal(t, conflict.Error.Conflicts[0].Current.Content, "alice")
+	gt.Equal(t, conflict.Error.Conflicts[0].Current.Content, "Steps [now]{.red}")
+	// a missing base revision is a 400
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": first.ID, "content": "x"}}}, http.StatusBadRequest, nil)
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": first.ID, "base_rev": first.Rev, "content": "mine"}}, "force": true}, http.StatusOK, nil)
 
-	// forcing overwrites and records it
-	var res commitResp
-	bob.expect("POST", base+"/commits", map[string]any{"force": true, "ops": []map[string]any{update("bob", block.Version)}}, http.StatusOK, &res)
-	gt.Equal(t, res.Commit.Changes[0].OverwroteVersion, block.Version+1)
-	gt.Equal(t, res.Commit.Changes[0].OverwroteBy.Kind, model.ActorHuman)
+	// versions
+	var saved struct {
+		Version *struct {
+			Number int `json:"number"`
+		} `json:"version"`
+	}
+	alice.expect("POST", base+"/versions", map[string]any{"note": "first"}, http.StatusOK, &saved)
+	gt.Equal(t, saved.Version.Number, 1)
+	alice.expect("POST", base+"/versions", map[string]any{"note": "again"}, http.StatusOK, &saved)
+	gt.Nil(t, saved.Version)
+	var latest struct {
+		Version struct {
+			Number int `json:"number"`
+		} `json:"version"`
+		Blocks []model.Block `json:"blocks"`
+	}
+	bob.expect("GET", base+"/versions/latest", nil, http.StatusOK, &latest)
+	gt.Equal(t, latest.Version.Number, 1)
+	var status struct {
+		Changed bool `json:"changed"`
+	}
+	bob.expect("GET", base+"/status", nil, http.StatusOK, &status)
+	gt.False(t, status.Changed)
+	bob.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "set_title", "title": "Runbook 2"}}}, http.StatusOK, nil)
+	var diff struct {
+		TitleAfter string `json:"title_after"`
+	}
+	bob.expect("GET", base+"/diff?from=latest", nil, http.StatusOK, &diff)
+	gt.Equal(t, diff.TitleAfter, "Runbook 2")
+	bob.expect("POST", base+"/versions/1/restore", nil, http.StatusOK, nil)
 
-	// restore brings alice's version back
-	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "restore", "block_id": block.ID, "version": block.Version + 1, "base_version": block.Version + 2}}}, http.StatusOK, &res)
-	gt.Equal(t, res.Blocks[0].Content, "alice")
+	// markdown
+	resp := bob.do("GET", base+"/markdown", nil)
+	md := string(gt.R1(io.ReadAll(resp.Body)).NoError(t))
+	gt.True(t, strings.HasPrefix(md, "# Runbook\n"))
 
-	// the lock endpoints are gone
-	alice.expect("PUT", base+"/blocks/"+string(block.ID)+"/lock", nil, http.StatusNotFound, nil)
+	// search, sidebar, pins
+	var hits struct {
+		Hits []struct {
+			Text string `json:"text"`
+		} `json:"hits"`
+	}
+	bob.expect("GET", "/api/v1/workspaces/team/search?q=check", nil, http.StatusOK, &hits)
+	gt.A(t, hits.Hits).Length(1)
+	bob.expect("PUT", base+"/pin", map[string]any{}, http.StatusNoContent, nil)
+	var sb struct {
+		Pins []struct {
+			ID model.PaperID `json:"id"`
+		} `json:"pins"`
+		Recent []struct {
+			ID model.PaperID `json:"id"`
+		} `json:"recent"`
+	}
+	bob.expect("GET", "/api/v1/workspaces/team/sidebar", nil, http.StatusOK, &sb)
+	gt.Equal(t, sb.Pins[0].ID, paper)
+
+	// only the creator deletes (with everything under it); others archive
+	alice.expect("POST", base+"/trash", nil, http.StatusForbidden, nil) // bob's child is under it
+	alice.expect("POST", "/api/v1/workspaces/team/papers/"+string(child)+"/trash", nil, http.StatusForbidden, nil)
+	alice.expect("POST", "/api/v1/workspaces/team/papers/"+string(child)+"/archive", map[string]any{}, http.StatusOK, nil)
+	bob.expect("POST", "/api/v1/workspaces/team/papers/"+string(child)+"/trash", nil, http.StatusOK, nil)
+	var trashed batchResp
+	alice.expect("POST", base+"/trash", nil, http.StatusOK, &trashed)
+	bob.expect("GET", base, nil, http.StatusNotFound, nil)
+	var trash struct {
+		Papers []struct {
+			ID model.PaperID `json:"id"`
+		} `json:"papers"`
+	}
+	alice.expect("GET", "/api/v1/workspaces/team/trash", nil, http.StatusOK, &trash)
+	gt.A(t, trash.Papers).Length(1)
+	alice.expect("POST", base+"/restore", nil, http.StatusOK, nil)
+	bob.expect("GET", base, nil, http.StatusOK, nil)
+}
+
+func TestVisibilityAndMoveAPI(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice, bob, ws, paper := setupPaper(t, ts)
+	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
+
+	var memo model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Memo", "visibility": "private"}, http.StatusCreated, &memo)
+	memoBase := "/api/v1/workspaces/team/papers/" + string(memo.ID)
+	bob.expect("GET", memoBase, nil, http.StatusNotFound, nil)
+	bob.expect("PUT", memoBase+"/visibility", map[string]any{"visibility": "public"}, http.StatusNotFound, nil)
+	alice.expect("PUT", memoBase+"/visibility", map[string]any{"visibility": "public", "parent": "Runbook"}, http.StatusOK, nil)
+	bob.expect("GET", memoBase, nil, http.StatusOK, nil)
+
+	var resolved model.Paper
+	bob.expect("GET", "/api/v1/workspaces/team/resolve?path=Runbook/Memo", nil, http.StatusOK, &resolved)
+	gt.Equal(t, resolved.ID, memo.ID)
+
+	// move across workspaces leaves a forward
+	var moved struct {
+		Forward model.Forward `json:"forward"`
+	}
+	alice.expect("POST", memoBase+"/move", map[string]any{"workspace": "other"}, http.StatusOK, &moved)
+	gt.Equal(t, moved.Forward.ToWorkspaceID, model.WorkspaceID("other"))
+	_ = base
+}
+
+func TestReadOnlyTokenAndAttachments(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice, _, ws, paper := setupPaper(t, ts)
+	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
+	ro := ts.token(alice, model.TokenPersonal, model.ScopeRead)
+	ro.expect("GET", base, nil, http.StatusOK, nil)
+	ro.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "insert", "type": "paragraph"}}}, http.StatusForbidden, nil)
+
+	// upload the raw image and read it back
+	req := gt.R1(http.NewRequest("POST", ts.srv.URL+base+"/attachments?name=a.png", bytes.NewReader([]byte("\x89PNG")))).NoError(t)
+	req.Header.Set("Content-Type", "image/png")
+	req.Header.Set("X-Requested-With", "papers")
+	resp := gt.R1(alice.hc.Do(req)).NoError(t)
+	defer func() { _ = resp.Body.Close() }()
+	gt.Equal(t, resp.StatusCode, http.StatusCreated)
+	var att model.Attachment
+	gt.NoError(t, decodeBody(resp, &att))
+	get := ro.do("GET", base+"/attachments/"+string(att.ID), nil)
+	gt.Equal(t, get.StatusCode, http.StatusOK)
+	gt.Equal(t, get.Header.Get("Content-Type"), "image/png")
+	gt.Equal(t, string(gt.R1(io.ReadAll(get.Body)).NoError(t)), "\x89PNG")
 }
 
 func TestTokenAPI(t *testing.T) {
 	ts := newTestServer(t, false)
-	alice, _, ws, paper := setupPaper(t, ts)
-	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
-
-	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
-	gt.True(t, strings.HasPrefix(agent.bearer, "pap_"))
-
-	var cr commitResp
-	agent.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "insert_markdown", "markdown": "```mermaid\ngraph TD; A-->B\n```"}}}, http.StatusOK, &cr)
-	gt.Equal(t, cr.Commit.Actor.Kind, model.ActorAgent)
-
-	// tokens cannot manage tokens or administer
-	agent.expect("GET", "/api/v1/tokens", nil, http.StatusForbidden, nil)
-	agent.expect("PUT", base+"/access", map[string]any{"restricted": true}, http.StatusForbidden, nil)
-
-	reader := ts.token(alice, model.TokenPersonal, model.ScopeRead)
-	reader.expect("GET", base, nil, http.StatusOK, nil)
-	reader.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "set_title", "title": "x"}}}, http.StatusForbidden, nil)
-
-	var toks struct {
-		Tokens []map[string]any `json:"tokens"`
-	}
-	alice.expect("GET", "/api/v1/tokens", nil, http.StatusOK, &toks)
-	gt.A(t, toks.Tokens).Length(2)
-	for _, tk := range toks.Tokens {
-		_, leaked := tk["secret_hash"]
-		gt.False(t, leaked)
-	}
-	id := toks.Tokens[0]["id"].(string)
-	alice.expect("DELETE", "/api/v1/tokens/"+id, nil, http.StatusNoContent, nil)
-}
-
-func TestGroupsUsersAndMeta(t *testing.T) {
-	ts := newTestServer(t, false)
-	admin := ts.login("admin@example.com")
 	alice := ts.login("alice@example.com")
-
-	var users struct {
-		Users []struct {
-			ID    model.UserID `json:"id"`
-			Email string       `json:"email"`
-		} `json:"users"`
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	// tokens cannot manage tokens
+	agent.expect("GET", "/api/v1/tokens", nil, http.StatusForbidden, nil)
+	var list struct {
+		Tokens []struct {
+			ID model.TokenID `json:"id"`
+		} `json:"tokens"`
 	}
-	alice.expect("GET", "/api/v1/users", nil, http.StatusOK, &users)
-	gt.A(t, users.Users).Length(2)
-
-	alice.expect("POST", "/api/v1/groups", map[string]any{"name": "eng"}, http.StatusForbidden, nil)
-	var g model.Group
-	admin.expect("POST", "/api/v1/groups", map[string]any{"name": "eng", "members": []model.UserID{users.Users[0].ID}}, http.StatusCreated, &g)
-	admin.expect("PUT", "/api/v1/groups/"+string(g.ID), map[string]any{"name": "platform"}, http.StatusOK, nil)
-
-	var groups struct {
-		Groups []model.Group `json:"groups"`
-	}
-	alice.expect("GET", "/api/v1/groups", nil, http.StatusOK, &groups)
-	gt.A(t, groups.Groups).Length(1)
-	gt.Equal(t, groups.Groups[0].Name, "platform")
-	admin.expect("DELETE", "/api/v1/groups/"+string(g.ID), nil, http.StatusNoContent, nil)
-
-	var types struct {
-		BlockTypes []struct {
-			Type          model.BlockType `json:"type"`
-			HumanEditable bool            `json:"human_editable"`
-		} `json:"block_types"`
-	}
-	alice.expect("GET", "/api/v1/block-types", nil, http.StatusOK, &types)
-	gt.A(t, types.BlockTypes).Length(len(model.BlockTypes()))
-
-	// workspace visibility
-	var ws wsResp
-	admin.expect("POST", "/api/v1/workspaces", map[string]string{"name": "Private"}, http.StatusCreated, &ws)
-	alice.expect("GET", "/api/v1/workspaces/"+string(ws.ID), nil, http.StatusNotFound, nil)
-	var wl struct {
-		Workspaces []wsResp `json:"workspaces"`
-	}
-	alice.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, &wl)
-	gt.A(t, wl.Workspaces).Length(0)
+	alice.expect("GET", "/api/v1/tokens", nil, http.StatusOK, &list)
+	gt.A(t, list.Tokens).Length(1)
+	alice.expect("DELETE", "/api/v1/tokens/"+string(list.Tokens[0].ID), nil, http.StatusNoContent, nil)
+	agent.expect("GET", "/api/v1/workspaces", nil, http.StatusUnauthorized, nil)
 }

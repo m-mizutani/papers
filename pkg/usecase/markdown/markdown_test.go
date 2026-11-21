@@ -45,7 +45,8 @@ func TestParse(t *testing.T) {
 	gt.Equal(t, ds[8].Props.Icon, "⚠️")
 	gt.Equal(t, ds[9].Props.Language, "go")
 	gt.Equal(t, ds[12].Props.URL, "https://example.com/cat.png")
-	gt.Equal(t, ds[13].Props, model.BlockProps{Rows: 3, Cols: 2, HeaderRow: true})
+	gt.Equal(t, ds[13].Props, model.BlockProps{HeaderRow: true})
+	gt.A(t, ds[13].Cells).Length(3)
 	gt.Equal(t, ds[13].Cells, [][]string{{"h1", "h2"}, {"a | b", "c"}, {"d", ""}})
 	gt.Equal(t, ds[14].Props.Level, 3)
 }
@@ -75,14 +76,20 @@ func TestRenderRoundTrip(t *testing.T) {
 		id := model.BlockID("b" + string(rune('a'+i)))
 		blocks = append(blocks, &model.Block{ID: id, Type: d.Type, Content: d.Content, Props: d.Props, Order: k})
 		if d.Type == model.BlockTable {
-			for r, row := range d.Cells {
+			table := blocks[len(blocks)-1]
+			for i := range d.Cells[0] {
+				table.Props.Cols = append(table.Props.Cols, model.TableLine{ID: model.NewLineID(), Order: string(rune('a' + i))})
+			}
+			for i, row := range d.Cells {
+				line := model.TableLine{ID: model.NewLineID(), Order: string(rune('a' + i))}
+				table.Props.Rows = append(table.Props.Rows, line)
 				for c, cell := range row {
-					blocks = append(blocks, &model.Block{ID: model.BlockID(string(id) + "-cell"), ParentID: id, Type: model.BlockTableCell, Content: cell, Props: model.BlockProps{Row: r, Col: c}, Order: "V"})
+					blocks = append(blocks, &model.Block{ID: model.NewBlockID(), ParentID: id, Type: model.BlockTableCell, Content: cell, Props: model.BlockProps{RowID: line.ID, ColID: table.Props.Cols[c].ID}, Order: "V"})
 				}
 			}
 		}
 	}
-	out := markdown.Render("Doc", blocks)
+	out := markdown.Render("Doc", blocks, nil)
 	gt.Equal(t, out, "# Doc\n\n### Section\n\nParagraph\n\n- a\n  - b\n- [x] done\n\n```sh\nls\n```\n\n| k | v |\n| --- | --- |\n| x | 1 |\n")
 
 	// Re-parsing the output yields the same blocks (headings shift by one
@@ -91,4 +98,15 @@ func TestRenderRoundTrip(t *testing.T) {
 	gt.Equal(t, again[0].Type, model.BlockHeading)
 	gt.Equal(t, again[0].Content, "Doc")
 	gt.A(t, again).Length(len(ds) + 1)
+}
+
+func TestRenderPaperAndAttachment(t *testing.T) {
+	child := model.NewPaperID()
+	att := model.NewAttachmentID()
+	blocks := []*model.Block{
+		{ID: "a", Type: model.BlockPaper, Props: model.BlockProps{PaperID: child}, Order: "a1"},
+		{ID: "b", Type: model.BlockImage, Content: "diagram", Props: model.BlockProps{AttachmentID: att}, Order: "a2"},
+	}
+	out := markdown.Render("", blocks, map[model.PaperID]string{child: "Runbook"})
+	gt.Equal(t, out, "[Runbook](paper:"+string(child)+")\n\n![diagram](attachment:"+string(att)+")\n")
 }

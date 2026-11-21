@@ -112,7 +112,7 @@ ol.read li{margin-bottom:8px}
 <article class="sheet">
 <h1>papers コードベースの地図</h1>
 <p class="lede">人と AI が同じ「ペーパー」をブロック単位で書き換える共有キャンバス。Go のサーバー 1 本が Web UI・REST・WebSocket・MCP をまとめて出し、Firestore Enterprise に保存する。</p>
-<p class="meta">2026-11-21 時点、ブランチ <code>initial-implementation</code>（ロック廃止後）。設計の正本は <code>docs/design.html</code>、これはコードを読む前の案内図。</p>
+<p class="meta">2026-11-22 時点、ブランチ <code>initial-implementation</code>（モデル刷新の実装後）。モデルと概念の正本は <code>docs/model.html</code>、実装の設計は <code>docs/design.html</code>。これはコードを読む前の案内図。</p>
 <nav class="ui" aria-label="目次">
 <a href="#shape">全体の形</a><a href="#layers">層とパッケージ</a><a href="#concepts">中心の概念</a><a href="#flow">1 回の編集の旅</a><a href="#other">ほかの流れ</a><a href="#frontend">フロントエンド</a><a href="#rules">守っている約束</a><a href="#read">読む順番</a>
 </nav>
@@ -124,11 +124,11 @@ ol.read li{margin-bottom:8px}
 <thead><tr><th>入口</th><th>誰が使う</th><th>コード</th><th>中身</th></tr></thead>
 <tbody>
 <tr><td>Web UI</td><td>人</td><td><code>frontend/</code> → <code>api.go</code>, <code>live.go</code></td><td>React の SPA。サーバーのバイナリに埋め込まれて配られる</td></tr>
-<tr><td>REST <code>/api/v1</code></td><td>人（UI 経由）と AI</td><td><code>controller/http/api.go</code></td><td>ワークスペース、ペーパー、commit、履歴、検索、トークン</td></tr>
+<tr><td>REST <code>/api/v1</code></td><td>人（UI 経由）と AI</td><td><code>controller/http/api.go</code></td><td>ワークスペース（読むだけ）、ペーパー、操作のまとまり、版、木、検索、添付、トークン</td></tr>
 <tr><td>WebSocket <code>/live</code></td><td>開いているペーパーの画面</td><td><code>controller/http/live.go</code></td><td>他人の変更の受信だけ（サーバーからの一方向）</td></tr>
-<tr><td>MCP <code>/mcp</code></td><td>AI エージェント</td><td><code>controller/http/mcp.go</code></td><td><code>papers_read_paper</code>、<code>papers_commit</code> など 9 ツール</td></tr>
+<tr><td>MCP <code>/mcp</code></td><td>AI エージェント</td><td><code>controller/http/mcp.go</code></td><td><code>papers_read</code>、<code>papers_write</code>、<code>papers_save_version</code> など 9 ツール</td></tr>
 </tbody></table></div>
-<p>規模の目安は Go が約 9,000 行（テスト約 4,500 行）、フロントエンドが約 3,300 行。</p>
+<p>規模の目安は Go が約 13,500 行（テスト約 4,800 行）、フロントエンドが約 5,500 行。設定は <code>--config</code> のディレクトリ（ワークスペースごとの TOML と Rego）で、例は <code>examples/</code>。</p>
 </section>
 
 <section id="layers">
@@ -154,23 +154,23 @@ ol.read li{margin-bottom:8px}
 <g class="pk" data-k="auth" tabindex="0" role="button" aria-label="auth.go"><rect x="664" y="138" width="202" height="58" rx="6"/><text class="t" x="765" y="162" text-anchor="middle">auth.go</text><text class="s" x="765" y="180" text-anchor="middle">セッション・トークン</text></g>
 
 <!-- row C: usecase -->
-<g class="pk" data-k="usecase" tabindex="0" role="button" aria-label="pkg/usecase"><rect x="20" y="256" width="660" height="70" rx="6"/><text class="t" x="350" y="284" text-anchor="middle">pkg/usecase</text><text class="s" x="350" y="304" text-anchor="middle">権限の判定・commit の適用と衝突判定・検索・認証</text></g>
+<g class="pk" data-k="usecase" tabindex="0" role="button" aria-label="pkg/usecase"><rect x="20" y="256" width="660" height="70" rx="6"/><text class="t" x="350" y="284" text-anchor="middle">pkg/usecase</text><text class="s" x="350" y="304" text-anchor="middle">アクセスの判定・操作の適用と衝突・版・木・検索・認証</text></g>
 <g class="pk" data-k="markdown" tabindex="0" role="button" aria-label="pkg/usecase/markdown"><rect x="700" y="256" width="180" height="70" rx="6"/><text class="t" x="790" y="284" text-anchor="middle">usecase/markdown</text><text class="s" x="790" y="304" text-anchor="middle">Markdown ⇄ ブロック</text></g>
 
 <!-- row D: domain -->
 <rect class="band" x="20" y="358" width="860" height="104" rx="8"/>
 <text class="lbl" x="34" y="376">pkg/domain</text>
-<g class="pk" data-k="model" tabindex="0" role="button" aria-label="pkg/domain/model"><rect x="34" y="388" width="406" height="58" rx="6"/><text class="t" x="237" y="412" text-anchor="middle">model</text><text class="s" x="237" y="430" text-anchor="middle">エンティティ・権限・並び順キー・検索語</text></g>
-<g class="pk" data-k="interfaces" tabindex="0" role="button" aria-label="pkg/domain/interfaces"><rect x="460" y="388" width="406" height="58" rx="6"/><text class="t" x="663" y="412" text-anchor="middle">interfaces</text><text class="s" x="663" y="430" text-anchor="middle">Repository・PaperTx・IdentityProvider</text></g>
+<g class="pk" data-k="model" tabindex="0" role="button" aria-label="pkg/domain/model"><rect x="34" y="388" width="406" height="58" rx="6"/><text class="t" x="237" y="412" text-anchor="middle">model</text><text class="s" x="237" y="430" text-anchor="middle">エンティティ・ID・可視性・並び順キー・記法（markup）</text></g>
+<g class="pk" data-k="interfaces" tabindex="0" role="button" aria-label="pkg/domain/interfaces"><rect x="460" y="388" width="406" height="58" rx="6"/><text class="t" x="663" y="412" text-anchor="middle">interfaces</text><text class="s" x="663" y="430" text-anchor="middle">Repository・Tx・Workspaces・AttachmentStore</text></g>
 
 <!-- row E: adapters -->
 <g class="pk" data-k="firestore" tabindex="0" role="button" aria-label="pkg/repository/firestore"><rect x="20" y="500" width="280" height="58" rx="6"/><text class="t" x="160" y="524" text-anchor="middle">repository/firestore</text><text class="s" x="160" y="542" text-anchor="middle">本番の保存先</text></g>
 <g class="pk" data-k="memory" tabindex="0" role="button" aria-label="pkg/repository/memory"><rect x="316" y="500" width="268" height="58" rx="6"/><text class="t" x="450" y="524" text-anchor="middle">repository/memory</text><text class="s" x="450" y="542" text-anchor="middle">開発とテスト用</text></g>
-<g class="pk" data-k="google" tabindex="0" role="button" aria-label="pkg/service/google"><rect x="600" y="500" width="280" height="58" rx="6"/><text class="t" x="740" y="524" text-anchor="middle">service/google</text><text class="s" x="740" y="542" text-anchor="middle">Google OIDC</text></g>
+<g class="pk" data-k="google" tabindex="0" role="button" aria-label="pkg/service"><rect x="600" y="500" width="280" height="58" rx="6"/><text class="t" x="740" y="524" text-anchor="middle">pkg/service</text><text class="s" x="740" y="542" text-anchor="middle">OIDC・ワークスペース設定と Rego・添付の保存先</text></g>
 
 <!-- row F: external -->
 <g class="ext"><rect x="20" y="590" width="280" height="38" rx="6"/><text class="t" x="160" y="614" text-anchor="middle">Firestore Enterprise</text></g>
-<g class="ext"><rect x="600" y="590" width="280" height="38" rx="6"/><text class="t" x="740" y="614" text-anchor="middle">Google アカウント</text></g>
+<g class="ext"><rect x="600" y="590" width="280" height="38" rx="6"/><text class="t" x="740" y="614" text-anchor="middle">Google・設定ファイル・Cloud Storage</text></g>
 
 <!-- arrows -->
 <path class="ln hu" d="M330 76V138" marker-end="url(#ah)"/><text class="lbl" x="296" y="104">WebSocket</text>
@@ -200,30 +200,30 @@ ol.read li{margin-bottom:8px}
 
 <section id="concepts">
 <h2>中心の概念</h2>
-<p>覚える名詞は少ない。ペーパーはブロックの並びで、変更はすべて commit として残る。履歴はペーパー全体ではなくブロックごとに持つ。同時編集はロックではなく、ブロックの版で守る。</p>
+<p>覚える名詞は少ない。ワークスペースは設定ファイルにあり、保存先にはホームの記録だけ。ペーパーはブロックの並びで、子ペーパーは親の本文の paper ブロック。書いたものはすぐ「今の状態」になり、誰かが保存したときだけ「版」ができる。同時編集はロックではなく、ブロックの Rev で守る。</p>
 <figure>
-<svg class="model" viewBox="0 0 900 330" role="img" aria-label="ワークスペースの中にペーパーと検索エントリとロールの割り当てがあり、ペーパーの中にブロックと commit がある。ブロックは版のスナップショットを持ち、書き込みは元にした版を伝える。">
+<svg class="model" viewBox="0 0 900 330" role="img" aria-label="ワークスペース（設定）の中にペーパーと検索エントリがあり、ペーパーはブロック・版・写し・Event・添付を持つ。子ペーパーは親の paper ブロックが指し、子は ParentID で親を持つ。">
 <rect class="box" x="10" y="10" width="880" height="310" rx="10"/>
-<text class="t" x="28" y="36">Workspace</text><text class="s" x="108" y="36">ロールの割り当てを持つ単位</text>
+<text class="t" x="28" y="36">Workspace</text><text class="s" x="118" y="36">設定ファイル（TOML + Rego）。保存先には HomePaperID だけ</text>
 <rect class="box hu" x="28" y="54" width="570" height="250" rx="8"/>
-<text class="t" x="44" y="78">Paper</text><text class="s" x="92" y="78">タイトル・アクセス設定（制限付きにもできる）</text>
+<text class="t" x="44" y="78">Paper</text><text class="s" x="92" y="78">タイトル・ParentID・public / private・VersionNumber・アーカイブ・ゴミ箱</text>
 <rect class="inner" x="44" y="94" width="300" height="194" rx="6"/>
-<text class="t" x="58" y="118">Block</text>
-<text class="s" x="58" y="140">型（段落・見出し・表・HTML・SVG …）</text>
+<text class="t" x="58" y="118">Block（今の状態）</text>
+<text class="s" x="58" y="140">種類・本文（記法）・属性</text>
 <text class="s" x="58" y="158">Order: 分数インデックスの並び順キー</text>
-<text class="s" x="58" y="176">Version: 変更のたびに +1</text>
-<text class="s" x="58" y="194">ParentID: 表のセルだけが子を持つ</text>
+<text class="s" x="58" y="176">Rev: 内容が変わるたびに +1</text>
+<text class="s" x="58" y="194">paper ブロック → 子のペーパー</text>
 <rect class="inner" x="58" y="212" width="272" height="60" rx="5"/>
-<text class="t" x="72" y="236">versions/{n}</text>
-<text class="s" x="72" y="256">各版の不変スナップショット</text>
+<text class="t" x="72" y="236">表: rows / cols は (ID, 順)</text>
+<text class="s" x="72" y="256">セルは (行 ID, 列 ID) の子ブロック</text>
 <rect class="inner" x="362" y="94" width="220" height="92" rx="6"/>
-<text class="t" x="376" y="118">Commit</text>
-<text class="s" x="376" y="140">誰が・いつ・どのブロックを</text>
-<text class="s" x="376" y="158">どの版からどの版にしたか</text>
-<text class="s" x="376" y="176">（ペーパー全体の通し番号なし）</text>
+<text class="t" x="376" y="118">Version（版）</text>
+<text class="s" x="376" y="140">(ブロック ID, Rev, 親, 位置) の列</text>
+<text class="s" x="376" y="158">中身は BlockSnapshot を指す</text>
+<text class="s" x="376" y="176">人か AI が明示的に保存</text>
 <rect class="inner hd" x="362" y="198" width="220" height="90" rx="6"/>
-<text class="t" x="376" y="222">base_version</text>
-<text class="s" x="376" y="244">書き手が元にした版</text>
+<text class="t" x="376" y="222">base_rev</text>
+<text class="s" x="376" y="244">書き手が元にした Rev</text>
 <text class="s" x="376" y="262">その後に内容が変わっていれば</text>
 <text class="s" x="376" y="280">衝突（force で上書き）</text>
 <rect class="inner" x="616" y="54" width="256" height="110" rx="8"/>
@@ -232,24 +232,24 @@ ol.read li{margin-bottom:8px}
 <text class="s" x="632" y="118">ブロックと同じトランザクションで</text>
 <text class="s" x="632" y="136">書かれる検索用の写し</text>
 <rect class="inner" x="616" y="178" width="256" height="126" rx="8"/>
-<text class="t" x="632" y="202">RoleBinding</text>
-<text class="s" x="632" y="224">ユーザー・グループ・ドメイン・</text>
-<text class="s" x="632" y="242">ログイン済み全員 に</text>
-<text class="s" x="632" y="260">viewer / editor / owner を割り当て</text>
-<text class="s" x="632" y="284">ワークスペースとペーパーの両方</text>
+<text class="t" x="632" y="202">Event・Attachment</text>
+<text class="s" x="632" y="224">Event: 24 時間で消える変更フィード</text>
+<text class="s" x="632" y="242">（ブロック・ペーパー・版・presence）</text>
+<text class="s" x="632" y="266">Attachment: ペーパーに属する画像</text>
+<text class="s" x="632" y="284">中身は AttachmentStore に</text>
 </svg>
-<figcaption>保存の階層と同じ入れ子。Firestore では workspaces/{ws}/papers/{p}/blocks/{b}/versions/{n} のように、そのままサブコレクションになる。</figcaption>
+<figcaption>保存の階層と同じ入れ子。Firestore では workspaces/{ws}/papers/{p}/blocks/{b}、…/versions/{n}、…/snapshots/{b}_{rev}、…/events/{id} のサブコレクションになる。ペーパーの木はパスにせず ParentID の値で持つ。</figcaption>
 </figure>
 <div class="scroll"><table>
 <thead><tr><th>名前</th><th>ひと言で</th><th>定義</th></tr></thead>
 <tbody>
-<tr><td>Principal</td><td>リクエストしてきた人（または AI）と、その所属グループ・トークンの権限上限</td><td><code>model/principal.go</code></td></tr>
-<tr><td>Role</td><td>none &lt; viewer &lt; editor &lt; owner。<code>WorkspaceRole</code> と <code>PaperRole</code> で決まる</td><td><code>model/role.go</code>, <code>principal.go</code></td></tr>
-<tr><td>Actor</td><td>commit やブロックに残る「書いた主体」。人か AI（agent 名つき）</td><td><code>model/actor.go</code></td></tr>
-<tr><td>Op</td><td>commit 1 回に含める操作。insert・update・delete・move・restore・set_title・insert_markdown。update・delete・restore は元にした版（<code>base_version</code>）が必須</td><td><code>usecase/commit.go</code></td></tr>
-<tr><td>Conflict</td><td>元にした版の後に、他人がブロックの内容を変えていた op。commit 全体が 409 で拒否され、現在の状態が返る</td><td><code>usecase/commit.go</code></td></tr>
-<tr><td>Change</td><td>commit に記録される結果。ブロック ID と版の前後。強行した上書きでは上書きした版と書き手、復元では戻した版</td><td><code>model/commit.go</code></td></tr>
-<tr><td>Event</td><td>変更フィードの 1 件。block_put・block_deleted・paper_updated・paper_deleted。結果の状態を運ぶので、何度適用しても同じ</td><td><code>model/event.go</code></td></tr>
+<tr><td>Principal</td><td>リクエストしてきたユーザーと、使ったトークン（読み取り用か、どのワークスペースか）</td><td><code>model/principal.go</code></td></tr>
+<tr><td>Workspaces</td><td>設定から読んだワークスペースと、使える人を決める Rego（60 秒キャッシュ）</td><td><code>service/workspace</code></td></tr>
+<tr><td>Actor</td><td>ブロックや版に残る「書いた者」。人・AI（代理元つき）・system</td><td><code>model/actor.go</code></td></tr>
+<tr><td>Op / batch</td><td>1 回のリクエストで送る操作の列。全部か無か。<code>ref</code> で新しいブロック・行・列を指す</td><td><code>usecase/ops.go</code></td></tr>
+<tr><td>Conflict</td><td>元の Rev の後に他人が内容を変えていた op。まとまり全体が 409 で返り、現在の状態が付く</td><td><code>usecase/ops.go</code></td></tr>
+<tr><td>Version / BlockSnapshot</td><td>明示的に保存した版と、変わったブロックだけの写し</td><td><code>model/version.go</code>, <code>usecase/version.go</code></td></tr>
+<tr><td>markup</td><td>本文の記法（Markdown + <code>[文字]{.色}</code>）。正規化・検証・平文化。TS に同じ実装</td><td><code>domain/markup</code>, <code>frontend/src/markup</code></td></tr>
 <tr><td>Order key</td><td>兄弟の間に後から何個でも挟める文字列キー。挿入で他のブロックを書き換えない</td><td><code>model/order.go</code></td></tr>
 </tbody></table></div>
 </section>
@@ -258,33 +258,33 @@ ol.read li{margin-bottom:8px}
 <h2>1 回の編集の旅</h2>
 <p>人がブロックを 1 つ書き換えて、別の人の画面に出るまで。ロックは取らない。手順のボタンで、その段階の矢印だけを浮かび上がらせる。</p>
 <figure>
-<svg class="seq" id="seq" viewBox="0 0 920 560" role="img" aria-label="シーケンス図。編集者のブラウザは編集開始時の版を覚え、REST で元の版付きの commit を送る。usecase が版を確かめて 1 トランザクションで書き込み、応答を返す（衝突なら 409）。Firestore のリスナーが変更を受け取り、他の閲覧者に event として届ける。">
+<svg class="seq" id="seq" viewBox="0 0 920 560" role="img" aria-label="シーケンス図。編集者のブラウザは編集開始時の Rev を覚え、REST で元の Rev 付きの操作を送る。usecase が Rev を確かめて 1 トランザクションでブロック・検索エントリ・Event を書き、応答を返す（衝突なら 409）。events コレクションのリスナーが変更を受け取り、他の閲覧者に event として届ける。">
 <defs><marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
 <g>
 <text class="head" x="75" y="26" text-anchor="middle">編集者のブラウザ</text><text class="sub" x="75" y="42" text-anchor="middle">frontend</text>
 <text class="head" x="225" y="26" text-anchor="middle">controller/http</text><text class="sub" x="225" y="42" text-anchor="middle">live.go・api.go</text>
-<text class="head" x="375" y="26" text-anchor="middle">usecase</text><text class="sub" x="375" y="42" text-anchor="middle">commit.go</text>
+<text class="head" x="375" y="26" text-anchor="middle">usecase</text><text class="sub" x="375" y="42" text-anchor="middle">ops.go</text>
 <text class="head" x="525" y="26" text-anchor="middle">repository</text><text class="sub" x="525" y="42" text-anchor="middle">firestore</text>
 <text class="head" x="675" y="26" text-anchor="middle">Firestore</text><text class="sub" x="675" y="42" text-anchor="middle">Enterprise</text>
 <text class="head" x="845" y="26" text-anchor="middle">他の閲覧者</text><text class="sub" x="845" y="42" text-anchor="middle">別のブラウザ</text>
 <line class="life" x1="75" y1="54" x2="75" y2="548"/><line class="life" x1="225" y1="54" x2="225" y2="548"/><line class="life" x1="375" y1="54" x2="375" y2="548"/><line class="life" x1="525" y1="54" x2="525" y2="548"/><line class="life" x1="675" y1="54" x2="675" y2="548"/><line class="life" x1="845" y1="54" x2="845" y2="548"/>
 </g>
 <!-- step 1: start editing -->
-<g class="m s1 hd"><rect x="20" y="78" width="200" height="56" rx="6" fill="var(--sheet)" stroke="currentColor" stroke-width="1.4"/><text x="120" y="101" text-anchor="middle">編集開始時の版 v3 を覚える</text><text x="120" y="121" text-anchor="middle">サーバーには何も送らない</text></g>
+<g class="m s1 hd"><rect x="20" y="78" width="200" height="56" rx="6" fill="var(--sheet)" stroke="currentColor" stroke-width="1.4"/><text x="120" y="101" text-anchor="middle">編集開始時の Rev 3 を覚える</text><text x="120" y="121" text-anchor="middle">サーバーには何も送らない</text></g>
 <!-- step 2: send commit -->
-<g class="m s2 hu"><line x1="75" y1="236" x2="222" y2="236" marker-end="url(#sa)"/><text x="150" y="229" text-anchor="middle">POST commits（base v3）</text></g>
+<g class="m s2 hu"><line x1="75" y1="236" x2="222" y2="236" marker-end="url(#sa)"/><text x="150" y="229" text-anchor="middle">POST ops（base_rev 3）</text></g>
 <!-- step 3: usecase -->
-<g class="m s3"><line x1="225" y1="266" x2="372" y2="266" marker-end="url(#sa)"/><text x="300" y="259" text-anchor="middle">Commit(ops)</text></g>
-<g class="m s3"><line x1="375" y1="296" x2="522" y2="296" marker-end="url(#sa)"/><text x="450" y="289" text-anchor="middle">RunPaperTx</text></g>
-<g class="m s3"><line x1="375" y1="326" x2="522" y2="326" marker-end="url(#sa)"/><text x="450" y="319" text-anchor="middle">BlockVersion(v3)</text></g>
+<g class="m s3"><line x1="225" y1="266" x2="372" y2="266" marker-end="url(#sa)"/><text x="300" y="259" text-anchor="middle">Apply(ops)</text></g>
+<g class="m s3"><line x1="375" y1="296" x2="522" y2="296" marker-end="url(#sa)"/><text x="450" y="289" text-anchor="middle">RunTx</text></g>
+<g class="m s3"><line x1="375" y1="326" x2="522" y2="326" marker-end="url(#sa)"/><text x="450" y="319" text-anchor="middle">GetBlock（Rev を比べる）</text></g>
 <!-- step 4: transaction -->
 <g class="m s4"><line x1="525" y1="356" x2="672" y2="356" marker-end="url(#sa)"/><text x="600" y="349" text-anchor="middle">1 トランザクション</text></g>
 <!-- step 5: response -->
-<g class="m s5 hu ret"><line x1="375" y1="392" x2="228" y2="392" marker-end="url(#sa)"/><text x="300" y="385" text-anchor="middle">CommitResult</text></g>
+<g class="m s5 hu ret"><line x1="375" y1="392" x2="228" y2="392" marker-end="url(#sa)"/><text x="300" y="385" text-anchor="middle">BatchResult</text></g>
 <g class="m s5 hu ret"><line x1="225" y1="422" x2="78" y2="422" marker-end="url(#sa)"/><text x="150" y="415" text-anchor="middle">200 か 409（衝突）</text></g>
 <!-- step 6: fan-out -->
 <g class="m s6"><line x1="675" y1="458" x2="528" y2="458" marker-end="url(#sa)"/><text x="600" y="451" text-anchor="middle">リスナーに変更</text></g>
-<g class="m s6"><line x1="525" y1="488" x2="228" y2="488" marker-end="url(#sa)"/><text x="375" y="481" text-anchor="middle">Event（WatchPaper のチャネル）</text></g>
+<g class="m s6"><line x1="525" y1="488" x2="228" y2="488" marker-end="url(#sa)"/><text x="375" y="481" text-anchor="middle">Event（Watch のチャネル）</text></g>
 <g class="m s6 hu"><line x1="225" y1="522" x2="842" y2="522" marker-end="url(#sa)"/><text x="535" y="515" text-anchor="middle">{type:"event", block_put}</text></g>
 <!-- step numbers -->
 <g class="m s1"><circle cx="14" cy="70" r="9"/><text class="no" x="14" y="74" text-anchor="middle">1</text></g>
@@ -294,7 +294,7 @@ ol.read li{margin-bottom:8px}
 <g class="m s5"><circle cx="20" cy="392" r="9"/><text class="no" x="20" y="396" text-anchor="middle">5</text></g>
 <g class="m s6"><circle cx="20" cy="458" r="9"/><text class="no" x="20" y="462" text-anchor="middle">6</text></g>
 </svg>
-<figcaption>琥珀色が版の記憶、青が人の目に見える結果、点線が戻り。AI が MCP の papers_commit で書く場合は 2 が MCP に変わるだけで、3 以降はまったく同じ道を通る。衝突すれば AI にも現在の内容が返る。</figcaption>
+<figcaption>琥珀色が Rev の記憶、青が人の目に見える結果、点線が戻り。AI が MCP の papers_write で書く場合は 2 が MCP に変わるだけで、3 以降はまったく同じ道を通る。衝突すれば AI にも現在の内容が返る。版はここでは作られない（保存は別の操作）。</figcaption>
 </figure>
 <div class="steps" role="group" aria-label="手順">
 <button type="button" data-s="0" aria-pressed="true">全体</button>
@@ -310,28 +310,33 @@ ol.read li{margin-bottom:8px}
 
 <section id="other">
 <h2>ほかの流れ</h2>
+<h3>起動</h3>
+<p><code>papers serve</code> は設定のディレクトリを読み（TOML の検証と Rego のコンパイル。1 つでも不正なら起動しない）、保存先・添付の保存先・usecase・controller の順に組み立てる。<code>UseCases.Init</code> が各ワークスペースのホームを作り（何度起動しても 1 つ）、毎時の処理が 30 日を過ぎたゴミ箱を消す。</p>
 <h3>ペーパーを開く</h3>
-<p><code>GET …/papers/{p}</code> で本体と全ブロックをまとめて受け取り、<code>initState</code> で画面の状態を作る。続いて <code>/live</code> の WebSocket をつなぐと、サーバーは <code>hello</code> を返し、以後は変更フィードの <code>event</code> を流し続ける。切れたら（Cloud Run は最大 60 分で切る）自動で再接続して読み直す。</p>
+<p><code>GET …/papers/{p}</code> で本体とパンくず、<code>/blocks?limit=200</code> で最初の範囲を受け取り、残りはカーソルで読み足す。範囲の中の paper ブロックが指す子は 1 回の一括取得で付く。続いて <code>/live</code> の WebSocket をつなぐと <code>hello</code> が届き、以後は変更フィードが流れる。<code>/status</code> で「v3 から変更あり」を出す。</p>
+<h3>版を保存する・戻す</h3>
+<p>「版を保存」は <code>SaveVersion</code>: 最新の版と同じなら何もしない。違えば変わったブロックだけ写し、版を書き、<code>VersionNumber</code> を進める。「この版に戻す」は <code>RestoreVersion</code>: 今の状態を版に合わせ、よそへ移った子は戻さない。画面は戻す前に保存していない変更を確かめる。</p>
 <h3>ログイン</h3>
-<p><code>/api/auth/login</code> から Google に飛び、<code>/callback</code> で ID トークンを検証する（nonce と JWKS）。Google の subject を <code>Identity</code> で papers のユーザー ID に結びつけ、セッションを作って Cookie に入れる。AI は画面の「トークン」で発行した <code>pap_…</code> を Bearer で送る。MCP は Bearer しか受けない。</p>
+<p><code>/api/auth/login</code> から Google に飛び、<code>/callback</code> で ID トークンを検証する（nonce と JWKS）。入口は許可したドメイン・メールで絞り、どのワークスペースを使えるかは各ワークスペースの Rego が決める。AI は画面の「トークン」で発行した <code>pap_…</code> を Bearer で送る。MCP は Bearer しか受けない。</p>
 <h3>検索</h3>
-<p><code>SearchPapers</code> は <code>Repository.Search</code> に語を渡すだけ。Firestore 実装は <code>workspaces/{ws}/search</code> に全文検索をかけ、use case が権限で絞り、1 ペーパー 1 件にまとめて抜粋を付ける。検索エントリは commit と同じトランザクションで書かれているので、書いた直後から当たる。</p>
-<h3>AI がペーパーを作る</h3>
-<p>MCP の <code>papers_create_paper</code> に Markdown を渡すと、<code>usecase/markdown</code> がブロックに分解し、最初の commit「Initial content」として保存する。HTML・SVG・Mermaid のブロックは AI だけが書け、UI は sandbox 付きの iframe（<code>RichFrame</code>）で描画するだけ。</p>
+<p><code>Search</code> は <code>Repository.Search</code> に語を渡し、当たりのペーパーを一括で読んで、見えないもの・ゴミ箱・アーカイブを除く。「この配下で」は親を 1 段ずつ一括で辿って絞る。検索エントリは書き込みと同じトランザクションで書かれ、記法を除いた平文が入る。</p>
+<h3>AI が書く</h3>
+<p>MCP の <code>papers_guide</code> でワークスペースの決まりごととホームの本文を読み、<code>papers_read</code>（パスでも指定できる）で Rev を受け取り、<code>papers_write</code> で書く。区切りがついたら <code>papers_save_version</code> で版にする。HTML・SVG・Mermaid のブロックは AI だけが書け、UI は sandbox 付きの iframe（<code>RichFrame</code>）で描画するだけ。</p>
 </section>
 
 <section id="frontend">
 <h2>フロントエンド</h2>
-<p>状態管理のライブラリは使っていない。開いているペーパーの状態は <code>api/paperState.ts</code> の純粋関数で更新する。ブロックは版の番号を比べて古いものを捨てるので、commit の応答と変更フィードが同じ変更を二度運んできても壊れない。</p>
+<p>状態管理のライブラリは使っていない。開いているペーパーの状態は <code>api/paperState.ts</code> の純粋関数で更新する。ブロックは Rev を比べて古いものを捨てるので、操作の応答と変更フィードが同じ変更を二度運んできても壊れない。本文の編集はブロックごとに Tiptap（<code>RichEditor</code>）で行い、ブロックをまたぐ動き（Enter で分割、先頭の Backspace で結合、複数段落の貼り付け）は papers の操作にする。</p>
 <div class="scroll"><table>
 <thead><tr><th>場所</th><th>役割</th></tr></thead>
 <tbody>
-<tr><td><code>src/api/</code></td><td>REST クライアント（<code>client.ts</code>：409 の衝突を <code>ApiError.conflicts</code> で返す）、WebSocket（<code>live.ts</code>：受信と再接続）、ペーパーの状態（<code>paperState.ts</code>）、型（<code>types.ts</code>）</td></tr>
-<tr><td><code>src/pages/</code></td><td>ペーパー画面（編集開始時の版の記憶、保存、衝突の解決）、ワークスペースのホーム、トークン、ログイン</td></tr>
-<tr><td><code>src/components/</code></td><td>ブロックの表示（<code>BlockView</code>、衝突の選択肢 <code>ConflictBox</code>）と編集（<code>Editor</code>）、履歴（「この版に戻す」）・共有・メンバーのパネル、<code>RichFrame</code>（AI の HTML/SVG を隔離）、<code>Mermaid</code></td></tr>
+<tr><td><code>src/api/</code></td><td>REST クライアント（<code>client.ts</code>：409 の衝突、<code>moved</code>、<code>ambiguous</code> を <code>ApiError</code> で返す）、WebSocket（<code>live.ts</code>）、ペーパーの状態（<code>paperState.ts</code>：Rev、表の行・列、presence）、型（<code>types.ts</code>）</td></tr>
+<tr><td><code>src/markup/</code></td><td>記法の TS 実装（<code>markup.ts</code>、Go と同じ <code>cases.json</code> を通す）と、Tiptap の文書との変換（<code>tiptap.ts</code>）</td></tr>
+<tr><td><code>src/pages/</code></td><td>ペーパー画面（仮のキーでの先出し、編集開始時の Rev、衝突の解決、版の保存・表示・復元、印刷）、検索、ゴミ箱、トークン、ログイン</td></tr>
+<tr><td><code>src/components/</code></td><td>ブロックの表示と編集（<code>BlockView</code>, <code>RichEditor</code>, <code>Editor</code>）、版のパネル（<code>VersionsPanel</code>）、ペーパーのメニュー（ピン・移動・公開範囲・アーカイブ・削除）、サイドバー（ホーム・ピンと配下・最近・private）、<code>RichFrame</code>、<code>Mermaid</code></td></tr>
 <tr><td><code>src/i18n/</code></td><td>英語と日本語。画面の文言はすべてここを通す</td></tr>
 <tr><td><code>src/mock/</code></td><td>デモ用のブラウザ内サーバー。<code>pnpm build:demo</code> でサーバーなしに動く版を作る</td></tr>
-<tr><td><code>src/styles/global.css</code></td><td>色・余白・大きさのトークン。これ以外に直接の値は書かない</td></tr>
+<tr><td><code>src/styles/global.css</code></td><td>色・余白・大きさのトークンと、記法の色のパレット。これ以外に直接の値は書かない</td></tr>
 </tbody></table></div>
 </section>
 
@@ -339,15 +344,17 @@ ol.read li{margin-bottom:8px}
 <h2>守っている約束</h2>
 <p>コードを変えるときに破りやすいものだけ。全文は <code>CLAUDE.md</code>。</p>
 <ul>
-<li class="block human"><b class="ui">権限は use case で、Principal を通して判定する。</b> 読めない相手には「存在しない」（404）を返し、存在を漏らさない。読めるが足りないときだけ 403。</li>
-<li class="block human"><b class="ui">サーバーはメモリに状態を持たない。</b> Cloud Run で複数台動く前提。接続 1 本ぶんの状態はよい。配信は Firestore のリスナー頼みで、アプリ独自の pub/sub は作らない。</li>
-<li class="block held"><b class="ui">ロックは作らない。版で守る。</b> update・delete・restore は元にした版を必須にし、衝突は一度拒否する。UI は編集開始時の版を送る。</li>
-<li class="block human"><b class="ui">ペーパー本体を commit のたびに書かない。</b> Firestore は 1 ドキュメントに毎秒 1 回程度しか書けない。更新時刻は 1 分に 1 回まで、履歴はブロック側に持つ。</li>
-<li class="block held"><b class="ui">クエリを足したら索引も足す。</b> Enterprise は索引がないと黙って全件読みになる。<code>indexes.go</code> の <code>RequiredIndexes</code> に書き、<code>papers firestore setup</code> で作る。</li>
-<li class="block held"><b class="ui">検索は Repository.Search だけ。</b> use case でペーパーやブロックを総なめにしない。</li>
-<li class="block agent"><b class="ui">AI の HTML/SVG は RichFrame の中だけで描く。</b> ほかの場所にブロックの中身を HTML として差し込まない。</li>
-<li class="block"><b class="ui">保存先の契約テストは両方の実装で走る。</b> <code>pkg/repository/*_test.go</code> がメモリと Firestore の両方を同じテストで確かめる。</li>
-<li class="block"><b class="ui">設計は HTML で書いて artifact にする。</b> 正本は <code>docs/design.html</code>。</li>
+<li class="block human"><b class="ui">アクセスは use case で、Principal を通して判定する。</b> 見えない相手には「存在しない」（404）を返し、存在を漏らさない。読み取り用トークンでの書き込みだけ 403。</li>
+<li class="block human"><b class="ui">ID はすべてサーバーが発行する。</b> クライアントが決められる ID はない。新しいものを同じまとまりで指すのは <code>ref</code>。</li>
+<li class="block human"><b class="ui">サーバーはメモリに状態を持たない。</b> Cloud Run で複数台動く前提。接続 1 本ぶんの状態と、設定（起動時に読む）だけはよい。配信は Firestore のリスナー頼み。</li>
+<li class="block held"><b class="ui">ロックは作らない。Rev で守る。</b> update・delete は元の Rev を必須にし、衝突は一度拒否する。UI は編集開始時の Rev を送る。</li>
+<li class="block agent"><b class="ui">版はシステムが勝手に作らない。</b> 保存の操作だけが版を作る。</li>
+<li class="block human"><b class="ui">ペーパー本体を書き込みのたびに書かない。</b> 更新時刻は 1 分に 1 回まで。中身はブロック側に持つ。</li>
+<li class="block held"><b class="ui">クエリを足したら索引も足す。</b> <code>indexes.go</code> の <code>RequiredIndexes</code> に書き、<code>papers firestore setup</code> で作る。</li>
+<li class="block held"><b class="ui">読み取りは一括で。</b> 子ペーパー・ピン・検索の当たりは <code>GetPapers</code> 1 回で読む。usecase のテストが読み取り回数を数える。</li>
+<li class="block agent"><b class="ui">AI の HTML/SVG は RichFrame の中だけで描く。</b> 本文の記法は React の要素として描き、HTML として差し込まない。</li>
+<li class="block"><b class="ui">保存先の契約テストは両方の実装で走る。</b> <code>pkg/repository/*_test.go</code>。記法の例は Go と TS の両方で走る。</li>
+<li class="block"><b class="ui">設計は HTML で書いて artifact にする。</b> モデルの正本は <code>docs/model.html</code>、実装の設計は <code>docs/design.html</code>。</li>
 </ul>
 </section>
 
@@ -355,33 +362,33 @@ ol.read li{margin-bottom:8px}
 <h2>読む順番</h2>
 <p>1 時間でつかむなら、この順に開く。</p>
 <ol class="read">
-<li><code>pkg/domain/model/block.go</code>・<code>paper.go</code>・<code>commit.go</code> — 何を保存しているか。</li>
-<li><code>pkg/domain/interfaces/repository.go</code> — 保存先に何を求めているか。<code>PaperTx</code> と <code>WatchPaper</code> が要。</li>
-<li><code>pkg/usecase/commit.go</code> — <code>Commit</code> と <code>applier</code>、<code>checkBase</code>（衝突の判定）。この製品の心臓部。</li>
-<li><code>pkg/domain/model/principal.go</code> — 誰が何をできるか。</li>
-<li><code>pkg/repository/memory/paper.go</code> → <code>firestore/paper.go</code> — 同じ契約を 2 通りに実装したもの。memory のほうが短くて読みやすい。</li>
-<li><code>pkg/controller/http/live.go</code> と <code>frontend/src/pages/PaperPage.tsx</code> — リアルタイムの両端と、衝突の画面。</li>
+<li><code>docs/model.html</code> — 何をどう扱うか（正本）。</li>
+<li><code>pkg/domain/model/block.go</code>・<code>paper.go</code>・<code>version.go</code>・<code>principal.go</code> — 何を保存し、誰が何を見られるか。</li>
+<li><code>pkg/domain/interfaces/repository.go</code> — 保存先に何を求めているか。<code>Tx</code> と <code>Watch</code> が要。</li>
+<li><code>pkg/usecase/ops.go</code> — <code>Apply</code> と <code>applier</code>、<code>checkBase</code>（衝突の判定）。この製品の心臓部。続けて <code>version.go</code> と <code>tree.go</code>。</li>
+<li><code>pkg/repository/memory/paper.go</code> → <code>firestore/paper.go</code> — 同じ契約を 2 通りに実装したもの。</li>
+<li><code>pkg/controller/http/live.go</code> と <code>frontend/src/pages/PaperPage.tsx</code> — リアルタイムの両端と、衝突・版の画面。</li>
 <li><code>pkg/controller/http/mcp.go</code> — AI から見た papers。</li>
 </ol>
-<div class="callout"><span class="ui" style="font-weight:600">まだ入っていないもの</span>（<code>docs/design.html</code> の未決事項）: インスタンス内でのリスナー共有（300 人規模に必須）、ペーパー一覧のページ分割、実際の Enterprise データベースでの検証。</div>
+<div class="callout"><span class="ui" style="font-weight:600">まだ入っていないもの</span>（<code>docs/design.html</code> の未決事項）: インスタンス内でのリスナー共有、Firestore 実装の実データベースでの検証、private のペーパーへの招待。</div>
 </section>
 </article>
 
 <script>
 const P = {
-  cli: {t:'pkg/cli', path:'pkg/cli/, pkg/cli/config/', size:'約 700 行', d:'コマンドの入口。<code>papers serve</code> は設定を読み、repository → usecase → controller の順に組み立てて HTTP サーバーを起動する。<code>papers firestore setup</code> は Enterprise の索引と TTL を作る。', files:['<code>serve.go</code> 起動と組み立て','<code>firestore.go</code> 索引の作成','<code>config/repository.go</code> firestore か memory かを選ぶ','<code>config/auth.go</code> Google OIDC と開発用の無認証モード'], hint:'動作を追うときはここではなく usecase から読む。ここは配線だけ。'},
-  frontend: {t:'frontend/', path:'frontend/src/', size:'約 3,300 行（TypeScript）', d:'React 19 + Vite の SPA。ビルド結果はサーバーのバイナリに埋め込まれ、同じオリジンから配られる。ペーパー画面は REST で読み込み、WebSocket で変更を受け取る。', files:['<code>api/paperState.ts</code> 状態の純粋関数（版で冪等）','<code>api/live.ts</code> 再接続とロックの延長','<code>pages/PaperPage.tsx</code> ペーパー画面','<code>components/RichFrame.tsx</code> AI の HTML/SVG を隔離'], hint:'変えたら <code>pnpm lint && pnpm test</code> が必須。'},
-  api: {t:'api.go', path:'pkg/controller/http/api.go', size:'controller 全体で約 1,700 行', d:'REST <code>/api/v1</code> のハンドラー。リクエストを読み、Principal を取り出して usecase を呼び、JSON で返すだけ。業務ロジックは持たない。', files:['ワークスペース・ペーパー・アクセス設定','<code>POST …/commits</code>（複数の op をまとめて適用）','commit 履歴とブロックの版履歴','検索・Markdown 書き出し・トークン・グループ'], hint:'エラーから HTTP ステータスへの変換は <code>response.go</code>。'},
-  live: {t:'live.go', path:'pkg/controller/http/live.go', size:'約 170 行', d:'開いているペーパー 1 つにつき WebSocket 1 本。サーバーからの一方向で、変更フィードの event を流すだけ。書き込みはすべて REST の commit。', files:['送る: <code>hello</code>, <code>event</code>, <code>closing</code>','クライアントからのメッセージは受け付けない','アクセス権を失ったら <code>closing: access revoked</code> で切る'], hint:'今は接続ごとに Firestore のリスナーを張る。300 人規模ではインスタンス内で共有するハブが必要（設計書の「規模の見積もり」）。'},
-  mcp: {t:'mcp.go', path:'pkg/controller/http/mcp.go', size:'約 400 行', d:'AI 向けの MCP エンドポイント（<code>/mcp</code>）。Bearer トークンだけを受け、9 つのツールを出す。中身は REST と同じ usecase を呼ぶ。', files:['<code>papers_guide</code> 書き方の説明','<code>papers_read_paper</code>, <code>papers_search</code>, <code>papers_list_*</code>','<code>papers_create_paper</code>, <code>papers_commit</code>','<code>papers_history</code>, <code>papers_block_history</code>'], hint:'AI の Actor には agent 名が付き、UI では紫で表示される。'},
-  auth: {t:'auth.go', path:'pkg/controller/http/auth.go', size:'約 300 行', d:'ログイン・ログアウトと、リクエストから Principal を作るミドルウェア。Cookie のセッションと <code>pap_…</code> の Bearer トークンの両方を受ける。', files:['Cookie は「ID.秘密」で、秘密はハッシュで保存','状態を変えるリクエストは <code>X-Requested-With: papers</code> が必須（CSRF 対策）','MCP は Bearer だけ'], hint:'トークンは権限の上限が付く（read → viewer、write → editor）。'},
-  usecase: {t:'pkg/usecase', path:'pkg/usecase/', size:'約 1,750 行（テスト約 1,000 行）', d:'アプリの中身。すべてのメソッドが Principal を受け取り、最初に権限を判定する。repository のインターフェースだけを知っていて、DB には触れない。', files:['<code>commit.go</code> op を検証し、元の版と比べて衝突を判定し、1 トランザクションで適用する（applier）。restore もここ','<code>watch.go</code> 変更の購読（Watch）と読み取り権の再確認','<code>paper.go</code> 一覧・作成・削除・アクセス設定・検索','<code>auth.go</code> ログイン後のユーザーとセッション','<code>workspace.go</code>, <code>group.go</code>'], hint:'最初に読むなら <code>commit.go</code>。ここが製品の心臓部。'},
-  markdown: {t:'usecase/markdown', path:'pkg/usecase/markdown/', size:'約 360 行', d:'Markdown とブロックの相互変換。AI が Markdown でまとめて書いたものをブロックに分け、書き出し時にはブロックを Markdown に戻す。', files:['<code>Parse</code> Markdown → ブロック','<code>Render</code> ブロック → Markdown','commit の <code>insert_markdown</code> もこれを使う'], hint:'表は 200 セルまで。'},
-  model: {t:'domain/model', path:'pkg/domain/model/', size:'約 1,300 行', d:'エンティティと、それ自身の検証ルール。どの層にも依存しない。権限の判定（どのロールを持つか）もここにある。', files:['<code>block.go</code> ブロックの型と属性','<code>commit.go</code> commit・Change（上書きと復元の記録）と上限（240 ブロック・3 MiB）','<code>principal.go</code> WorkspaceRole / PaperRole','<code>order.go</code> 分数インデックスの並び順キー','<code>search.go</code> 検索エントリと検索語の解釈','<code>errors.go</code> ErrNotFound・ErrConflict などの番兵エラー'], hint:'保存されるモデルはすべて <code>Validate()</code> を持ち、repository が書く前に呼ぶ。'},
-  interfaces: {t:'domain/interfaces', path:'pkg/domain/interfaces/', size:'約 170 行', d:'use case が外の世界に求めるもの（ポート）。保存先・変更フィード・検索・IdP をすべてインターフェースで表す。DB を差し替えるときに守る契約がここ。', files:['<code>Repository</code> ユーザー・ワークスペース・ペーパー・ロック・検索','<code>PaperTx</code> ペーパー 1 つに閉じたトランザクションの中の読み書き（版のスナップショットも読める）','<code>WatchPaper</code> 変更フィード（チャネル）','<code>IdentityProvider</code> ログインの外部サービス'], hint:'契約の中身はコメントと <code>pkg/repository/*_test.go</code> の契約テストで決まっている。'},
-  firestore: {t:'repository/firestore', path:'pkg/repository/firestore/', size:'約 1,550 行', d:'本番の保存先。Firestore Enterprise の Native モード。モデルをそのまま保存し、階層はサブコレクションで表す。', files:['<code>paper.go</code> トランザクション（読みを先に済ませ、書きを積んで最後に流す）','<code>watch.go</code> リスナー → Event','<code>search.go</code> 検索エントリと全文検索','<code>indexes.go</code> 必要な索引の一覧と setup','<code>user.go</code> ユーザー・セッション・トークン・グループ'], hint:'実際の Enterprise データベースではまだ動かしていない。検索はエミュレータで試せない。'},
-  memory: {t:'repository/memory', path:'pkg/repository/memory/', size:'約 870 行', d:'メモリだけの実装。開発用サーバー（<code>task dev:server</code>）とテストで使う。Firestore 版と同じ契約テストを通る。', files:['<code>paper.go</code> トランザクション（版の読み取りを含む）と変更フィード','<code>search.go</code> 検索（部分一致）','<code>memory.go</code> ユーザー・セッションなど'], hint:'Firestore 版より短いので、契約を理解するにはこちらを先に読む。サーバーを 1 台でしか動かせない。'},
-  google: {t:'service/google', path:'pkg/service/google/', size:'約 230 行', d:'Google の OpenID Connect。ログイン URL を作り、戻ってきた ID トークンを JWKS で検証して、subject・メール・名前を取り出す。', files:['<code>oidc.go</code> 認可 URL、コード交換、ID トークン検証（nonce つき）'], hint:'ほかの IdP を足すときは同じ <code>IdentityProvider</code> を実装する。'}
+  cli: {t:'pkg/cli', path:'pkg/cli/, pkg/cli/config/', size:'約 650 行', d:'コマンドの入口。<code>papers serve</code> はワークスペースの設定（<code>--config</code>, <code>--global-config</code>）を読み、保存先・添付の保存先・usecase・controller の順に組み立てて HTTP サーバーを起動する。毎時のゴミ箱の掃除もここから動かす。', files:['<code>serve.go</code> 組み立てと起動、ゴミ箱の掃除','<code>config/workspaces.go</code> 設定ディレクトリ','<code>config/attachments.go</code> gcs / dir / memory','<code>config/auth.go</code> Google OIDC か --no-authn','<code>firestore.go</code> <code>papers firestore setup</code>'], hint:'起動時にしか出てこない。実行中の処理を追うなら controller から。'},
+  frontend: {t:'frontend/', path:'frontend/src/', size:'約 5,500 行（TypeScript）', d:'React 19 + Vite の SPA。ビルド結果はサーバーのバイナリに埋め込まれる。ペーパー画面は REST で範囲ごとに読み込み、WebSocket で変更と presence を受け取る。本文はブロックごとに Tiptap で編集する。', files:['<code>pages/PaperPage.tsx</code> 編集・衝突・版・印刷','<code>components/RichEditor.tsx</code> ブロック内の書式と色','<code>markup/</code> 記法の TS 実装','<code>api/paperState.ts</code> Rev で冪等に適用'], hint:'衝突と版の画面は PaperPage.tsx と VersionsPanel.tsx。'},
+  api: {t:'api.go', path:'pkg/controller/http/api.go', size:'controller 全体で約 1,750 行', d:'REST <code>/api/v1</code> のハンドラー。リクエストを読み、Principal を取り出して usecase を呼び、JSON で返すだけ。業務ロジックは持たない。', files:['ワークスペース（読むだけ）・サイドバー・検索・ゴミ箱','ペーパー・ブロックの範囲読み・操作のまとまり','版・差分・状態','移動・公開範囲・アーカイブ・ピン・presence・添付'], hint:'エラーの対応（409 の conflicts、moved、ambiguous）は response.go。'},
+  live: {t:'live.go', path:'pkg/controller/http/live.go', size:'約 160 行', d:'開いているペーパー 1 つにつき WebSocket 1 本。サーバーからの一方向で、変更フィードの event を流すだけ。書き込みはすべて REST。', files:['送る: <code>hello</code> / <code>event</code> / <code>closing</code>','ペーパーが変わったら見られるかを確かめ直す'], hint:'読者が遅れたらチャネルが閉じ、画面は再接続して読み直す。'},
+  mcp: {t:'mcp.go', path:'pkg/controller/http/mcp.go', size:'約 560 行', d:'AI 向けの MCP エンドポイント（<code>/mcp</code>）。Bearer トークンだけを受け、9 つのツールを出す。中身は REST と同じ usecase を呼ぶ。', files:['<code>papers_guide</code> 書き方・ワークスペースの決まりごと・ホーム','<code>papers_read</code> / <code>papers_write</code>','<code>papers_save_version</code> / <code>papers_versions</code> / <code>papers_diff</code>','<code>papers_search</code> / <code>papers_create_paper</code> / <code>papers_list_workspaces</code>'], hint:'ペーパーは ID でもパスでも指せる（ResolvePaper）。'},
+  auth: {t:'auth.go', path:'pkg/controller/http/auth.go', size:'約 250 行', d:'ログイン・ログアウトと、リクエストから Principal を作るミドルウェア。Cookie のセッションと <code>pap_…</code> の Bearer トークンの両方を受ける。', files:['Cookie は「ID + 秘密」、保存するのはハッシュだけ','変更系は X-Requested-With を必須にして CSRF を防ぐ'], hint:'ワークスペースを使えるかは usecase が Workspaces.Allow で決める。'},
+  usecase: {t:'pkg/usecase', path:'pkg/usecase/', size:'約 3,700 行（テスト約 1,300 行）', d:'アプリの中身。すべてのメソッドが Principal を受け取り、最初にアクセスを判定する。repository と Workspaces のインターフェースだけを知っていて、DB にも設定ファイルにも触れない。', files:['<code>ops.go</code> 操作のまとまりと衝突の判定','<code>version.go</code> 版の保存・読み取り・差分・復元','<code>tree.go</code> 移動・公開範囲・アーカイブ・ゴミ箱','<code>move_across.go</code> ワークスペースをまたぐ移動','<code>read.go</code> 読み取り・サイドバー・検索','<code>misc.go</code> 作成・ピン・presence・添付・配信','<code>auth.go</code> ログイン・セッション・トークン'], hint:'まず ops.go の Apply と checkBase。'},
+  markdown: {t:'usecase/markdown', path:'pkg/usecase/markdown/', size:'約 390 行', d:'Markdown とブロックの相互変換。AI が Markdown でまとめて書いたものをブロックに分け、書き出し時にはブロックを Markdown に戻す（表は行・列の順、子ペーパーは <code>paper:ID</code> のリンク）。', files:['<code>Parse</code> Markdown → ブロックの下書き','<code>Render</code> ブロック → Markdown'], hint:'本文の記法そのものは domain/markup。'},
+  model: {t:'domain/model', path:'pkg/domain/model/', size:'約 1,400 行', d:'エンティティと、それ自身の検証ルール。どの層にも依存しない。誰がペーパーを見られるか（public / private、作成者）もここ。', files:['<code>id.go</code> UUID v4 の base62','<code>block.go</code> ブロック・表の行と列','<code>paper.go</code> ペーパーと状態','<code>version.go</code> 版と写し','<code>principal.go</code> 見られるか・書けるか'], hint:'記法は隣の <code>domain/markup</code>。'},
+  interfaces: {t:'domain/interfaces', path:'pkg/domain/interfaces/', size:'約 190 行', d:'use case が外の世界に求めるもの（ポート）。保存先・変更フィード・検索・ワークスペースの設定・添付の保存先・IdP をすべてインターフェースで表す。', files:['<code>Repository</code> と <code>Tx</code>（ワークスペース単位のトランザクション）','<code>Workspaces</code>','<code>AttachmentStore</code>'], hint:'実装は契約テスト（pkg/repository/*_test.go）を通すこと。'},
+  firestore: {t:'repository/firestore', path:'pkg/repository/firestore/', size:'約 1,900 行', d:'本番の保存先。Firestore Enterprise の Native モード。モデルをそのまま保存し、階層はサブコレクションで表す。', files:['<code>paper.go</code> 読み取りとトランザクション（書き込みを溜めて最後に流す）','<code>watch.go</code> events のリスナー','<code>workspace.go</code> ホーム・転送・ピン・添付','<code>search.go</code> 全文検索','<code>indexes.go</code> 必要な索引と TTL'], hint:'クエリを足したら indexes.go も。'},
+  memory: {t:'repository/memory', path:'pkg/repository/memory/', size:'約 1,100 行', d:'メモリだけの実装。開発用サーバー（<code>task dev:server</code>）とテストで使う。Firestore 版と同じ契約テストを通る。', files:['<code>paper.go</code> トランザクション（txMu で直列化）','<code>memory.go</code> ユーザー・ピン・添付','<code>search.go</code> 素朴な全文検索'], hint:'Firestore 版より短く、契約を読むのに向く。'},
+  google: {t:'pkg/service', path:'pkg/service/google, workspace, attachment', size:'約 930 行', d:'外の世界との接点。Google の OpenID Connect、ワークスペースの設定（TOML）と Rego による判定、添付の保存先（Cloud Storage・ディレクトリ・メモリ）。', files:['<code>google/</code> 認可 URL、コード交換、ID トークンの検証','<code>workspace/</code> 設定の読み込みと検証、Allow（60 秒キャッシュ）','<code>attachment/</code> gcs / dir / memory'], hint:'Rego の入力は workspace.go の先頭のコメント。'},
 };
 const panel = document.getElementById('panel');
 const boxes = [...document.querySelectorAll('.map .pk')];
@@ -397,13 +404,13 @@ boxes.forEach(b => {
 show('usecase');
 
 const S = [
-  {h:'全体', p:'書き込みは REST、他人への配信は Firestore のリスナー、同時編集の安全は版。ロックはない。サーバーはメモリに何も持たないので、編集者と閲覧者が別のインスタンスにつながっていても届く。'},
-  {h:'1. 編集を始める', p:'ブロックをクリックすると、ブラウザはそのときの版（ここでは v3）と内容を覚えるだけで、サーバーには何も送らない。編集中に他人の変更が届いても下書きは置き換えず、「◯◯ が更新しました」と出す。'},
-  {h:'2. commit を送る', p:'入力を確定すると、ブラウザは POST …/papers/{p}/commits に op の列を送る。update には編集開始時の版を base_version として付ける（保存直前の最新版ではない）。何も変えていなければ何も送らない。'},
-  {h:'3. use case で適用する', p:'Commit はまず editor 以上かを確かめる。RunPaperTx の中で applier が op を 1 つずつ適用し、版を +1 して Change を記録する。元の版が古ければ BlockVersion でそのスナップショットを読み、内容が変わっていれば衝突として集める。衝突が 1 つでもあれば何も書かずに ConflictError（force なら上書きを記録して書く）。上限は 240 ブロック・本文 3 MiB。'},
-  {h:'4. 1 トランザクションで保存する', p:'Firestore のトランザクションは読みを先に済ませる必要があるので、書きはメモリに積んで最後にまとめて流す。ブロック本体、versions/{v}（Create なので同じ版の二重書きは失敗）、検索エントリ、commit。ペーパー本体はタイトル変更か、前回から 1 分経ったときだけ。'},
-  {h:'5. 編集者に返す', p:'成功なら結果のブロックが返り、編集者の画面は変更フィードを待たずに applyBlocks で反映する。409 なら衝突したブロックの現在の状態が返り、画面は「相手の内容」と「あなたの内容」を並べて、上書き・相手を残す・編集を続ける、を選ばせる。'},
-  {h:'6. 他の人に配る', p:'閲覧者の接続ごとに WatchPaper が Firestore のリスナーを張っている。変更は Event になり、live.go が {type:"event"} として送る。ブラウザは版を比べて古いものを捨てるので、同じ変更が二度届いても状態は変わらない。'}
+  {h:'全体', p:'書き込みは REST（AI は MCP）、他人への配信は events コレクションのリスナー、同時編集の安全は Rev。ロックはない。サーバーはメモリに何も持たないので、編集者と閲覧者が別のインスタンスにつながっていても届く。'},
+  {h:'1. 編集を始める', p:'ブロックをクリックすると、ブラウザはそのときの Rev（ここでは 3）と内容を覚え、presence（編集中の印）を送る。編集中に他人の変更が届いても下書きは置き換えず、「◯◯ が更新しました」と知らせるだけ。'},
+  {h:'2. 操作を送る', p:'ブロックを離れると、ブラウザは POST …/papers/{p}/ops に操作の列を送る。update には編集開始時の Rev を base_rev として付ける（保存直前の最新ではない）。何も変えていなければ何も送らない。新しいブロックは仮のキーで先に表示し、ref で送る。'},
+  {h:'3. use case で適用する', p:'Apply はまずペーパーを書けるかを確かめる。RunTx の中で applier が op を 1 つずつ適用する。まとまり前の Rev と base_rev を比べ、古ければ衝突として記録する（force なら上書き）。'},
+  {h:'4. 1 トランザクションで保存する', p:'Firestore のトランザクションは読みを先に済ませる必要があるので、書きはメモリに積んで最後にまとめて流す。ブロック、検索エントリ、Event を書く。ペーパー本体はタイトルが変わったか、更新時刻が 1 分以上古いときだけ。版は作らない。'},
+  {h:'5. 編集者に返す', p:'成功なら結果のブロックと ref の対応が返り、画面は変更フィードを待たずに反映し、仮のキーを本当の ID に替える。409 なら衝突したブロックの現在の状態が返り、画面は「相手の内容」と「あなたの内容」を並べて選ばせる。'},
+  {h:'6. 他の人に配る', p:'閲覧者の接続ごとに Watch が events のリスナーを張っている。新しい Event は live.go が {type:"event"} として送る。ブラウザは Rev を比べて古いものを捨てるので、同じ変更が二度届いても状態は変わらない。'},
 ];
 const seq = document.getElementById('seq');
 const box = document.getElementById('stepbox');

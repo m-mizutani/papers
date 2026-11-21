@@ -16,9 +16,9 @@ tasks:
       - go build -o papers .
 
   dev:server:
-    desc: Run the server without authentication and with the in-memory repository
+    desc: Run the server without authentication, with the in-memory repository and the example workspaces
     cmds:
-      - go run . serve --no-authn --ws-origin localhost:5173
+      - go run . serve --no-authn --ws-origin localhost:5173 --config examples/config --global-config examples/global.toml
 
   demo:
     desc: Build the in-browser demo (no backend) into frontend/dist-demo

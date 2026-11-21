@@ -3,6 +3,7 @@ package firestore
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"time"
@@ -18,158 +19,28 @@ func (r *Repository) blocksCol(ws model.WorkspaceID, paper model.PaperID) *fires
 	return r.paperDoc(ws, paper).Collection(colBlocks)
 }
 
-func (r *Repository) versionDoc(ws model.WorkspaceID, paper model.PaperID, block model.BlockID, version int64) *firestore.DocumentRef {
-	return r.blocksCol(ws, paper).Doc(string(block)).Collection(colVersions).Doc(strconv.FormatInt(version, 10))
+func (r *Repository) versionsCol(ws model.WorkspaceID, paper model.PaperID) *firestore.CollectionRef {
+	return r.paperDoc(ws, paper).Collection(colVersions)
 }
 
-func (r *Repository) commitsCol(ws model.WorkspaceID, paper model.PaperID) *firestore.CollectionRef {
-	return r.paperDoc(ws, paper).Collection(colCommits)
+func versionKey(n int) string { return fmt.Sprintf("%010d", n) }
+
+func (r *Repository) snapshotDoc(ws model.WorkspaceID, paper model.PaperID, ref model.SnapshotRef) *firestore.DocumentRef {
+	return r.paperDoc(ws, paper).Collection(colSnapshots).Doc(string(ref.BlockID) + "_" + strconv.FormatInt(ref.Rev, 10))
 }
 
-func (r *Repository) CreatePaper(ctx context.Context, paper *model.Paper) error {
-	if err := paper.Validate(); err != nil {
-		return err
-	}
-	if err := validID(string(paper.ID)); err != nil {
-		return err
-	}
-	if err := validID(string(paper.WorkspaceID)); err != nil {
-		return err
-	}
-	err := r.client.RunTransaction(ctx, func(_ context.Context, tx *firestore.Transaction) error {
-		if err := tx.Create(r.paperDoc(paper.WorkspaceID, paper.ID), paper); err != nil {
-			return err
-		}
-		return stageSearchEntry(tx, r.searchDoc(paper.WorkspaceID, paper.ID, ""), model.NewTitleSearchEntry(paper))
-	}, firestore.MaxAttempts(1))
-	if err != nil {
-		if isAlreadyExists(err) {
-			return goerr.Wrap(model.ErrAlreadyExists, "paper already exists", goerr.V("id", paper.ID))
-		}
-		return goerr.Wrap(err, "failed to create paper")
-	}
-	return nil
+func (r *Repository) eventsCol(ws model.WorkspaceID, paper model.PaperID) *firestore.CollectionRef {
+	return r.paperDoc(ws, paper).Collection(colEvents)
 }
 
-func (r *Repository) GetPaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error) {
-	if validID(string(ws)) != nil {
-		return nil, notFound("paper", id)
-	}
-	return get[model.Paper](ctx, r.paperDoc(ws, id), "paper")
+// eventDoc is a feed entry with the expiry time the TTL policy reads.
+type eventDoc struct {
+	Event    model.Event
+	ExpireAt time.Time
 }
 
-func (r *Repository) ListPapers(ctx context.Context, ws model.WorkspaceID) ([]*model.Paper, error) {
-	if validID(string(ws)) != nil {
-		return nil, nil
-	}
-	return all[model.Paper](r.workspaceDoc(ws).Collection(colPapers).OrderBy(firestore.DocumentID, firestore.Asc).Documents(ctx), "papers")
-}
-
-func (r *Repository) UpdatePaperAccess(ctx context.Context, ws model.WorkspaceID, id model.PaperID, access model.PaperAccess, updatedBy model.Actor, updatedAt time.Time) (*model.Paper, error) {
-	if validID(string(ws)) != nil || validID(string(id)) != nil {
-		return nil, notFound("paper", id)
-	}
-	doc := r.paperDoc(ws, id)
-	var out *model.Paper
-	err := r.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		snap, err := tx.Get(doc)
-		if err != nil {
-			if isNotFound(err) {
-				return notFound("paper", id)
-			}
-			return goerr.Wrap(err, "failed to get paper")
-		}
-		var p model.Paper
-		if err := snap.DataTo(&p); err != nil {
-			return goerr.Wrap(err, "failed to decode paper")
-		}
-		p.Access = access
-		p.UpdatedBy = updatedBy
-		p.UpdatedAt = updatedAt
-		if err := p.Validate(); err != nil {
-			return err
-		}
-		out = &p
-		return tx.Set(doc, &p)
-	})
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to update paper access", goerr.V("paper_id", id))
-	}
-	return out, nil
-}
-
-// DeletePaper removes the paper document first, so readers and watchers
-// see the paper gone at once, then sweeps its subcollections.
-func (r *Repository) DeletePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error {
-	if _, err := r.GetPaper(ctx, ws, id); err != nil {
-		return err
-	}
-	doc := r.paperDoc(ws, id)
-	if _, err := doc.Delete(ctx); err != nil {
-		return goerr.Wrap(err, "failed to delete paper")
-	}
-	searchRefs, err := r.paperSearchRefs(ctx, ws, id)
-	if err != nil {
-		return err
-	}
-
-	bw := r.client.BulkWriter(ctx)
-	var jobs []*firestore.BulkWriterJob
-	del := func(d *firestore.DocumentRef) error {
-		job, err := bw.Delete(d)
-		if err != nil {
-			return goerr.Wrap(err, "failed to enqueue delete", goerr.V("path", d.Path))
-		}
-		jobs = append(jobs, job)
-		return nil
-	}
-	sweep := func(col *firestore.CollectionRef, nested func(*firestore.DocumentRef) error) error {
-		refs, err := col.DocumentRefs(ctx).GetAll()
-		if err != nil {
-			return goerr.Wrap(err, "failed to list documents", goerr.V("collection", col.Path))
-		}
-		for _, ref := range refs {
-			if nested != nil {
-				if err := nested(ref); err != nil {
-					return err
-				}
-			}
-			if err := del(ref); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	for _, ref := range searchRefs {
-		if err = del(ref); err != nil {
-			break
-		}
-	}
-	if err == nil {
-		err = sweep(doc.Collection(colBlocks), func(block *firestore.DocumentRef) error {
-			return sweep(block.Collection(colVersions), nil)
-		})
-	}
-	if err == nil {
-		err = sweep(doc.Collection(colCommits), nil)
-	}
-	bw.End()
-	if err != nil {
-		return err
-	}
-	for _, job := range jobs {
-		if _, err := job.Results(); err != nil && !isNotFound(err) {
-			return goerr.Wrap(err, "failed to delete paper contents")
-		}
-	}
-	return nil
-}
-
-func (r *Repository) GetBlock(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID) (*model.Block, error) {
-	if validID(string(ws)) != nil || validID(string(paper)) != nil {
-		return nil, notFound("block", id)
-	}
-	return get[model.Block](ctx, r.blocksCol(ws, paper).Doc(string(id)), "block")
+func newEventDoc(ev *model.Event) *eventDoc {
+	return &eventDoc{Event: *ev, ExpireAt: ev.At.Add(model.EventTTL)}
 }
 
 func compareBlocks(a, b *model.Block) int {
@@ -180,6 +51,142 @@ func compareBlocks(a, b *model.Block) int {
 		return c
 	}
 	return cmp.Compare(a.ID, b.ID)
+}
+
+func comparePapers(a, b *model.Paper) int {
+	return cmp.Or(cmp.Compare(a.Title, b.Title), cmp.Compare(a.ID, b.ID))
+}
+
+func (r *Repository) GetPaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error) {
+	if !validKeys(string(ws), string(id)) {
+		return nil, notFound("paper", id)
+	}
+	return get[model.Paper](ctx, r.paperDoc(ws, id), "paper")
+}
+
+func (r *Repository) GetPapers(ctx context.Context, ws model.WorkspaceID, ids []model.PaperID) ([]*model.Paper, error) {
+	if !validKeys(string(ws)) {
+		return nil, nil
+	}
+	var refs []*firestore.DocumentRef
+	for _, id := range ids {
+		if validKeys(string(id)) {
+			refs = append(refs, r.paperDoc(ws, id))
+		}
+	}
+	return getAll[model.Paper](ctx, r.client, refs, "papers")
+}
+
+func (r *Repository) ListChildren(ctx context.Context, ws model.WorkspaceID, parent model.PaperID) ([]*model.Paper, error) {
+	if !validKeys(string(ws), string(parent)) {
+		return nil, nil
+	}
+	q := r.papersCol(ws).Where("ParentID", "==", string(parent)).OrderBy("Title", firestore.Asc)
+	out, err := all[model.Paper](q.Documents(ctx), "papers")
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(out, comparePapers)
+	return out, nil
+}
+
+func (r *Repository) ListPrivatePapers(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
+	if !validKeys(string(ws)) {
+		return nil, nil
+	}
+	q := r.papersCol(ws).Where("Visibility", "==", string(model.VisibilityPrivate)).
+		Where("CreatedBy.UserID", "==", string(owner)).OrderBy("Title", firestore.Asc)
+	got, err := all[model.Paper](q.Documents(ctx), "papers")
+	if err != nil {
+		return nil, err
+	}
+	out := slices.DeleteFunc(got, func(p *model.Paper) bool { return p.DeletedAt != nil })
+	slices.SortFunc(out, comparePapers)
+	return out, nil
+}
+
+// epoch is before every DeletedAt; comparing with it skips papers whose
+// DeletedAt is null.
+var epoch = time.Unix(0, 0).UTC()
+
+func (r *Repository) ListTrash(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
+	if !validKeys(string(ws)) {
+		return nil, nil
+	}
+	q := r.papersCol(ws).Where("CreatedBy.UserID", "==", string(owner)).Where("DeletedAt", ">", epoch)
+	out, err := all[model.Paper](q.Documents(ctx), "papers")
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(out, comparePapers)
+	return out, nil
+}
+
+func (r *Repository) ListTrashedBefore(ctx context.Context, ws model.WorkspaceID, t time.Time) ([]*model.Paper, error) {
+	if !validKeys(string(ws)) {
+		return nil, nil
+	}
+	q := r.papersCol(ws).Where("DeletedAt", ">", epoch).Where("DeletedAt", "<", t)
+	out, err := all[model.Paper](q.Documents(ctx), "papers")
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(out, comparePapers)
+	return out, nil
+}
+
+// PurgePaper removes the paper document first, so readers and watchers
+// see the paper gone at once, then sweeps its subcollections and search
+// entries.
+func (r *Repository) PurgePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error {
+	if _, err := r.GetPaper(ctx, ws, id); err != nil {
+		return err
+	}
+	doc := r.paperDoc(ws, id)
+	if _, err := doc.Delete(ctx); err != nil {
+		return goerr.Wrap(err, "failed to delete paper")
+	}
+	refs, err := r.paperSearchRefs(ctx, ws, id)
+	if err != nil {
+		return err
+	}
+	for _, col := range []string{colBlocks, colVersions, colSnapshots, colEvents, colAttachments} {
+		got, err := doc.Collection(col).DocumentRefs(ctx).GetAll()
+		if err != nil {
+			return goerr.Wrap(err, "failed to list documents", goerr.V("collection", col))
+		}
+		refs = append(refs, got...)
+	}
+	bw := r.client.BulkWriter(ctx)
+	jobs := make([]*firestore.BulkWriterJob, 0, len(refs))
+	for _, ref := range refs {
+		job, err := bw.Delete(ref)
+		if err != nil {
+			bw.End()
+			return goerr.Wrap(err, "failed to enqueue delete", goerr.V("path", ref.Path))
+		}
+		jobs = append(jobs, job)
+	}
+	bw.End()
+	for _, job := range jobs {
+		if _, err := job.Results(); err != nil && !isNotFound(err) {
+			return goerr.Wrap(err, "failed to delete paper contents", goerr.V("paper_id", id))
+		}
+	}
+	return nil
+}
+
+func (r *Repository) GetBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, ids []model.BlockID) ([]*model.Block, error) {
+	if !validKeys(string(ws), string(paper)) {
+		return nil, notFound("paper", paper)
+	}
+	var refs []*firestore.DocumentRef
+	for _, id := range ids {
+		if validKeys(string(id)) {
+			refs = append(refs, r.blocksCol(ws, paper).Doc(string(id)))
+		}
+	}
+	return getAll[model.Block](ctx, r.client, refs, "blocks")
 }
 
 func (r *Repository) ListBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error) {
@@ -194,163 +201,261 @@ func (r *Repository) ListBlocks(ctx context.Context, ws model.WorkspaceID, paper
 	return blocks, nil
 }
 
-func (r *Repository) GetBlockVersion(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, version int64) (*model.Block, error) {
-	if validID(string(ws)) != nil || validID(string(paper)) != nil || validID(string(id)) != nil {
-		return nil, notFound("block version", id)
+func (r *Repository) ListPaperBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error) {
+	if _, err := r.GetPaper(ctx, ws, paper); err != nil {
+		return nil, err
 	}
-	return get[model.Block](ctx, r.versionDoc(ws, paper, id, version), "block version")
+	q := r.blocksCol(ws, paper).Where("Type", "==", string(model.BlockPaper)).OrderBy("Order", firestore.Asc)
+	blocks, err := all[model.Block](q.Documents(ctx), "paper blocks")
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(blocks, compareBlocks)
+	return blocks, nil
 }
 
-func (r *Repository) ListBlockVersions(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, limit int) ([]*model.Block, error) {
-	if limit <= 0 {
-		return nil, goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
+// maxIn is the most values Firestore accepts in one "in" filter.
+const maxIn = 30
+
+func (r *Repository) ListBlocksRange(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, after string, limit int) ([]*model.Block, string, error) {
+	if limit < 1 {
+		return nil, "", goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
 	}
-	if validID(string(ws)) != nil || validID(string(paper)) != nil || validID(string(id)) != nil {
-		return nil, nil
+	if _, err := r.GetPaper(ctx, ws, paper); err != nil {
+		return nil, "", err
 	}
-	q := r.blocksCol(ws, paper).Doc(string(id)).Collection(colVersions).OrderBy("Version", firestore.Desc).Limit(limit)
-	return all[model.Block](q.Documents(ctx), "block versions")
+	col := r.blocksCol(ws, paper)
+	q := col.Where("ParentID", "==", "")
+	if after != "" {
+		q = q.Where("Order", ">", after)
+	}
+	top, err := all[model.Block](q.OrderBy("Order", firestore.Asc).Limit(limit+1).Documents(ctx), "blocks")
+	if err != nil {
+		return nil, "", err
+	}
+	slices.SortFunc(top, compareBlocks)
+	next := ""
+	if len(top) > limit {
+		top = top[:limit]
+		next = top[len(top)-1].Order
+	}
+	var tables []string
+	for _, b := range top {
+		if b.Type == model.BlockTable {
+			tables = append(tables, string(b.ID))
+		}
+	}
+	out := top
+	for chunk := range slices.Chunk(tables, maxIn) {
+		cells, err := all[model.Block](col.Where("ParentID", "in", chunk).Documents(ctx), "cells")
+		if err != nil {
+			return nil, "", err
+		}
+		out = append(out, cells...)
+	}
+	slices.SortFunc(out, compareBlocks)
+	return out, next, nil
 }
 
-func (r *Repository) ListCommits(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, before model.CommitID, limit int) ([]*model.Commit, error) {
-	if limit <= 0 {
+func (r *Repository) ListVersions(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, before, limit int) ([]*model.Version, error) {
+	if limit < 1 {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
 	}
 	if _, err := r.GetPaper(ctx, ws, paper); err != nil {
 		return nil, err
 	}
-	// Ordering by CreatedAt descending also orders ties by document ID
-	// descending, which matches the memory implementation.
-	q := r.commitsCol(ws, paper).OrderBy("CreatedAt", firestore.Desc).Limit(limit)
-	if before != "" {
-		if validID(string(before)) != nil {
-			return nil, notFound("commit", before)
-		}
-		snap, err := r.commitsCol(ws, paper).Doc(string(before)).Get(ctx)
-		if err != nil {
-			if isNotFound(err) {
-				return nil, notFound("commit", before)
-			}
-			return nil, goerr.Wrap(err, "failed to get cursor commit")
-		}
-		q = q.StartAfter(snap)
+	q := r.versionsCol(ws, paper).Query
+	if before > 0 {
+		q = q.Where("Number", "<", before)
 	}
-	return all[model.Commit](q.Documents(ctx), "commits")
+	return all[model.Version](q.OrderBy("Number", firestore.Desc).Limit(limit).Documents(ctx), "versions")
 }
 
-// --- transaction -------------------------------------------------------------
+func (r *Repository) GetVersion(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, number int) (*model.Version, error) {
+	if !validKeys(string(ws), string(paper)) || number < 1 {
+		return nil, notFound("version", number)
+	}
+	return get[model.Version](ctx, r.versionsCol(ws, paper).Doc(versionKey(number)), "version")
+}
+
+func (r *Repository) GetSnapshots(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error) {
+	if !validKeys(string(ws), string(paper)) {
+		return nil, notFound("paper", paper)
+	}
+	docs := make([]*firestore.DocumentRef, 0, len(refs))
+	for _, ref := range refs {
+		if validKeys(string(ref.BlockID)) {
+			docs = append(docs, r.snapshotDoc(ws, paper, ref))
+		}
+	}
+	return getAll[model.BlockSnapshot](ctx, r.client, docs, "snapshots")
+}
+
+// --- transaction
+
+type blockKey struct {
+	paper model.PaperID
+	id    model.BlockID
+}
 
 // fsTx stages every write and flushes them when fn returns, because
 // Firestore transactions must perform all reads before any write. Reads
 // overlay the staged writes so fn sees its own changes.
 type fsTx struct {
-	ctx     context.Context
-	tx      *firestore.Transaction
-	r       *Repository
-	ws      model.WorkspaceID
-	paperID model.PaperID
-	paper   *model.Paper
-	paperW  bool
-	puts    map[model.BlockID]*model.Block
-	deletes map[model.BlockID]struct{}
-	cache   map[model.BlockID]*model.Block
-	commits []*model.Commit
+	tx        *firestore.Transaction
+	r         *Repository
+	ws        model.WorkspaceID
+	papers    map[model.PaperID]*model.Paper
+	paperRead map[model.PaperID]*model.Paper // nil value: known missing
+	puts      map[blockKey]*model.Block
+	deletes   map[blockKey]bool
+	versions  []*model.Version
+	snapshots map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot
+	forwards  []*model.Forward
+	events    []*model.Event
 }
 
-func (t *fsTx) Paper() *model.Paper {
-	p := *t.paper
-	p.Access.Bindings = slices.Clone(t.paper.Access.Bindings)
-	return &p
+func (t *fsTx) GetPaper(id model.PaperID) (*model.Paper, error) {
+	if p, ok := t.papers[id]; ok {
+		return p.Clone(), nil
+	}
+	if p, ok := t.paperRead[id]; ok {
+		if p == nil {
+			return nil, notFound("paper", id)
+		}
+		return p.Clone(), nil
+	}
+	if !validKeys(string(id)) {
+		return nil, notFound("paper", id)
+	}
+	snap, err := t.tx.Get(t.r.paperDoc(t.ws, id))
+	if err != nil {
+		if isNotFound(err) {
+			t.paperRead[id] = nil
+			return nil, notFound("paper", id)
+		}
+		return nil, goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", id))
+	}
+	p, err := decode[model.Paper](snap, "paper")
+	if err != nil {
+		return nil, err
+	}
+	t.paperRead[id] = p
+	return p.Clone(), nil
 }
 
-func (t *fsTx) GetBlock(id model.BlockID) (*model.Block, error) {
-	if _, ok := t.deletes[id]; ok {
+func (t *fsTx) GetPapers(ids []model.PaperID) ([]*model.Paper, error) {
+	var refs []*firestore.DocumentRef
+	var out []*model.Paper
+	for _, id := range ids {
+		if p, ok := t.papers[id]; ok {
+			out = append(out, p.Clone())
+		} else if p, ok := t.paperRead[id]; ok {
+			if p != nil {
+				out = append(out, p.Clone())
+			}
+		} else if validKeys(string(id)) {
+			refs = append(refs, t.r.paperDoc(t.ws, id))
+		}
+	}
+	if len(refs) > 0 {
+		snaps, err := t.tx.GetAll(refs)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to get papers")
+		}
+		for _, s := range snaps {
+			id := model.PaperID(s.Ref.ID)
+			if !s.Exists() {
+				t.paperRead[id] = nil
+				continue
+			}
+			p, err := decode[model.Paper](s, "paper")
+			if err != nil {
+				return nil, err
+			}
+			t.paperRead[id] = p
+			out = append(out, p.Clone())
+		}
+	}
+	return out, nil
+}
+
+func (t *fsTx) PutPaper(paper *model.Paper) error {
+	if err := paper.Validate(); err != nil {
+		return err
+	}
+	if paper.WorkspaceID != t.ws || !validKeys(string(paper.ID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "paper belongs to another workspace")
+	}
+	t.papers[paper.ID] = paper.Clone()
+	return nil
+}
+
+func (t *fsTx) GetBlock(paper model.PaperID, id model.BlockID) (*model.Block, error) {
+	k := blockKey{paper, id}
+	if t.deletes[k] {
 		return nil, notFound("block", id)
 	}
-	if b, ok := t.puts[id]; ok {
+	if b, ok := t.puts[k]; ok {
 		return b.Clone(), nil
 	}
-	if b, ok := t.cache[id]; ok {
-		return b.Clone(), nil
-	}
-	if validID(string(id)) != nil {
+	if !validKeys(string(paper), string(id)) {
 		return nil, notFound("block", id)
 	}
-	snap, err := t.tx.Get(t.r.blocksCol(t.ws, t.paperID).Doc(string(id)))
+	snap, err := t.tx.Get(t.r.blocksCol(t.ws, paper).Doc(string(id)))
 	if err != nil {
 		if isNotFound(err) {
 			return nil, notFound("block", id)
 		}
 		return nil, goerr.Wrap(err, "failed to get block", goerr.V("block_id", id))
 	}
-	var b model.Block
-	if err := snap.DataTo(&b); err != nil {
-		return nil, goerr.Wrap(err, "failed to decode block")
-	}
-	t.cache[id] = &b
-	return b.Clone(), nil
+	return decode[model.Block](snap, "block")
 }
 
-func (t *fsTx) BlockVersion(id model.BlockID, version int64) (*model.Block, error) {
-	if b, ok := t.puts[id]; ok && b.Version == version {
-		return b.Clone(), nil
-	}
-	if validID(string(id)) != nil {
-		return nil, notFound("block version", version)
-	}
-	snap, err := t.tx.Get(t.r.versionDoc(t.ws, t.paperID, id, version))
-	if err != nil {
-		if isNotFound(err) {
-			return nil, notFound("block version", version)
+func (t *fsTx) GetBlocks(paper model.PaperID, ids []model.BlockID) ([]*model.Block, error) {
+	var refs []*firestore.DocumentRef
+	var out []*model.Block
+	for _, id := range ids {
+		k := blockKey{paper, id}
+		switch {
+		case t.deletes[k]:
+		case t.puts[k] != nil:
+			out = append(out, t.puts[k].Clone())
+		case validKeys(string(paper), string(id)):
+			refs = append(refs, t.r.blocksCol(t.ws, paper).Doc(string(id)))
 		}
-		return nil, goerr.Wrap(err, "failed to get block version", goerr.V("block_id", id), goerr.V("version", version))
 	}
-	var b model.Block
-	if err := snap.DataTo(&b); err != nil {
-		return nil, goerr.Wrap(err, "failed to decode block version")
+	if len(refs) > 0 {
+		snaps, err := t.tx.GetAll(refs)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to get blocks")
+		}
+		got, err := decodeSnaps[model.Block](snaps, "block")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, got...)
 	}
-	return &b, nil
+	return out, nil
 }
 
-func (t *fsTx) LatestBlockVersion(id model.BlockID) (*model.Block, error) {
-	if b, ok := t.puts[id]; ok {
-		return b.Clone(), nil
-	}
-	if validID(string(id)) != nil {
-		return nil, notFound("block", id)
-	}
-	q := t.r.blocksCol(t.ws, t.paperID).Doc(string(id)).Collection(colVersions).OrderBy("Version", firestore.Desc).Limit(1)
-	got, err := all[model.Block](t.tx.Documents(q), "block versions")
-	if err != nil {
-		return nil, err
-	}
-	if len(got) == 0 {
-		return nil, notFound("block", id)
-	}
-	return got[0], nil
-}
-
-// query runs q in the transaction and merges staged writes for parent.
-// Stored blocks that were staged (put or deleted) are replaced by their
-// staged state.
-func (t *fsTx) query(q firestore.Query, parent model.BlockID, keep func(*model.Block) bool) ([]*model.Block, error) {
+// query runs q in the transaction and merges the staged writes of the
+// paper that keep accepts.
+func (t *fsTx) query(paper model.PaperID, q firestore.Query, keep func(*model.Block) bool) ([]*model.Block, error) {
 	stored, err := all[model.Block](t.tx.Documents(q), "blocks")
 	if err != nil {
 		return nil, err
 	}
 	var out []*model.Block
 	for _, b := range stored {
-		t.cache[b.ID] = b
-		if _, ok := t.puts[b.ID]; ok {
+		k := blockKey{paper, b.ID}
+		if t.puts[k] != nil || t.deletes[k] {
 			continue
 		}
-		if _, ok := t.deletes[b.ID]; ok {
-			continue
-		}
-		out = append(out, b.Clone())
+		out = append(out, b)
 	}
-	for _, b := range t.puts {
-		if b.ParentID == parent && keep(b) {
+	for k, b := range t.puts {
+		if k.paper == paper && keep(b) {
 			out = append(out, b.Clone())
 		}
 	}
@@ -362,140 +467,254 @@ func (t *fsTx) query(q firestore.Query, parent model.BlockID, keep func(*model.B
 // rows cannot leave the result short.
 func (t *fsTx) slack() int { return 1 + len(t.puts) + len(t.deletes) }
 
-func (t *fsTx) FirstAfter(parent model.BlockID, order string) (*model.Block, error) {
-	q := t.r.blocksCol(t.ws, t.paperID).Where("ParentID", "==", string(parent))
+func (t *fsTx) FirstAfter(paper model.PaperID, parent model.BlockID, order string) (*model.Block, error) {
+	if !validKeys(string(paper)) {
+		return nil, nil
+	}
+	q := t.r.blocksCol(t.ws, paper).Where("ParentID", "==", string(parent))
 	if order != "" {
 		q = q.Where("Order", ">", order)
 	}
 	q = q.OrderBy("Order", firestore.Asc).Limit(t.slack())
-	bs, err := t.query(q, parent, func(b *model.Block) bool { return b.Order > order })
+	bs, err := t.query(paper, q, func(b *model.Block) bool { return b.ParentID == parent && b.Order > order })
 	if err != nil || len(bs) == 0 {
 		return nil, err
 	}
 	return bs[0], nil
 }
 
-func (t *fsTx) Last(parent model.BlockID) (*model.Block, error) {
-	q := t.r.blocksCol(t.ws, t.paperID).Where("ParentID", "==", string(parent)).OrderBy("Order", firestore.Desc).Limit(t.slack())
-	bs, err := t.query(q, parent, func(*model.Block) bool { return true })
+func (t *fsTx) Last(paper model.PaperID, parent model.BlockID) (*model.Block, error) {
+	if !validKeys(string(paper)) {
+		return nil, nil
+	}
+	q := t.r.blocksCol(t.ws, paper).Where("ParentID", "==", string(parent)).OrderBy("Order", firestore.Desc).Limit(t.slack())
+	bs, err := t.query(paper, q, func(b *model.Block) bool { return b.ParentID == parent })
 	if err != nil || len(bs) == 0 {
 		return nil, err
 	}
 	return bs[len(bs)-1], nil
 }
 
-func (t *fsTx) Children(parent model.BlockID) ([]*model.Block, error) {
-	q := t.r.blocksCol(t.ws, t.paperID).Where("ParentID", "==", string(parent))
-	return t.query(q, parent, func(*model.Block) bool { return true })
+func (t *fsTx) Children(paper model.PaperID, parent model.BlockID) ([]*model.Block, error) {
+	if !validKeys(string(paper)) {
+		return nil, nil
+	}
+	q := t.r.blocksCol(t.ws, paper).Where("ParentID", "==", string(parent))
+	return t.query(paper, q, func(b *model.Block) bool { return b.ParentID == parent })
+}
+
+func (t *fsTx) ListBlocks(paper model.PaperID) ([]*model.Block, error) {
+	if !validKeys(string(paper)) {
+		return nil, nil
+	}
+	return t.query(paper, t.r.blocksCol(t.ws, paper).Query, func(*model.Block) bool { return true })
+}
+
+func (t *fsTx) CountBlocks(paper model.PaperID) (int, error) {
+	if !validKeys(string(paper)) {
+		return 0, nil
+	}
+	col := t.r.blocksCol(t.ws, paper)
+	res, err := t.tx.Documents(col.Select()).GetAll()
+	if err != nil {
+		return 0, goerr.Wrap(err, "failed to count blocks")
+	}
+	n := 0
+	stored := map[model.BlockID]bool{}
+	for _, s := range res {
+		id := model.BlockID(s.Ref.ID)
+		stored[id] = true
+		if !t.deletes[blockKey{paper, id}] {
+			n++
+		}
+	}
+	for k := range t.puts {
+		if k.paper == paper && !stored[k.id] {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (t *fsTx) PutBlock(block *model.Block) error {
 	if err := block.Validate(); err != nil {
 		return err
 	}
-	if err := validID(string(block.ID)); err != nil {
-		return err
+	if block.WorkspaceID != t.ws || !validKeys(string(block.ID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "block belongs to another workspace", goerr.V("block_id", block.ID))
 	}
-	if block.WorkspaceID != t.ws || block.PaperID != t.paperID {
-		return goerr.Wrap(model.ErrInvalidArgument, "block belongs to another paper", goerr.V("block_id", block.ID))
+	if _, err := t.GetPaper(block.PaperID); err != nil {
+		return goerr.Wrap(model.ErrInvalidArgument, "block belongs to an unknown paper", goerr.V("paper_id", block.PaperID))
 	}
-	delete(t.deletes, block.ID)
-	t.puts[block.ID] = block.Clone()
+	k := blockKey{block.PaperID, block.ID}
+	delete(t.deletes, k)
+	t.puts[k] = block.Clone()
 	return nil
 }
 
-func (t *fsTx) DeleteBlock(id model.BlockID) error {
-	delete(t.puts, id)
-	t.deletes[id] = struct{}{}
+func (t *fsTx) DeleteBlock(paper model.PaperID, id model.BlockID) error {
+	k := blockKey{paper, id}
+	delete(t.puts, k)
+	t.deletes[k] = true
 	return nil
 }
 
-func (t *fsTx) PutPaper(paper *model.Paper) error {
-	if err := paper.Validate(); err != nil {
+func (t *fsTx) GetVersion(paper model.PaperID, number int) (*model.Version, error) {
+	for _, v := range t.versions {
+		if v.PaperID == paper && v.Number == number {
+			c := *v
+			return &c, nil
+		}
+	}
+	if !validKeys(string(paper)) || number < 1 {
+		return nil, notFound("version", number)
+	}
+	snap, err := t.tx.Get(t.r.versionsCol(t.ws, paper).Doc(versionKey(number)))
+	if err != nil {
+		if isNotFound(err) {
+			return nil, notFound("version", number)
+		}
+		return nil, goerr.Wrap(err, "failed to get version")
+	}
+	return decode[model.Version](snap, "version")
+}
+
+func (t *fsTx) PutVersion(v *model.Version) error {
+	if err := v.Validate(); err != nil {
 		return err
 	}
-	if paper.ID != t.paperID || paper.WorkspaceID != t.ws {
-		return goerr.Wrap(model.ErrInvalidArgument, "cannot replace another paper in a paper transaction")
+	if v.WorkspaceID != t.ws {
+		return goerr.Wrap(model.ErrInvalidArgument, "version belongs to another workspace")
 	}
-	p := *paper
-	t.paper = &p
-	t.paperW = true
+	if _, err := t.GetVersion(v.PaperID, v.Number); err == nil {
+		return goerr.Wrap(model.ErrAlreadyExists, "version already exists", goerr.V("number", v.Number))
+	}
+	c := *v
+	t.versions = append(t.versions, &c)
 	return nil
 }
 
-func (t *fsTx) AddCommit(commit *model.Commit) error {
-	if err := commit.Validate(); err != nil {
-		return err
+func (t *fsTx) GetSnapshots(paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error) {
+	var docs []*firestore.DocumentRef
+	var out []*model.BlockSnapshot
+	for _, ref := range refs {
+		if s, ok := t.snapshots[paper][ref]; ok {
+			c := *s
+			out = append(out, &c)
+		} else if validKeys(string(paper), string(ref.BlockID)) {
+			docs = append(docs, t.r.snapshotDoc(t.ws, paper, ref))
+		}
 	}
-	if commit.PaperID != t.paperID || commit.WorkspaceID != t.ws {
-		return goerr.Wrap(model.ErrInvalidArgument, "commit belongs to another paper")
+	if len(docs) > 0 {
+		snaps, err := t.tx.GetAll(docs)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to get snapshots")
+		}
+		got, err := decodeSnaps[model.BlockSnapshot](snaps, "snapshot")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, got...)
 	}
-	if err := validID(string(commit.ID)); err != nil {
-		return err
+	return out, nil
+}
+
+func (t *fsTx) PutSnapshot(paper model.PaperID, s *model.BlockSnapshot) error {
+	if !validKeys(string(paper), string(s.BlockID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid snapshot")
 	}
-	t.commits = append(t.commits, commit)
+	if t.snapshots[paper] == nil {
+		t.snapshots[paper] = map[model.SnapshotRef]*model.BlockSnapshot{}
+	}
+	c := *s
+	t.snapshots[paper][model.SnapshotRef{BlockID: s.BlockID, Rev: s.Rev}] = &c
 	return nil
 }
+
+func (t *fsTx) PutForward(f *model.Forward) error {
+	if f.WorkspaceID != t.ws || !validKeys(string(f.PaperID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid forward")
+	}
+	c := *f
+	t.forwards = append(t.forwards, &c)
+	return nil
+}
+
+func (t *fsTx) AddEvent(ev *model.Event) error {
+	if ev.WorkspaceID != t.ws || !validKeys(string(ev.PaperID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid event")
+	}
+	c := *ev
+	t.events = append(t.events, &c)
+	return nil
+}
+
+var _ interfaces.Tx = (*fsTx)(nil)
 
 func (t *fsTx) flush() error {
-	blocks := t.r.blocksCol(t.ws, t.paperID)
-	for id := range t.deletes {
-		if err := t.tx.Delete(blocks.Doc(string(id))); err != nil {
+	tx, ws := t.tx, t.ws
+	for k := range t.deletes {
+		if err := tx.Delete(t.r.blocksCol(ws, k.paper).Doc(string(k.id))); err != nil {
 			return goerr.Wrap(err, "failed to stage block delete")
 		}
-		if err := stageSearchEntry(t.tx, t.r.searchDoc(t.ws, t.paperID, id), nil); err != nil {
+		if err := stageSearchEntry(tx, t.r.searchDoc(ws, k.paper, k.id), nil); err != nil {
 			return err
 		}
 	}
-	for id, b := range t.puts {
-		if err := t.tx.Set(blocks.Doc(string(id)), b); err != nil {
+	for k, b := range t.puts {
+		if err := tx.Set(t.r.blocksCol(ws, k.paper).Doc(string(k.id)), b); err != nil {
 			return goerr.Wrap(err, "failed to stage block write")
 		}
-		// Create (not Set): a version is written once, so a concurrent
-		// writer that computed the same version aborts instead of
-		// rewriting history.
-		if err := t.tx.Create(t.r.versionDoc(t.ws, t.paperID, id, b.Version), b); err != nil {
-			return goerr.Wrap(err, "failed to stage block version")
-		}
-		if err := stageSearchEntry(t.tx, t.r.searchDoc(t.ws, t.paperID, id), model.NewBlockSearchEntry(b)); err != nil {
+		if err := stageSearchEntry(tx, t.r.searchDoc(ws, k.paper, k.id), model.NewBlockSearchEntry(b)); err != nil {
 			return err
 		}
 	}
-	for _, c := range t.commits {
-		if err := t.tx.Create(t.r.commitsCol(t.ws, t.paperID).Doc(string(c.ID)), c); err != nil {
-			return goerr.Wrap(err, "failed to stage commit")
+	for paper, snaps := range t.snapshots {
+		for ref, s := range snaps {
+			// Set: a snapshot of a (block, rev) never changes, so writing
+			// it again is harmless.
+			if err := tx.Set(t.r.snapshotDoc(ws, paper, ref), s); err != nil {
+				return goerr.Wrap(err, "failed to stage snapshot")
+			}
 		}
 	}
-	if t.paperW {
-		if err := t.tx.Set(t.r.paperDoc(t.ws, t.paperID), t.paper); err != nil {
+	for _, v := range t.versions {
+		// Create: a concurrent writer that took the same number aborts.
+		if err := tx.Create(t.r.versionsCol(ws, v.PaperID).Doc(versionKey(v.Number)), v); err != nil {
+			return goerr.Wrap(err, "failed to stage version")
+		}
+	}
+	for id, p := range t.papers {
+		if err := tx.Set(t.r.paperDoc(ws, id), p); err != nil {
 			return goerr.Wrap(err, "failed to stage paper write")
 		}
-		if err := stageSearchEntry(t.tx, t.r.searchDoc(t.ws, t.paperID, ""), model.NewTitleSearchEntry(t.paper)); err != nil {
+		if err := stageSearchEntry(tx, t.r.searchDoc(ws, id, ""), model.NewTitleSearchEntry(p)); err != nil {
 			return err
+		}
+	}
+	for _, f := range t.forwards {
+		if err := tx.Set(t.r.forwardDoc(ws, f.PaperID), f); err != nil {
+			return goerr.Wrap(err, "failed to stage forward")
+		}
+	}
+	for _, ev := range t.events {
+		if err := tx.Create(t.r.eventsCol(ws, ev.PaperID).NewDoc(), newEventDoc(ev)); err != nil {
+			return goerr.Wrap(err, "failed to stage event")
 		}
 	}
 	return nil
 }
 
-func (r *Repository) RunPaperTx(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, fn func(tx interfaces.PaperTx) error) error {
-	if validID(string(ws)) != nil || validID(string(paper)) != nil {
-		return notFound("paper", paper)
+func (r *Repository) RunTx(ctx context.Context, ws model.WorkspaceID, fn func(tx interfaces.Tx) error) error {
+	if !validKeys(string(ws)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid workspace", goerr.V("workspace_id", ws))
 	}
-	err := r.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		snap, err := tx.Get(r.paperDoc(ws, paper))
-		if err != nil {
-			if isNotFound(err) {
-				return notFound("paper", paper)
-			}
-			return goerr.Wrap(err, "failed to get paper")
-		}
-		var p model.Paper
-		if err := snap.DataTo(&p); err != nil {
-			return goerr.Wrap(err, "failed to decode paper")
-		}
+	err := r.client.RunTransaction(ctx, func(_ context.Context, tx *firestore.Transaction) error {
 		t := &fsTx{
-			ctx: ctx, tx: tx, r: r, ws: ws, paperID: paper, paper: &p,
-			puts: map[model.BlockID]*model.Block{}, deletes: map[model.BlockID]struct{}{}, cache: map[model.BlockID]*model.Block{},
+			tx: tx, r: r, ws: ws,
+			papers: map[model.PaperID]*model.Paper{}, paperRead: map[model.PaperID]*model.Paper{},
+			puts: map[blockKey]*model.Block{}, deletes: map[blockKey]bool{},
+			snapshots: map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot{},
 		}
 		if err := fn(t); err != nil {
 			return err
@@ -504,7 +723,7 @@ func (r *Repository) RunPaperTx(ctx context.Context, ws model.WorkspaceID, paper
 	})
 	if err != nil {
 		if isAlreadyExists(err) {
-			return goerr.Wrap(model.ErrAlreadyExists, "a concurrent write created the same record", goerr.V("paper_id", paper))
+			return goerr.Wrap(model.ErrAlreadyExists, "a concurrent write created the same record", goerr.V("workspace_id", ws))
 		}
 		return err
 	}

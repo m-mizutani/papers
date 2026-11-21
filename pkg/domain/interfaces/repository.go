@@ -1,32 +1,30 @@
-// Package interfaces declares the ports the use cases depend on. Concrete
-// adapters live under pkg/repository and pkg/service.
 package interfaces
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-// Repository is the persistence port, including the realtime change feed
-// (WatchPaper), since the storage itself is the source of change events. Every Get* returns an error wrapping
-// model.ErrNotFound when the entity does not exist. Every Put* validates the
-// entity before writing and stores it as-is (no field-by-field copy, no
-// timestamp stamping: the caller owns CreatedAt / UpdatedAt).
+// Repository is the storage behind papers. Every implementation must pass
+// the contract tests in pkg/repository.
 type Repository interface {
 	UserRepository
 	SessionRepository
 	TokenRepository
-	GroupRepository
 	WorkspaceRepository
 	PaperRepository
 	SearchRepository
+	PinRepository
+	AttachmentRepository
 	Close() error
 }
 
 type UserRepository interface {
 	GetUser(ctx context.Context, id model.UserID) (*model.User, error)
+	GetUsers(ctx context.Context, ids []model.UserID) ([]*model.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*model.User, error)
 	ListUsers(ctx context.Context) ([]*model.User, error)
 	PutUser(ctx context.Context, user *model.User) error
@@ -48,98 +46,128 @@ type TokenRepository interface {
 	DeleteToken(ctx context.Context, id model.TokenID) error
 }
 
-type GroupRepository interface {
-	GetGroup(ctx context.Context, id model.GroupID) (*model.Group, error)
-	ListGroups(ctx context.Context) ([]*model.Group, error)
-	ListGroupsByMember(ctx context.Context, userID model.UserID) ([]*model.Group, error)
-	PutGroup(ctx context.Context, group *model.Group) error
-	DeleteGroup(ctx context.Context, id model.GroupID) error
-}
-
+// WorkspaceRepository keeps the little that is stored about configured
+// workspaces.
 type WorkspaceRepository interface {
-	GetWorkspace(ctx context.Context, id model.WorkspaceID) (*model.Workspace, error)
-	ListWorkspaces(ctx context.Context) ([]*model.Workspace, error)
-	PutWorkspace(ctx context.Context, ws *model.Workspace) error
+	GetWorkspaceRecord(ctx context.Context, ws model.WorkspaceID) (*model.WorkspaceRecord, error)
+	// EnsureHome creates the workspace record and its home paper if the
+	// record does not exist yet, atomically. Calling it again returns the
+	// existing record.
+	EnsureHome(ctx context.Context, ws model.WorkspaceID, home *model.Paper) (*model.WorkspaceRecord, error)
+	// ListWorkspaceRecords lists every workspace that has stored data,
+	// including ones no longer in the configuration.
+	ListWorkspaceRecords(ctx context.Context) ([]*model.WorkspaceRecord, error)
+	GetForward(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (*model.Forward, error)
 }
 
+// PaperRepository stores papers, blocks, versions and the change feed.
 type PaperRepository interface {
-	// CreatePaper stores a new paper with no blocks. It fails with
-	// model.ErrAlreadyExists if the ID is taken.
-	CreatePaper(ctx context.Context, paper *model.Paper) error
 	GetPaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error)
-	ListPapers(ctx context.Context, ws model.WorkspaceID) ([]*model.Paper, error)
-	// UpdatePaperAccess replaces the access settings of an existing paper.
-	UpdatePaperAccess(ctx context.Context, ws model.WorkspaceID, id model.PaperID, access model.PaperAccess, updatedBy model.Actor, updatedAt time.Time) (*model.Paper, error)
-	// DeletePaper removes the paper with its blocks, block versions, commits
-	// and search entries.
-	DeletePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error
+	// GetPapers reads many papers in one round trip. Missing ones are
+	// omitted.
+	GetPapers(ctx context.Context, ws model.WorkspaceID, ids []model.PaperID) ([]*model.Paper, error)
+	// ListChildren lists the papers whose ParentID is parent.
+	ListChildren(ctx context.Context, ws model.WorkspaceID, parent model.PaperID) ([]*model.Paper, error)
+	ListPrivatePapers(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error)
+	// ListTrash lists the owner's papers that are in the trash.
+	ListTrash(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error)
+	// ListTrashedBefore lists papers whose DeletedAt is before t.
+	ListTrashedBefore(ctx context.Context, ws model.WorkspaceID, t time.Time) ([]*model.Paper, error)
+	// PurgePaper removes a paper and everything under it: blocks, versions,
+	// snapshots, events, search entries and attachment metadata.
+	PurgePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error
 
-	GetBlock(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID) (*model.Block, error)
-	// ListBlocks returns every block of a paper, ordered by (ParentID, Order, ID).
+	GetBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, ids []model.BlockID) ([]*model.Block, error)
 	ListBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error)
-	// GetBlockVersion returns the snapshot of a block at a version. Snapshots
-	// outlive the block, so a deleted block's history stays readable.
-	GetBlockVersion(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, version int64) (*model.Block, error)
-	// ListBlockVersions returns a block's snapshots, newest first.
-	ListBlockVersions(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, limit int) ([]*model.Block, error)
-	// ListCommits returns commits newest first. A non-empty before returns
-	// the commits older than that commit (pagination cursor).
-	ListCommits(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, before model.CommitID, limit int) ([]*model.Commit, error)
+	// ListPaperBlocks lists the paper blocks of a paper's body in order:
+	// its children as they are placed.
+	ListPaperBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error)
+	// ListBlocksRange reads up to limit top-level blocks whose order is
+	// after the cursor, with the cells of any tables among them. It returns
+	// the cursor for the next range, or "" at the end.
+	ListBlocksRange(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, after string, limit int) ([]*model.Block, string, error)
 
-	// RunPaperTx runs fn in a transaction scoped to one paper. Writes staged
-	// through tx become visible atomically when fn returns nil and are
-	// discarded otherwise. Implementations may retry fn on contention, so fn
-	// must not have side effects outside tx.
-	RunPaperTx(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, fn func(tx PaperTx) error) error
+	ListVersions(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, before, limit int) ([]*model.Version, error)
+	GetVersion(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, number int) (*model.Version, error)
+	GetSnapshots(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error)
 
-	// WatchPaper streams the paper's changes (blocks and the paper record)
-	// from the moment it returns until ctx is done. The channel is closed
-	// when the watch ends; it is also closed early if the watcher
-	// falls behind, in which case the caller must reload the paper.
-	WatchPaper(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error)
+	// RunTx runs fn in one transaction over the workspace. Reads see the
+	// transaction's own writes. Writes are applied together or not at all.
+	RunTx(ctx context.Context, ws model.WorkspaceID, fn func(tx Tx) error) error
+
+	// PutEvent appends a feed entry outside a transaction (presence).
+	PutEvent(ctx context.Context, ev *model.Event) error
+	// ListEvents lists feed entries of a paper at or after since.
+	ListEvents(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, since time.Time) ([]*model.Event, error)
+	// Watch delivers feed entries of a paper written after the call.
+	Watch(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error)
 }
 
-// PaperTx is the view of one paper inside RunPaperTx. Reads observe writes
-// staged earlier in the same transaction. Sibling order ties are broken by
-// block ID everywhere.
-type PaperTx interface {
-	Paper() *model.Paper
-	GetBlock(id model.BlockID) (*model.Block, error)
-	// FirstAfter returns the first child of parent whose Order is strictly
-	// greater than order ("" = the first child), or nil if there is none.
-	FirstAfter(parent model.BlockID, order string) (*model.Block, error)
-	// Last returns the last child of parent, or nil if it has none.
-	Last(parent model.BlockID) (*model.Block, error)
-	// Children returns all children of parent ordered by Order. Use it only
-	// for containers with bounded children (table cells).
-	Children(parent model.BlockID) ([]*model.Block, error)
-	// BlockVersion returns the snapshot of a block at a version, including
-	// versions written earlier in this transaction. Snapshots outlive the
-	// block, so deleted blocks have them too.
-	BlockVersion(id model.BlockID, version int64) (*model.Block, error)
-	// LatestBlockVersion returns the newest snapshot of a block, live or
-	// deleted; ErrNotFound if the block never existed.
-	LatestBlockVersion(id model.BlockID) (*model.Block, error)
-	// PutBlock stores the block and a snapshot of it under its Version. The
-	// version must not exist yet.
-	PutBlock(block *model.Block) error
-	DeleteBlock(id model.BlockID) error
+// Tx is a transaction over one workspace.
+type Tx interface {
+	GetPaper(id model.PaperID) (*model.Paper, error)
+	GetPapers(ids []model.PaperID) ([]*model.Paper, error)
 	PutPaper(paper *model.Paper) error
-	AddCommit(commit *model.Commit) error
+
+	GetBlock(paper model.PaperID, id model.BlockID) (*model.Block, error)
+	GetBlocks(paper model.PaperID, ids []model.BlockID) ([]*model.Block, error)
+	FirstAfter(paper model.PaperID, parent model.BlockID, order string) (*model.Block, error)
+	Last(paper model.PaperID, parent model.BlockID) (*model.Block, error)
+	Children(paper model.PaperID, parent model.BlockID) ([]*model.Block, error)
+	ListBlocks(paper model.PaperID) ([]*model.Block, error)
+	CountBlocks(paper model.PaperID) (int, error)
+	PutBlock(block *model.Block) error
+	DeleteBlock(paper model.PaperID, id model.BlockID) error
+
+	GetVersion(paper model.PaperID, number int) (*model.Version, error)
+	PutVersion(v *model.Version) error
+	GetSnapshots(paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error)
+	PutSnapshot(paper model.PaperID, s *model.BlockSnapshot) error
+
+	PutForward(f *model.Forward) error
+	AddEvent(ev *model.Event) error
 }
 
-// SearchRepository finds paper titles and blocks by text. Implementations
-// keep the search entries themselves: an entry for the title of every paper
-// and for every block with searchable text (model.NewTitleSearchEntry,
-// model.NewBlockSearchEntry), written with the paper and its blocks in
-// CreatePaper and RunPaperTx, and removed by DeletePaper.
-// The use case layer never scans papers to search.
 type SearchRepository interface {
-	// Search returns the entries of one workspace that match every term of
-	// q, best match first, at most limit (1..model.MaxSearchLimit) entries.
-	// Matching follows model.SearchQuery.Matches; an implementation backed
-	// by a search engine may also match normalized forms of the terms.
-	// Access control is the caller's job: results include entries of
-	// restricted papers.
 	Search(ctx context.Context, ws model.WorkspaceID, q model.SearchQuery, limit int) ([]*model.SearchEntry, error)
+}
+
+type PinRepository interface {
+	ListPins(ctx context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Pin, error)
+	PutPin(ctx context.Context, pin *model.Pin) error
+	DeletePin(ctx context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error
+	GetRecent(ctx context.Context, user model.UserID, ws model.WorkspaceID) (*model.Recent, error)
+	PutRecent(ctx context.Context, r *model.Recent) error
+}
+
+type AttachmentRepository interface {
+	GetAttachment(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.AttachmentID) (*model.Attachment, error)
+	FindAttachmentByHash(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, sha256 string) (*model.Attachment, error)
+	PutAttachment(ctx context.Context, a *model.Attachment) error
+}
+
+// AttachmentStore keeps attachment bytes: Cloud Storage in production, the
+// memory or a local directory in development.
+type AttachmentStore interface {
+	Put(ctx context.Context, key, contentType string, r io.Reader) error
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	Delete(ctx context.Context, key string) error
+	// DeletePrefix deletes every object whose key starts with prefix.
+	DeletePrefix(ctx context.Context, prefix string) error
+	// SignedURL returns a short-lived URL to read the object, or "" when
+	// the store cannot sign; the server then streams the bytes itself.
+	SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+}
+
+// Workspaces is the configured set of workspaces and their access rules.
+type Workspaces interface {
+	// List returns the workspaces in display order.
+	List() []*model.Workspace
+	Get(id model.WorkspaceID) (*model.Workspace, bool)
+	// Groups returns the display groups in order. Workspaces without a
+	// group are not listed in any.
+	Groups() []model.WorkspaceGroup
+	// Allow reports whether the user may use the workspace. An error means
+	// the decision could not be made; callers deny.
+	Allow(ctx context.Context, user *model.User, ws model.WorkspaceID) (bool, error)
 }

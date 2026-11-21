@@ -3,7 +3,7 @@ package config
 import "time"
 
 func NewServerForTest(baseURL string) *Server {
-	return &Server{baseURL: baseURL, workspaceCreation: "everyone", maxOpsPerCommit: 1, paperTouch: time.Minute}
+	return &Server{baseURL: baseURL, maxOpsPerBatch: 1, paperTouch: time.Minute, trashRetention: time.Hour}
 }
 
 func NewAuthForTest(clientID, secret string, noAuthn bool, domains []string) *Auth {
@@ -12,4 +12,12 @@ func NewAuthForTest(clientID, secret string, noAuthn bool, domains []string) *Au
 
 func NewRepositoryForTest(backend, projectID string, buffer int) *Repository {
 	return &Repository{backend: backend, projectID: projectID, eventBuffer: buffer}
+}
+
+func NewWorkspacesForTest(dir, global string) *Workspaces {
+	return &Workspaces{dir: dir, global: global}
+}
+
+func NewAttachmentsForTest(backend, dir string) *Attachments {
+	return &Attachments{backend: backend, dir: dir}
 }

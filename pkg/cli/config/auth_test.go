@@ -16,7 +16,7 @@ func TestAuthConfigure(t *testing.T) {
 	a := gt.R1(config.NewAuthForTest("", "", true, nil).Configure(ctx, memory.New(), "http://localhost")).NoError(t)
 	gt.True(t, a.IsNoAuthn())
 	p := gt.R1(a.DevPrincipal(ctx)).NoError(t)
-	gt.True(t, p.SystemAdmin)
+	gt.Equal(t, p.User.Email, "dev@localhost")
 
 	g := gt.R1(config.NewAuthForTest("id", "secret", false, []string{"example.com"}).Configure(ctx, memory.New(), "https://p.example")).NoError(t)
 	gt.True(t, g.HasProvider())

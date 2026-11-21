@@ -175,33 +175,3 @@ func (t *APIToken) AllowsWorkspace(ws WorkspaceID) bool {
 	}
 	return false
 }
-
-// Group is an organization-wide set of users that can be granted a role on
-// a workspace or a paper. Groups are managed by system administrators.
-type Group struct {
-	ID          GroupID   `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Members     []UserID  `json:"members"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-func (g *Group) Validate() error {
-	if g.ID == "" {
-		return goerr.Wrap(ErrInvalidArgument, "group id is required")
-	}
-	if strings.TrimSpace(g.Name) == "" {
-		return goerr.Wrap(ErrInvalidArgument, "group name is required")
-	}
-	return nil
-}
-
-func (g *Group) HasMember(id UserID) bool {
-	for _, m := range g.Members {
-		if m == id {
-			return true
-		}
-	}
-	return false
-}

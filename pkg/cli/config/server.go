@@ -14,13 +14,13 @@ import (
 
 // Server holds the HTTP server and use case settings.
 type Server struct {
-	addr              string
-	baseURL           string
-	enableMCP         bool
-	wsOrigins         []string
-	workspaceCreation string
-	maxOpsPerCommit   int
-	paperTouch        time.Duration
+	addr           string
+	baseURL        string
+	enableMCP      bool
+	wsOrigins      []string
+	maxOpsPerBatch int
+	paperTouch     time.Duration
+	trashRetention time.Duration
 }
 
 func (x *Server) Flags() []cli.Flag {
@@ -43,18 +43,18 @@ func (x *Server) Flags() []cli.Flag {
 			Usage:   "Extra Origin host patterns accepted for WebSocket upgrades (e.g. localhost:5173 for the Vite dev server)",
 			Sources: cli.EnvVars("PAPERS_WS_ORIGINS"), Destination: &x.wsOrigins,
 		},
-		&cli.StringFlag{
-			Name: "workspace-creation", Category: "editing", Usage: "Who may create workspaces [everyone|admin]",
-			Value: string(usecase.WorkspaceCreationEveryone), Sources: cli.EnvVars("PAPERS_WORKSPACE_CREATION"), Destination: &x.workspaceCreation,
-		},
 		&cli.IntFlag{
-			Name: "max-ops-per-commit", Category: "editing", Usage: "Upper bound of operations in one commit",
-			Value: 200, Sources: cli.EnvVars("PAPERS_MAX_OPS_PER_COMMIT"), Destination: &x.maxOpsPerCommit,
+			Name: "max-ops-per-batch", Category: "editing", Usage: "Upper bound of operations in one request (blocks per batch are capped at 240 regardless)",
+			Value: 300, Sources: cli.EnvVars("PAPERS_MAX_OPS_PER_BATCH"), Destination: &x.maxOpsPerBatch,
 		},
 		&cli.DurationFlag{
 			Name: "paper-touch-interval", Category: "editing",
-			Usage: "Minimum interval between refreshes of a paper's updated time by commits (keeps the paper record off the write hot path)",
+			Usage: "Minimum interval between refreshes of a paper's updated time by writes (keeps the paper document off the write hot path)",
 			Value: time.Minute, Sources: cli.EnvVars("PAPERS_PAPER_TOUCH_INTERVAL"), Destination: &x.paperTouch,
+		},
+		&cli.DurationFlag{
+			Name: "trash-retention", Category: "editing", Usage: "How long papers stay in the trash before they are deleted for good",
+			Value: 30 * 24 * time.Hour, Sources: cli.EnvVars("PAPERS_TRASH_RETENTION"), Destination: &x.trashRetention,
 		},
 	}
 }
@@ -64,7 +64,7 @@ func (x Server) LogValue() slog.Value {
 		slog.String("addr", x.addr),
 		slog.String("base_url", x.baseURL),
 		slog.Bool("enable_mcp", x.enableMCP),
-		slog.String("workspace_creation", x.workspaceCreation),
+		slog.Duration("trash_retention", x.trashRetention),
 	)
 }
 
@@ -76,9 +76,9 @@ func (x *Server) WebSocketOrigins() []string { return x.wsOrigins }
 
 func (x *Server) UseCaseConfig() usecase.Config {
 	return usecase.Config{
-		WorkspaceCreation:  usecase.WorkspaceCreation(x.workspaceCreation),
-		MaxOpsPerCommit:    x.maxOpsPerCommit,
+		MaxOpsPerBatch:     x.maxOpsPerBatch,
 		PaperTouchInterval: x.paperTouch,
+		TrashRetention:     x.trashRetention,
 	}
 }
 

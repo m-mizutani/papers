@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/m-mizutani/goerr/v2"
+	"github.com/m-mizutani/papers/pkg/domain/markup"
 	"golang.org/x/net/html"
 )
 
@@ -63,11 +64,14 @@ func NewBlockSearchEntry(b *Block) *SearchEntry {
 
 // SearchText returns the plain text of a block that search matches against.
 func SearchText(b *Block) string {
-	switch b.Type {
-	case BlockDivider, BlockTable:
+	switch {
+	case b.Type == BlockDivider || b.Type == BlockTable || b.Type == BlockPaper:
 		return ""
-	case BlockHTML, BlockSVG:
+	case b.Type == BlockHTML || b.Type == BlockSVG:
 		return markupText(b.Content)
+	case b.Type.UsesMarkup():
+		// index only what readers see: [必ず]{.red} is "必ず"
+		return strings.TrimSpace(markup.PlainText(b.Content))
 	default:
 		return strings.TrimSpace(b.Content)
 	}

@@ -39,7 +39,6 @@ func newAuth(t *testing.T) (*usecase.Auth, *memory.Repository, *fakeProvider, *c
 	a, err := usecase.NewAuth(repo, fp, usecase.AuthConfig{
 		AllowedDomains: []string{"Example.com"},
 		AllowedEmails:  []string{"guest@other.example"},
-		AdminEmails:    []string{"root@example.com"},
 		SessionTTL:     time.Hour,
 	}, usecase.WithAuthClock(c.Now))
 	gt.NoError(t, err)
@@ -69,7 +68,6 @@ func TestLoginFlow(t *testing.T) {
 	p := gt.R1(a.AuthenticateSession(ctx, cred.ID, cred.Secret)).NoError(t)
 	gt.Equal(t, p.User.Email, "alice@example.com")
 	gt.Equal(t, p.User.Name, "N s1")
-	gt.False(t, p.SystemAdmin)
 
 	// a second login with the same subject keeps the same user
 	cred2 := gt.R1(a.HandleCallback(ctx, "ok", "n")).NoError(t)
@@ -114,9 +112,7 @@ func TestLoginAdmission(t *testing.T) {
 
 	gt.R1(a.HandleCallback(ctx, "guest", "n")).NoError(t)
 
-	cred := gt.R1(a.HandleCallback(ctx, "admin", "n")).NoError(t)
-	p := gt.R1(a.AuthenticateSession(ctx, cred.ID, cred.Secret)).NoError(t)
-	gt.True(t, p.SystemAdmin)
+	gt.R1(a.HandleCallback(ctx, "admin", "n")).NoError(t)
 
 	users := gt.R1(repo.ListUsers(ctx)).NoError(t)
 	gt.A(t, users).Length(2)
@@ -134,17 +130,6 @@ func TestLoginLinksExistingUserByEmail(t *testing.T) {
 	gt.Equal(t, p.User.ID, pre.ID)
 	id := gt.R1(repo.GetIdentity(ctx, model.ProviderGoogle, "s6")).NoError(t)
 	gt.Equal(t, id.UserID, pre.ID)
-}
-
-func TestPrincipalCarriesGroups(t *testing.T) {
-	ctx := context.Background()
-	a, repo, fp, _ := newAuth(t)
-	fp.claims["ok"] = claims("s1", "alice@example.com")
-	cred := gt.R1(a.HandleCallback(ctx, "ok", "n")).NoError(t)
-	p := gt.R1(a.AuthenticateSession(ctx, cred.ID, cred.Secret)).NoError(t)
-	gt.NoError(t, repo.PutGroup(ctx, &model.Group{ID: "g1", Name: "eng", Members: []model.UserID{p.User.ID}}))
-	p = gt.R1(a.AuthenticateSession(ctx, cred.ID, cred.Secret)).NoError(t)
-	gt.Equal(t, p.Groups, []model.GroupID{"g1"})
 }
 
 func TestTokens(t *testing.T) {
@@ -197,7 +182,7 @@ func TestTokens(t *testing.T) {
 func TestDevUser(t *testing.T) {
 	ctx := context.Background()
 	repo := memory.New()
-	a := gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour, AdminEmails: []string{"dev@localhost"}})).NoError(t)
+	a := gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour})).NoError(t)
 	gt.False(t, a.IsNoAuthn())
 	gt.False(t, a.HasProvider())
 	_, err := a.DevPrincipal(ctx)
@@ -209,7 +194,6 @@ func TestDevUser(t *testing.T) {
 	gt.True(t, a.IsNoAuthn())
 	p := gt.R1(a.DevPrincipal(ctx)).NoError(t)
 	gt.Equal(t, p.User.Email, "dev@localhost")
-	gt.True(t, p.SystemAdmin)
 
 	// idempotent across restarts
 	gt.NoError(t, a.EnableDevUser(ctx, "dev@localhost", "Dev"))

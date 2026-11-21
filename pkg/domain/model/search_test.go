@@ -51,7 +51,9 @@ func TestSearchText(t *testing.T) {
 	block := func(typ model.BlockType, content string) *model.Block {
 		return &model.Block{Type: typ, Content: content}
 	}
-	gt.Equal(t, model.SearchText(block(model.BlockParagraph, "  hello **world** ")), "hello **world**")
+	gt.Equal(t, model.SearchText(block(model.BlockParagraph, "  hello **world** and [red]{.red} ")), "hello world and red")
+	gt.Equal(t, model.SearchText(block(model.BlockCode, "  a**b  ")), "a**b")
+	gt.Equal(t, model.SearchText(block(model.BlockPaper, "")), "")
 	gt.Equal(t, model.SearchText(block(model.BlockDivider, "")), "")
 	gt.Equal(t, model.SearchText(block(model.BlockTable, "")), "")
 	gt.Equal(t, model.SearchText(block(model.BlockHTML,
@@ -64,7 +66,7 @@ func TestSearchText(t *testing.T) {
 }
 
 func TestSearchEntries(t *testing.T) {
-	p := &model.Paper{ID: model.NewPaperID(), WorkspaceID: model.NewWorkspaceID(), Title: " Runbook "}
+	p := &model.Paper{ID: model.NewPaperID(), WorkspaceID: "ws", Title: " Runbook "}
 	e := model.NewTitleSearchEntry(p)
 	gt.Equal(t, e.Text, "Runbook")
 	gt.Equal(t, e.BlockID, "")

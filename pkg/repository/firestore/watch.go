@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/m-mizutani/goerr/v2"
@@ -15,16 +16,45 @@ import (
 	"github.com/m-mizutani/papers/pkg/utils/errutil"
 )
 
+// PutEvent appends a feed entry outside a transaction (presence).
+func (r *Repository) PutEvent(ctx context.Context, ev *model.Event) error {
+	if !validKeys(string(ev.WorkspaceID), string(ev.PaperID)) {
+		return notFound("paper", ev.PaperID)
+	}
+	if _, err := r.GetPaper(ctx, ev.WorkspaceID, ev.PaperID); err != nil {
+		return err
+	}
+	if _, err := r.eventsCol(ev.WorkspaceID, ev.PaperID).NewDoc().Create(ctx, newEventDoc(ev)); err != nil {
+		return goerr.Wrap(err, "failed to put event")
+	}
+	return nil
+}
+
+func (r *Repository) ListEvents(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, since time.Time) ([]*model.Event, error) {
+	if _, err := r.GetPaper(ctx, ws, paper); err != nil {
+		return nil, err
+	}
+	q := r.eventsCol(ws, paper).Where("Event.At", ">=", since).OrderBy("Event.At", firestore.Asc)
+	docs, err := all[eventDoc](q.Documents(ctx), "events")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*model.Event, len(docs))
+	for i, d := range docs {
+		ev := d.Event
+		out[i] = &ev
+	}
+	return out, nil
+}
+
 // sink is the channel side of one watch. It closes the channel once: when
-// the watch ends, when the paper is deleted, or when the consumer falls
+// the watch ends, when the paper is purged, or when the consumer falls
 // behind (the consumer then reloads).
 type sink struct {
 	mu     sync.Mutex
 	ch     chan *model.Event
 	closed bool
 	cancel context.CancelFunc
-	ws     model.WorkspaceID
-	paper  model.PaperID
 }
 
 func (s *sink) send(ev *model.Event) bool {
@@ -33,7 +63,6 @@ func (s *sink) send(ev *model.Event) bool {
 	if s.closed {
 		return false
 	}
-	ev.WorkspaceID, ev.PaperID = s.ws, s.paper
 	select {
 	case s.ch <- ev:
 		return true
@@ -61,17 +90,17 @@ func stopped(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || status.Code(err) == codes.Canceled || errors.Is(err, context.Canceled)
 }
 
-// WatchPaper runs two Firestore listeners (the paper document and its
-// blocks) for as long as ctx lives. It returns only after every
-// listener has delivered its initial snapshot, so a caller that reads the
-// paper after WatchPaper returns cannot miss a change in between. The
-// initial snapshots themselves are not forwarded.
-func (r *Repository) WatchPaper(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error) {
-	if validID(string(ws)) != nil || validID(string(paper)) != nil {
+// Watch listens to the paper's feed collection for as long as ctx lives.
+// It returns only after the listener has delivered its initial snapshot, so
+// an entry written after Watch returns is delivered. The initial snapshot
+// itself is not forwarded. The paper document is watched too, so that a
+// purge closes the channel.
+func (r *Repository) Watch(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error) {
+	if !validKeys(string(ws), string(paper)) {
 		return nil, notFound("paper", paper)
 	}
 	wctx, cancel := context.WithCancel(ctx)
-	s := &sink{ch: make(chan *model.Event, r.eventBuffer), cancel: cancel, ws: ws, paper: paper}
+	s := &sink{ch: make(chan *model.Event, r.eventBuffer), cancel: cancel}
 
 	paperIt := r.paperDoc(ws, paper).Snapshots(wctx)
 	first, err := paperIt.Next()
@@ -86,12 +115,18 @@ func (r *Repository) WatchPaper(ctx context.Context, ws model.WorkspaceID, paper
 		return nil, notFound("paper", paper)
 	}
 
-	blocksIt := r.blocksCol(ws, paper).Snapshots(wctx)
-	if _, err := blocksIt.Next(); err != nil {
+	since := time.Now().UTC().Add(-time.Second)
+	eventsIt := r.eventsCol(ws, paper).Where("Event.At", ">=", since).OrderBy("Event.At", firestore.Asc).Snapshots(wctx)
+	initial, err := eventsIt.Next()
+	if err != nil {
 		paperIt.Stop()
-		blocksIt.Stop()
+		eventsIt.Stop()
 		cancel()
-		return nil, goerr.Wrap(err, "failed to watch blocks")
+		return nil, goerr.Wrap(err, "failed to watch events")
+	}
+	seen := map[string]bool{}
+	for _, ch := range initial.Changes {
+		seen[ch.Doc.Ref.ID] = true
 	}
 
 	var wg sync.WaitGroup
@@ -113,16 +148,8 @@ func (r *Repository) WatchPaper(ctx context.Context, ws model.WorkspaceID, paper
 				return nil
 			}
 			if !snap.Exists() {
-				s.send(&model.Event{Type: model.EventPaperDeleted})
+				s.send(&model.Event{Type: model.EventPaperDeleted, WorkspaceID: ws, PaperID: paper, At: time.Now().UTC()})
 				s.close()
-				return nil
-			}
-			var p model.Paper
-			if err := snap.DataTo(&p); err != nil {
-				fail(ctx, goerr.Wrap(err, "failed to decode paper"), "paper")
-				return nil
-			}
-			if !s.send(&model.Event{Type: model.EventPaperUpdated, Paper: &p}) {
 				return nil
 			}
 		}
@@ -130,26 +157,26 @@ func (r *Repository) WatchPaper(ctx context.Context, ws model.WorkspaceID, paper
 
 	async.DispatchCancelable(wctx, func(ctx context.Context) error {
 		defer wg.Done()
-		defer blocksIt.Stop()
+		defer eventsIt.Stop()
 		for {
-			qs, err := blocksIt.Next()
+			qs, err := eventsIt.Next()
 			if err != nil {
-				fail(ctx, err, "blocks")
+				fail(ctx, err, "events")
 				return nil
 			}
 			for _, ch := range qs.Changes {
-				var ev *model.Event
-				if ch.Kind == firestore.DocumentRemoved {
-					ev = &model.Event{Type: model.EventBlockDeleted, BlockID: model.BlockID(ch.Doc.Ref.ID)}
-				} else {
-					var b model.Block
-					if err := ch.Doc.DataTo(&b); err != nil {
-						fail(ctx, goerr.Wrap(err, "failed to decode block"), "blocks")
-						return nil
-					}
-					ev = &model.Event{Type: model.EventBlockPut, Block: &b}
+				// A listener reports each document as added once; only the
+				// entries of the initial snapshot are skipped.
+				if ch.Kind != firestore.DocumentAdded || seen[ch.Doc.Ref.ID] {
+					continue
 				}
-				if !s.send(ev) {
+				d, err := decode[eventDoc](ch.Doc, "event")
+				if err != nil {
+					fail(ctx, err, "events")
+					return nil
+				}
+				ev := d.Event
+				if !s.send(&ev) {
 					return nil
 				}
 			}

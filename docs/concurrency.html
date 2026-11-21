@@ -61,6 +61,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <article class="sheet">
 <h1>同時編集: ロックをやめて版で守る</h1>
 <p class="meta">2026-11-21 決定・実装済み。要点は <code>docs/design.html</code> の「同時編集」にも反映した。</p>
+<p class="callout"><b>2026-11-22: 古い文書</b>。ロックをやめて衝突を一度拒否・強行で上書きする方針はそのままだが、「ブロックの版（base_version）」と commit は廃止した。今は、ブロックごとの内部の更新番号 <code>Rev</code> で衝突を判定し、履歴は明示的に保存された版だけを持つ。正は <a href="https://claude.ai/artifact/6P3KcGTLCYkthWkaaGfuH1#conflict">モデルと概念</a>。</p>
 <nav aria-label="目次"><a href="#decided">決まったこと</a><a href="#gaps">以前の版管理の穴</a><a href="#versions">版管理の仕様</a><a href="#policy">衝突の扱い</a><a href="#editing">編集中の体験</a><a href="#remove">消したもの</a><a href="#open">未決事項</a></nav>
 
 <section id="decided">

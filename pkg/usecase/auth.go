@@ -18,15 +18,14 @@ import (
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-// AuthConfig decides who may sign in and who is a system administrator.
+// AuthConfig decides who may sign in. Which workspaces a signed-in user may
+// use is decided by the workspace configuration, not here.
 type AuthConfig struct {
 	// AllowedDomains admits any verified email in these domains.
 	AllowedDomains []string
 	// AllowedEmails admits these exact addresses.
 	AllowedEmails []string
-	// AdminEmails are system administrators (owners of everything).
-	AdminEmails []string
-	SessionTTL  time.Duration
+	SessionTTL    time.Duration
 }
 
 func normalizeList(xs []string) []string {
@@ -62,7 +61,6 @@ func WithAuthClock(now func() time.Time) AuthOption {
 func NewAuth(repo interfaces.Repository, provider interfaces.IdentityProvider, cfg AuthConfig, opts ...AuthOption) (*Auth, error) {
 	cfg.AllowedDomains = normalizeList(cfg.AllowedDomains)
 	cfg.AllowedEmails = normalizeList(cfg.AllowedEmails)
-	cfg.AdminEmails = normalizeList(cfg.AdminEmails)
 	if provider != nil && len(cfg.AllowedDomains) == 0 && len(cfg.AllowedEmails) == 0 {
 		return nil, goerr.New("at least one allowed domain or email is required")
 	}
@@ -107,10 +105,6 @@ func (a *Auth) allowed(claims *model.ExternalClaims) bool {
 		return true
 	}
 	return slices.Contains(a.cfg.AllowedDomains, model.EmailDomain(email))
-}
-
-func (a *Auth) isAdmin(u *model.User) bool {
-	return slices.Contains(a.cfg.AdminEmails, strings.ToLower(u.Email))
 }
 
 // SessionCredential is what the browser keeps in cookies.
@@ -220,16 +214,8 @@ func (a *Auth) openSession(ctx context.Context, userID model.UserID) (*SessionCr
 	return &SessionCredential{ID: s.ID, Secret: secret, ExpiresAt: s.ExpiresAt}, nil
 }
 
-func (a *Auth) principal(ctx context.Context, user *model.User) (*model.Principal, error) {
-	groups, err := a.repo.ListGroupsByMember(ctx, user.ID)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to list groups of user", goerr.V("user_id", user.ID))
-	}
-	p := &model.Principal{User: user, SystemAdmin: a.isAdmin(user)}
-	for _, g := range groups {
-		p.Groups = append(p.Groups, g.ID)
-	}
-	return p, nil
+func (a *Auth) principal(_ context.Context, user *model.User) (*model.Principal, error) {
+	return &model.Principal{User: user}, nil
 }
 
 // DevPrincipal returns the principal of no-authn mode.
@@ -397,7 +383,7 @@ func (a *Auth) RevokeToken(ctx context.Context, p *model.Principal, id model.Tok
 	if err != nil {
 		return goerr.Wrap(err, "failed to get token", goerr.V("token_id", id))
 	}
-	if tok.UserID != p.User.ID && !p.SystemAdmin {
+	if tok.UserID != p.User.ID {
 		return goerr.Wrap(model.ErrNotFound, "token not found", goerr.V("token_id", id))
 	}
 	if err := a.repo.DeleteToken(ctx, id); err != nil {

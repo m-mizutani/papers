@@ -1,0 +1,13 @@
+# One file = one workspace. Pass the directory with --config.
+[workspace]
+id = "security"           # never change: it is the storage namespace
+name = "Security Team"
+description = """
+Runbooks for on-call and incident retrospectives.
+Write procedures as numbered lists and put commands in code blocks.
+"""                       # agents receive this as the workspace's rules
+emoji = "🛡️"
+language = "ja"
+
+[authz]                   # who may use the workspace; see policies/security.rego
+policy = ["policies/security.rego"]

@@ -2,48 +2,52 @@ package model
 
 import (
 	"strings"
-	"time"
 
 	"github.com/m-mizutani/goerr/v2"
 )
 
-// Workspace is the top-level container of papers and the unit users switch
-// between in the UI. Access is controlled by Bindings.
+// Workspace is defined by a configuration file, not stored data. It is the
+// unit of who can see what: whoever the workspace's rule allows can use
+// every public paper in it.
 type Workspace struct {
-	ID          WorkspaceID   `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description,omitempty"`
-	Emoji       string        `json:"emoji,omitempty"`
-	Bindings    []RoleBinding `json:"bindings"`
-	CreatedBy   UserID        `json:"created_by"`
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
+	ID WorkspaceID `json:"id"`
+	// Name is the display name. It defaults to the ID.
+	Name string `json:"name"`
+	// Description tells people and agents what the workspace collects and
+	// how to write there. Agents receive it as the workspace's rules.
+	Description string `json:"description,omitempty"`
+	Emoji       string `json:"emoji,omitempty"`
+	Color       string `json:"color,omitempty"`
+	// Language is the default language agents should write in.
+	Language string `json:"language,omitempty"`
+	// Group is the display group from the global configuration.
+	Group string `json:"group,omitempty"`
 }
 
+// Validate checks a workspace definition loaded from configuration.
 func (w *Workspace) Validate() error {
-	if w.ID == "" {
-		return goerr.Wrap(ErrInvalidArgument, "workspace id is required")
+	if !ValidWorkspaceID(w.ID) {
+		return goerr.Wrap(ErrInvalidArgument, "workspace id must be lowercase letters, digits and single hyphens, at most 63 characters", goerr.V("id", w.ID))
 	}
 	if strings.TrimSpace(w.Name) == "" {
-		return goerr.Wrap(ErrInvalidArgument, "workspace name is required")
+		return goerr.Wrap(ErrInvalidArgument, "workspace name is required", goerr.V("id", w.ID))
 	}
-	if w.CreatedBy == "" {
-		return goerr.Wrap(ErrInvalidArgument, "workspace creator is required")
-	}
-	if err := validateBindings(w.Bindings); err != nil {
-		return err
-	}
-	hasOwner := false
-	for _, b := range w.Bindings {
-		if b.Role == RoleOwner {
-			hasOwner = true
-			break
-		}
-	}
-	if !hasOwner {
-		// A workspace without an owner can only be recovered by a system
-		// administrator, so refuse to persist one.
-		return goerr.Wrap(ErrInvalidArgument, "workspace must have at least one owner binding")
+	if w.Emoji != "" && w.Color != "" {
+		return goerr.Wrap(ErrInvalidArgument, "set either emoji or color, not both", goerr.V("id", w.ID))
 	}
 	return nil
+}
+
+// WorkspaceRecord is the only stored data about a workspace: which paper is
+// its home.
+type WorkspaceRecord struct {
+	ID          WorkspaceID `json:"id"`
+	HomePaperID PaperID     `json:"home_paper_id"`
+}
+
+// WorkspaceGroup is a display group of workspaces from the global
+// configuration. It has no effect on access.
+type WorkspaceGroup struct {
+	Name       string        `json:"name"`
+	Workspaces []WorkspaceID `json:"workspaces"`
 }

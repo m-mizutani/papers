@@ -10,6 +10,8 @@ type ActorKind string
 const (
 	ActorHuman ActorKind = "human"
 	ActorAgent ActorKind = "agent"
+	// ActorSystem is papers itself; it creates the home papers at startup.
+	ActorSystem ActorKind = "system"
 )
 
 // Actor is who performed a change. UserID is always set: an agent always acts
@@ -25,6 +27,8 @@ type Actor struct {
 func (a Actor) Validate() error {
 	switch a.Kind {
 	case ActorHuman, ActorAgent:
+	case ActorSystem:
+		return nil
 	default:
 		return goerr.Wrap(ErrInvalidArgument, "invalid actor kind", goerr.V("kind", a.Kind))
 	}

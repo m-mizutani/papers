@@ -1,43 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import type { Block, CommitResult, Conflict, PaperView } from '../api/types'
+import type { BatchResult, Block, Conflict, Paper } from '../api/types'
 import { handle } from './server'
 
 const call = (method: string, path: string, body?: unknown) => handle(method, new URL(`http://demo${path}`), body)
 
 function setup() {
-  const ws = (call('GET', '/api/v1/workspaces').json as { workspaces: { id: string }[] }).workspaces[0]?.id ?? ''
-  const view = call('POST', `/api/v1/workspaces/${ws}/papers`, { title: 'T' }).json as PaperView
-  const base = `/api/v1/workspaces/${ws}/papers/${view.paper.id}`
-  const commit = (ops: unknown[], force = false) => call('POST', `${base}/commits`, { ops, force, message: '' })
-  const r = commit([{ op: 'insert', type: 'paragraph', content: 'v1' }]).json as CommitResult
-  return { commit, block: r.blocks[0] as Block }
+  const paper = call('POST', '/api/v1/workspaces/security/papers', { title: 'T' }).json as Paper
+  const base = `/api/v1/workspaces/security/papers/${paper.id}`
+  const ops = (list: unknown[], force = false) => call('POST', `${base}/ops`, { ops: list, force })
+  const r = ops([{ op: 'insert', ref: 'n1', type: 'paragraph', content: 'v1' }]).json as BatchResult
+  return { base, ops, block: r.blocks?.[0] as Block, refs: r.refs ?? {} }
 }
 
-describe('demo commits', () => {
-  it('rejects a stale base with the current state, and overwrites when forced', () => {
-    const { commit, block } = setup()
-    expect(commit([{ op: 'update', block_id: block.id, content: 'x' }]).status).toBe(400)
-    expect(commit([{ op: 'update', block_id: block.id, content: 'theirs', base_version: 1 }]).status).toBe(200)
+describe('demo ops', () => {
+  it('issues IDs for refs', () => {
+    const { block, refs } = setup()
+    expect(refs.n1).toBe(block.id)
+    expect(block.id).toHaveLength(22)
+  })
 
-    const res = commit([{ op: 'update', block_id: block.id, content: 'mine', base_version: 1 }])
+  it('rejects a stale base with the current state, and overwrites when forced', () => {
+    const { ops, block } = setup()
+    expect(ops([{ op: 'update', block_id: block.id, content: 'x' }]).status).toBe(400)
+    expect(ops([{ op: 'update', block_id: block.id, content: 'theirs', base_rev: 1 }]).status).toBe(200)
+    const res = ops([{ op: 'update', block_id: block.id, content: 'mine', base_rev: 1 }])
     expect(res.status).toBe(409)
     const conflicts = (res.json as { error: { conflicts: Conflict[] } }).error.conflicts
     expect(conflicts[0]?.current?.content).toBe('theirs')
-
-    const forced = commit([{ op: 'update', block_id: block.id, content: 'mine', base_version: 1 }], true).json as CommitResult
-    expect(forced.commit?.changes[0]?.overwrote_version).toBe(2)
+    const forced = ops([{ op: 'update', block_id: block.id, content: 'mine', base_rev: 1 }], true).json as BatchResult
+    expect(forced.blocks?.[0]?.rev).toBe(3)
   })
 
-  it('does not treat moves as conflicts and restores old versions', () => {
-    const { commit, block } = setup()
-    commit([{ op: 'insert', type: 'paragraph', content: 'other' }])
-    commit([{ op: 'move', block_id: block.id }])
-    expect(commit([{ op: 'update', block_id: block.id, content: 'v3', base_version: 1 }]).status).toBe(200)
-
-    const r = commit([{ op: 'restore', block_id: block.id, version: 1, base_version: 3 }]).json as CommitResult
-    expect(r.blocks[0]?.content).toBe('v1')
-    commit([{ op: 'delete', block_id: block.id, base_version: 4 }])
-    const back = commit([{ op: 'restore', block_id: block.id, version: 3 }]).json as CommitResult
-    expect(back.blocks[0]?.content).toBe('v3')
+  it('saves versions only when asked and when something changed', () => {
+    const { base, ops, block } = setup()
+    const v1 = call('POST', `${base}/versions`, { note: 'first' }).json as { version: { number: number } }
+    expect(v1.version.number).toBe(1)
+    expect((call('POST', `${base}/versions`, {}).json as { version: unknown }).version).toBeNull()
+    ops([{ op: 'update', block_id: block.id, content: 'changed', base_rev: 1 }])
+    expect((call('GET', `${base}/status`).json as { changed: boolean }).changed).toBe(true)
   })
 })

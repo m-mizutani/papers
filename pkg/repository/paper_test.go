@@ -6,181 +6,231 @@ import (
 	"testing"
 	"time"
 
-	"github.com/m-mizutani/goerr/v2"
 	"github.com/m-mizutani/gt"
 
 	"github.com/m-mizutani/papers/pkg/domain/interfaces"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-func newPaper(t *testing.T, repo interfaces.Repository) *model.Paper {
-	t.Helper()
+func newWorkspaceID() model.WorkspaceID { return model.WorkspaceID(uniq("ws")) }
+
+func paperIn(ws model.WorkspaceID, parent model.PaperID, title string) *model.Paper {
 	now := time.Now().UTC()
 	actor := humanActor(model.NewUserID())
-	p := &model.Paper{
-		ID: model.NewPaperID(), WorkspaceID: model.NewWorkspaceID(), Title: "Design",
-		Access:    model.PaperAccess{Restricted: true, Bindings: []model.RoleBinding{{Subject: model.Subject{Kind: model.SubjectGroup, ID: "g"}, Role: model.RoleEditor}}},
-		CreatedBy: actor, CreatedAt: now, UpdatedBy: actor, UpdatedAt: now,
+	return &model.Paper{
+		ID: model.NewPaperID(), WorkspaceID: ws, Title: title, ParentID: parent,
+		Visibility: model.VisibilityPublic,
+		CreatedBy:  actor, CreatedAt: now, UpdatedBy: actor, UpdatedAt: now,
 	}
-	gt.NoError(t, repo.CreatePaper(context.Background(), p))
-	return p
 }
 
-func newBlock(p *model.Paper, order string, content string) *model.Block {
+func blockIn(p *model.Paper, parent model.BlockID, order, content string) *model.Block {
 	now := time.Now().UTC()
 	return &model.Block{
-		ID: model.NewBlockID(), WorkspaceID: p.WorkspaceID, PaperID: p.ID,
-		Order: order, Type: model.BlockParagraph, Content: content, Version: 1,
+		ID: model.NewBlockID(), WorkspaceID: p.WorkspaceID, PaperID: p.ID, ParentID: parent,
+		Order: order, Type: model.BlockParagraph, Content: content, Rev: 1,
 		CreatedBy: p.CreatedBy, CreatedAt: now, UpdatedBy: p.CreatedBy, UpdatedAt: now,
 	}
 }
 
-func commitFor(p *model.Paper, at time.Time, changes ...model.Change) *model.Commit {
-	return &model.Commit{
-		ID: model.NewCommitID(), WorkspaceID: p.WorkspaceID, PaperID: p.ID,
-		Actor: p.CreatedBy, Message: "m", Changes: changes, CreatedAt: at,
-	}
+// homeAndChild creates a workspace with a home and one public child paper.
+func homeAndChild(t *testing.T, repo interfaces.Repository) (home, child *model.Paper) {
+	t.Helper()
+	ctx := context.Background()
+	ws := newWorkspaceID()
+	home = paperIn(ws, "", "Home")
+	gt.R1(repo.EnsureHome(ctx, ws, home)).NoError(t)
+	child = paperIn(ws, home.ID, "Design")
+	gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+		if err := tx.PutPaper(child); err != nil {
+			return err
+		}
+		return tx.PutBlock(paperLink(home, child, "a1"))
+	}))
+	return home, child
 }
 
-func TestPaperRepository(t *testing.T) {
-	runRepositoryTest(t, "create and get", func(t *testing.T, repo interfaces.Repository) {
+func paperLink(parent, child *model.Paper, order string) *model.Block {
+	b := blockIn(parent, "", order, "")
+	b.Type = model.BlockPaper
+	b.Props = model.BlockProps{PaperID: child.ID}
+	return b
+}
+
+func TestWorkspaceRecords(t *testing.T) {
+	runRepositoryTest(t, "ensure home is idempotent", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		got := gt.R1(repo.GetPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		gt.Equal(t, got.Title, p.Title)
-		gt.Equal(t, got.Access, p.Access)
-		gt.Equal(t, got.CreatedBy, p.CreatedBy)
-		gt.Equal(t, got.UpdatedBy, p.UpdatedBy)
-		gt.True(t, timeEq(got.CreatedAt, p.CreatedAt))
-		gt.True(t, timeEq(got.UpdatedAt, p.UpdatedAt))
+		ws := newWorkspaceID()
+		home := paperIn(ws, "", "Home")
+		rec := gt.R1(repo.EnsureHome(ctx, ws, home)).NoError(t)
+		gt.Equal(t, rec.HomePaperID, home.ID)
 
-		err := repo.CreatePaper(ctx, p)
-		gt.True(t, errors.Is(err, model.ErrAlreadyExists))
+		again := gt.R1(repo.EnsureHome(ctx, ws, paperIn(ws, "", "Other"))).NoError(t)
+		gt.Equal(t, again.HomePaperID, home.ID)
 
-		list := gt.R1(repo.ListPapers(ctx, p.WorkspaceID)).NoError(t)
-		gt.A(t, list).Length(1)
-		other := gt.R1(repo.ListPapers(ctx, model.NewWorkspaceID())).NoError(t)
-		gt.A(t, other).Length(0)
+		got := gt.R1(repo.GetWorkspaceRecord(ctx, ws)).NoError(t)
+		gt.Equal(t, got.HomePaperID, home.ID)
+		gt.R1(repo.GetPaper(ctx, ws, home.ID)).NoError(t)
+
+		list := gt.R1(repo.ListWorkspaceRecords(ctx)).NoError(t)
+		found := false
+		for _, r := range list {
+			found = found || r.ID == ws
+		}
+		gt.True(t, found)
+
+		_, err := repo.GetWorkspaceRecord(ctx, newWorkspaceID())
+		gt.True(t, errors.Is(err, model.ErrNotFound))
 	})
+}
 
-	runRepositoryTest(t, "paper is scoped by workspace", func(t *testing.T, repo interfaces.Repository) {
-		p := newPaper(t, repo)
-		_, err := repo.GetPaper(context.Background(), model.NewWorkspaceID(), p.ID)
+func TestPaperTree(t *testing.T) {
+	runRepositoryTest(t, "children, private and batch reads", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		home, child := homeAndChild(t, repo)
+		ws := home.WorkspaceID
+
+		private := paperIn(ws, "", "Memo")
+		private.Visibility = model.VisibilityPrivate
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(private) }))
+
+		children := gt.R1(repo.ListChildren(ctx, ws, home.ID)).NoError(t)
+		gt.A(t, children).Length(1)
+		gt.Equal(t, children[0].ID, child.ID)
+
+		mine := gt.R1(repo.ListPrivatePapers(ctx, ws, private.Owner())).NoError(t)
+		gt.A(t, mine).Length(1)
+		gt.Equal(t, mine[0].ID, private.ID)
+		others := gt.R1(repo.ListPrivatePapers(ctx, ws, child.Owner())).NoError(t)
+		gt.A(t, others).Length(0)
+
+		got := gt.R1(repo.GetPapers(ctx, ws, []model.PaperID{child.ID, model.NewPaperID(), home.ID})).NoError(t)
+		gt.A(t, got).Length(2)
+
+		_, err := repo.GetPaper(ctx, ws, model.NewPaperID())
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+		// another workspace does not see the paper
+		_, err = repo.GetPaper(ctx, newWorkspaceID(), child.ID)
 		gt.True(t, errors.Is(err, model.ErrNotFound))
 	})
 
-	runRepositoryTest(t, "transaction applies blocks, paper and commit atomically", func(t *testing.T, repo interfaces.Repository) {
+	runRepositoryTest(t, "trash and purge", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		b1 := newBlock(p, "V", "first")
-		b2 := newBlock(p, "k", "second")
-		b2.Props = model.BlockProps{} // explicit zero props round-trip
+		home, child := homeAndChild(t, repo)
+		ws := home.WorkspaceID
+		b := blockIn(child, "", "a1", "hello")
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutBlock(b) }))
 
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			gt.Equal(t, tx.Paper().ID, p.ID)
-			if err := tx.PutBlock(b1); err != nil {
-				return err
+		past := time.Now().UTC().Add(-31 * 24 * time.Hour)
+		child.DeletedAt = &past
+		child.DeletedWith = child.ID
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(child) }))
+
+		trash := gt.R1(repo.ListTrash(ctx, ws, child.Owner())).NoError(t)
+		gt.A(t, trash).Length(1)
+		old := gt.R1(repo.ListTrashedBefore(ctx, ws, time.Now().Add(-30*24*time.Hour))).NoError(t)
+		gt.A(t, old).Length(1)
+
+		gt.NoError(t, repo.PurgePaper(ctx, ws, child.ID))
+		_, err := repo.GetPaper(ctx, ws, child.ID)
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+		_, err = repo.ListBlocks(ctx, ws, child.ID)
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+		hits := gt.R1(repo.Search(ctx, ws, mustQuery(t, "hello"), 10)).NoError(t)
+		gt.A(t, hits).Length(0)
+	})
+}
+
+func TestBlocks(t *testing.T) {
+	runRepositoryTest(t, "transaction reads its own writes", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		_, p := homeAndChild(t, repo)
+		ws := p.WorkspaceID
+		a := blockIn(p, "", "a1", "A")
+		c := blockIn(p, "", "a3", "C")
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			for _, b := range []*model.Block{a, c} {
+				if err := tx.PutBlock(b); err != nil {
+					return err
+				}
 			}
-			if err := tx.PutBlock(b2); err != nil {
-				return err
-			}
-			// staged writes are visible inside the transaction
-			children, err := tx.Children("")
+			next, err := tx.FirstAfter(p.ID, "", "a1")
 			if err != nil {
 				return err
 			}
-			gt.A(t, children).Length(2)
-			gt.Equal(t, children[0].ID, b1.ID)
-
-			paper := tx.Paper()
-			paper.Title = "Renamed"
-			if err := tx.PutPaper(paper); err != nil {
-				return err
+			if next == nil || next.ID != c.ID {
+				return errors.New("FirstAfter did not see the staged block")
 			}
-			return tx.AddCommit(commitFor(p, time.Now().UTC(), model.Change{Kind: model.ChangeInsert, BlockID: b1.ID, ToVersion: 1}))
+			last, err := tx.Last(p.ID, "")
+			if err != nil || last == nil || last.ID != c.ID {
+				return errors.New("Last did not see the staged block")
+			}
+			n, err := tx.CountBlocks(p.ID)
+			if err != nil || n != 2 {
+				return errors.New("CountBlocks did not see the staged blocks")
+			}
+			return nil
 		}))
 
-		got := gt.R1(repo.GetPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		gt.Equal(t, got.Title, "Renamed")
-
-		blocks := gt.R1(repo.ListBlocks(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		gt.A(t, blocks).Length(2)
-		gt.Equal(t, blocks[0].ID, b1.ID) // "V" < "k"
-		gt.Equal(t, blocks[0].Content, "first")
-		gt.Equal(t, blocks[0].Type, b1.Type)
-		gt.Equal(t, blocks[0].Order, b1.Order)
-		gt.Equal(t, blocks[0].Version, b1.Version)
-		gt.Equal(t, blocks[0].CreatedBy, b1.CreatedBy)
-		gt.Equal(t, blocks[0].UpdatedBy, b1.UpdatedBy)
-		gt.True(t, timeEq(blocks[0].CreatedAt, b1.CreatedAt))
-		gt.True(t, timeEq(blocks[0].UpdatedAt, b1.UpdatedAt))
-
-		single := gt.R1(repo.GetBlock(ctx, p.WorkspaceID, p.ID, b2.ID)).NoError(t)
-		gt.Equal(t, single.Content, "second")
-		gt.Equal(t, single.Props, b2.Props)
-		_, err := repo.GetBlock(ctx, p.WorkspaceID, p.ID, model.NewBlockID())
-		gt.True(t, errors.Is(err, model.ErrNotFound))
-
-		commits := gt.R1(repo.ListCommits(ctx, p.WorkspaceID, p.ID, "", 10)).NoError(t)
-		gt.A(t, commits).Length(1)
-		gt.Equal(t, commits[0].Message, "m")
-		gt.Equal(t, commits[0].Actor, p.CreatedBy)
-		gt.Equal(t, commits[0].Changes, []model.Change{{Kind: model.ChangeInsert, BlockID: b1.ID, ToVersion: 1}})
-
-		// every put also wrote a version snapshot
-		v := gt.R1(repo.GetBlockVersion(ctx, p.WorkspaceID, p.ID, b1.ID, 1)).NoError(t)
-		gt.Equal(t, v.Content, "first")
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			if err := tx.DeleteBlock(p.ID, a.ID); err != nil {
+				return err
+			}
+			if _, err := tx.GetBlock(p.ID, a.ID); !errors.Is(err, model.ErrNotFound) {
+				return errors.New("deleted block is still visible")
+			}
+			children, err := tx.Children(p.ID, "")
+			if err != nil || len(children) != 1 {
+				return errors.New("Children did not drop the deleted block")
+			}
+			return nil
+		}))
+		list := gt.R1(repo.ListBlocks(ctx, ws, p.ID)).NoError(t)
+		gt.A(t, list).Length(1)
+		gt.Equal(t, list[0].ID, c.ID)
+		got := gt.R1(repo.GetBlocks(ctx, ws, p.ID, []model.BlockID{c.ID, a.ID})).NoError(t)
+		gt.A(t, got).Length(1)
 	})
 
-	runRepositoryTest(t, "failed transaction leaves nothing behind", func(t *testing.T, repo interfaces.Repository) {
+	runRepositoryTest(t, "failed transaction writes nothing", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		boom := goerr.New("boom")
-		err := repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			if err := tx.PutBlock(newBlock(p, "V", "x")); err != nil {
+		_, p := homeAndChild(t, repo)
+		boom := errors.New("boom")
+		err := repo.RunTx(ctx, p.WorkspaceID, func(tx interfaces.Tx) error {
+			if err := tx.PutBlock(blockIn(p, "", "a1", "x")); err != nil {
 				return err
 			}
 			return boom
 		})
 		gt.True(t, errors.Is(err, boom))
-		blocks := gt.R1(repo.ListBlocks(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		gt.A(t, blocks).Length(0)
+		list := gt.R1(repo.ListBlocks(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		gt.A(t, list).Length(0)
 	})
 
-	runRepositoryTest(t, "block versions are immutable and kept after delete", func(t *testing.T, repo interfaces.Repository) {
+	runRepositoryTest(t, "block of an unknown paper rejected", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		b := newBlock(p, "V", "v1")
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b) }))
-		b2 := b.Clone()
-		b2.Content, b2.Version = "v2", 2
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b2) }))
-
-		// writing an existing version again is refused
-		err := repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b) })
-		gt.True(t, errors.Is(err, model.ErrAlreadyExists))
-		cur := gt.R1(repo.GetBlock(ctx, p.WorkspaceID, p.ID, b.ID)).NoError(t)
-		gt.Equal(t, cur.Content, "v2")
-
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.DeleteBlock(b.ID) }))
-		vs := gt.R1(repo.ListBlockVersions(ctx, p.WorkspaceID, p.ID, b.ID, 10)).NoError(t)
-		gt.A(t, vs).Length(2)
-		gt.Equal(t, vs[0].Content, "v2")
-		gt.Equal(t, vs[1].Content, "v1")
-		gt.A(t, gt.R1(repo.ListBlockVersions(ctx, p.WorkspaceID, p.ID, b.ID, 1)).NoError(t)).Length(1)
-
-		_, err = repo.GetBlockVersion(ctx, p.WorkspaceID, p.ID, b.ID, 3)
-		gt.True(t, errors.Is(err, model.ErrNotFound))
+		_, p := homeAndChild(t, repo)
+		other := paperIn(p.WorkspaceID, "", "ghost")
+		err := repo.RunTx(ctx, p.WorkspaceID, func(tx interfaces.Tx) error {
+			return tx.PutBlock(blockIn(other, "", "a1", "x"))
+		})
+		gt.Error(t, err)
 	})
 
-	runRepositoryTest(t, "sibling queries see staged writes", func(t *testing.T, repo interfaces.Repository) {
+	runRepositoryTest(t, "range reads include table cells", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		a, c, e := newBlock(p, "a", "a"), newBlock(p, "c", "c"), newBlock(p, "e", "e")
-		cell := newBlock(p, "V", "cell")
-		cell.Type, cell.ParentID = model.BlockTableCell, a.ID
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			for _, b := range []*model.Block{a, c, e, cell} {
+		_, p := homeAndChild(t, repo)
+		ws := p.WorkspaceID
+		row, col := model.TableLine{ID: model.NewLineID(), Order: "a1"}, model.TableLine{ID: model.NewLineID(), Order: "a1"}
+		table := blockIn(p, "", "a2", "")
+		table.Type = model.BlockTable
+		table.Props = model.BlockProps{Rows: []model.TableLine{row}, Cols: []model.TableLine{col}}
+		cell := blockIn(p, table.ID, "a1", "cell")
+		cell.Type = model.BlockTableCell
+		cell.Props = model.BlockProps{RowID: row.ID, ColID: col.ID}
+		blocks := []*model.Block{blockIn(p, "", "a1", "one"), table, cell, blockIn(p, "", "a3", "three")}
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			for _, b := range blocks {
 				if err := tx.PutBlock(b); err != nil {
 					return err
 				}
@@ -188,148 +238,143 @@ func TestPaperRepository(t *testing.T) {
 			return nil
 		}))
 
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			first := gt.R1(tx.FirstAfter("", "")).NoError(t)
-			gt.Equal(t, first.ID, a.ID)
-			gt.Equal(t, gt.R1(tx.FirstAfter("", "a")).NoError(t).ID, c.ID)
-			gt.Equal(t, gt.R1(tx.Last("")).NoError(t).ID, e.ID)
-			gt.Nil(t, gt.R1(tx.FirstAfter("", "e")).NoError(t))
-			gt.Equal(t, gt.R1(tx.Last(a.ID)).NoError(t).ID, cell.ID)
-			gt.Nil(t, gt.R1(tx.Last(c.ID)).NoError(t))
-
-			// stage: delete c, insert d, move e before a
-			gt.NoError(t, tx.DeleteBlock(c.ID))
-			d := newBlock(p, "d", "d")
-			gt.NoError(t, tx.PutBlock(d))
-			e2 := e.Clone()
-			e2.Order, e2.Version = "0V", 2
-			gt.NoError(t, tx.PutBlock(e2))
-
-			gt.Equal(t, gt.R1(tx.FirstAfter("", "a")).NoError(t).ID, d.ID)
-			gt.Equal(t, gt.R1(tx.FirstAfter("", "")).NoError(t).ID, e.ID)
-			gt.Equal(t, gt.R1(tx.Last("")).NoError(t).ID, d.ID)
-			children := gt.R1(tx.Children("")).NoError(t)
-			gt.A(t, children).Length(3)
-			gt.Equal(t, children[0].ID, e.ID)
-			gt.Equal(t, children[2].ID, d.ID)
-			return nil
-		}))
+		first, next := gt.R2(repo.ListBlocksRange(ctx, ws, p.ID, "", 2)).NoError(t)
+		gt.A(t, first).Length(3) // one, table and its cell
+		gt.Equal(t, next, "a2")
+		rest, end := gt.R2(repo.ListBlocksRange(ctx, ws, p.ID, next, 2)).NoError(t)
+		gt.A(t, rest).Length(1)
+		gt.Equal(t, rest[0].Content, "three")
+		gt.Equal(t, end, "")
 	})
+}
 
-	runRepositoryTest(t, "delete block in transaction", func(t *testing.T, repo interfaces.Repository) {
+func TestVersions(t *testing.T) {
+	runRepositoryTest(t, "save, list and read snapshots", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		b := newBlock(p, "V", "x")
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			return tx.PutBlock(b)
-		}))
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			if err := tx.DeleteBlock(b.ID); err != nil {
+		_, p := homeAndChild(t, repo)
+		ws := p.WorkspaceID
+		b := blockIn(p, "", "a1", "draft")
+		snap := model.SnapshotOf(b)
+		now := time.Now().UTC()
+		v1 := &model.Version{
+			WorkspaceID: ws, PaperID: p.ID, Number: 1, Title: p.Title,
+			Blocks:    []model.VersionBlock{{BlockID: b.ID, Rev: b.Rev, Order: b.Order}},
+			CreatedBy: p.CreatedBy, CreatedAt: now,
+		}
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			if err := tx.PutBlock(b); err != nil {
 				return err
 			}
-			_, err := tx.GetBlock(b.ID)
-			gt.True(t, errors.Is(err, model.ErrNotFound))
-			return nil
+			if err := tx.PutSnapshot(p.ID, snap); err != nil {
+				return err
+			}
+			got, err := tx.GetSnapshots(p.ID, []model.SnapshotRef{{BlockID: b.ID, Rev: 1}})
+			if err != nil || len(got) != 1 {
+				return errors.New("staged snapshot not visible")
+			}
+			return tx.PutVersion(v1)
 		}))
-		blocks := gt.R1(repo.ListBlocks(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		gt.A(t, blocks).Length(0)
-	})
 
-	runRepositoryTest(t, "block of another paper rejected", func(t *testing.T, repo interfaces.Repository) {
-		ctx := context.Background()
-		p := newPaper(t, repo)
-		other := newPaper(t, repo)
-		err := repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			return tx.PutBlock(newBlock(other, "V", "x"))
-		})
-		gt.Error(t, err)
-	})
+		v2 := *v1
+		v2.Number, v2.Note, v2.CreatedAt = 2, "second", now.Add(time.Second)
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutVersion(&v2) }))
 
-	runRepositoryTest(t, "list commits newest first with cursor", func(t *testing.T, repo interfaces.Repository) {
+		err := repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutVersion(v1) })
+		gt.True(t, errors.Is(err, model.ErrAlreadyExists))
+
+		list := gt.R1(repo.ListVersions(ctx, ws, p.ID, 0, 10)).NoError(t)
+		gt.A(t, list).Length(2)
+		gt.Equal(t, list[0].Number, 2)
+		older := gt.R1(repo.ListVersions(ctx, ws, p.ID, 2, 10)).NoError(t)
+		gt.A(t, older).Length(1)
+
+		got := gt.R1(repo.GetVersion(ctx, ws, p.ID, 2)).NoError(t)
+		gt.Equal(t, got.Note, "second")
+		gt.Equal(t, got.Blocks, v1.Blocks)
+		snaps := gt.R1(repo.GetSnapshots(ctx, ws, p.ID, []model.SnapshotRef{got.Blocks[0].Ref()})).NoError(t)
+		gt.A(t, snaps).Length(1)
+		gt.Equal(t, snaps[0].Content, "draft")
+
+		_, err = repo.GetVersion(ctx, ws, p.ID, 9)
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+	})
+}
+
+func TestForwards(t *testing.T) {
+	runRepositoryTest(t, "forward record", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		base := time.Now().UTC()
-		var ids []model.CommitID
-		for i := 0; i < 5; i++ {
-			b := newBlock(p, "V", "x")
-			c := commitFor(p, base.Add(time.Duration(i)*time.Second), model.Change{Kind: model.ChangeInsert, BlockID: b.ID, ToVersion: 1})
-			ids = append(ids, c.ID)
-			gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.AddCommit(c) }))
+		_, p := homeAndChild(t, repo)
+		to := newWorkspaceID()
+		f := &model.Forward{WorkspaceID: p.WorkspaceID, PaperID: p.ID, ToWorkspaceID: to, ToPaperID: model.NewPaperID(), MovedAt: time.Now().UTC()}
+		gt.NoError(t, repo.RunTx(ctx, p.WorkspaceID, func(tx interfaces.Tx) error { return tx.PutForward(f) }))
+		got := gt.R1(repo.GetForward(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		gt.Equal(t, got.ToWorkspaceID, to)
+		gt.Equal(t, got.ToPaperID, f.ToPaperID)
+		_, err := repo.GetForward(ctx, p.WorkspaceID, model.NewPaperID())
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+	})
+}
+
+func TestPinsAndRecents(t *testing.T) {
+	runRepositoryTest(t, "pins and recents", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		home, child := homeAndChild(t, repo)
+		ws, user := home.WorkspaceID, model.NewUserID()
+		gt.NoError(t, repo.PutPin(ctx, &model.Pin{UserID: user, WorkspaceID: ws, PaperID: child.ID, Order: "a2"}))
+		gt.NoError(t, repo.PutPin(ctx, &model.Pin{UserID: user, WorkspaceID: ws, PaperID: home.ID, Order: "a1"}))
+		pins := gt.R1(repo.ListPins(ctx, user, ws)).NoError(t)
+		gt.A(t, pins).Length(2)
+		gt.Equal(t, pins[0].PaperID, home.ID)
+		gt.NoError(t, repo.DeletePin(ctx, user, ws, home.ID))
+		pins = gt.R1(repo.ListPins(ctx, user, ws)).NoError(t)
+		gt.A(t, pins).Length(1)
+
+		empty := gt.R1(repo.GetRecent(ctx, user, ws)).NoError(t)
+		gt.A(t, empty.PaperIDs).Length(0)
+		rec := &model.Recent{UserID: user, WorkspaceID: ws}
+		rec.Touch(child.ID, time.Now().UTC())
+		gt.NoError(t, repo.PutRecent(ctx, rec))
+		got := gt.R1(repo.GetRecent(ctx, user, ws)).NoError(t)
+		gt.Equal(t, got.PaperIDs, []model.PaperID{child.ID})
+	})
+}
+
+func TestAttachments(t *testing.T) {
+	runRepositoryTest(t, "metadata", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		_, p := homeAndChild(t, repo)
+		a := &model.Attachment{
+			ID: model.NewAttachmentID(), WorkspaceID: p.WorkspaceID, PaperID: p.ID,
+			ContentType: "image/png", Size: 10, SHA256: "abc", Name: "a.png",
+			CreatedBy: p.CreatedBy, CreatedAt: time.Now().UTC(),
 		}
-		page := gt.R1(repo.ListCommits(ctx, p.WorkspaceID, p.ID, "", 2)).NoError(t)
-		gt.A(t, page).Length(2)
-		gt.Equal(t, page[0].ID, ids[4])
-		gt.Equal(t, page[1].ID, ids[3])
-		next := gt.R1(repo.ListCommits(ctx, p.WorkspaceID, p.ID, page[1].ID, 10)).NoError(t)
-		gt.A(t, next).Length(3)
-		gt.Equal(t, next[2].ID, ids[0])
-
-		_, err := repo.ListCommits(ctx, p.WorkspaceID, p.ID, model.NewCommitID(), 10)
+		gt.NoError(t, repo.PutAttachment(ctx, a))
+		got := gt.R1(repo.GetAttachment(ctx, p.WorkspaceID, p.ID, a.ID)).NoError(t)
+		gt.Equal(t, got.SHA256, "abc")
+		byHash := gt.R1(repo.FindAttachmentByHash(ctx, p.WorkspaceID, p.ID, "abc")).NoError(t)
+		gt.Equal(t, byHash.ID, a.ID)
+		_, err := repo.FindAttachmentByHash(ctx, p.WorkspaceID, p.ID, "zzz")
 		gt.True(t, errors.Is(err, model.ErrNotFound))
 	})
+}
 
-	runRepositoryTest(t, "update access", func(t *testing.T, repo interfaces.Repository) {
+func TestPaperBlocks(t *testing.T) {
+	runRepositoryTest(t, "paper blocks in body order", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
-		p := newPaper(t, repo)
-		later := time.Now().UTC().Add(time.Minute)
-		by := humanActor(model.NewUserID())
-		access := model.PaperAccess{Restricted: false}
-		got := gt.R1(repo.UpdatePaperAccess(ctx, p.WorkspaceID, p.ID, access, by, later)).NoError(t)
-		gt.Equal(t, got.Access.Restricted, false)
-		stored := gt.R1(repo.GetPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		gt.Equal(t, stored.Access.Restricted, false)
-		gt.Equal(t, stored.UpdatedBy, by)
-		gt.True(t, timeEq(stored.UpdatedAt, later))
-	})
-
-	runRepositoryTest(t, "delete paper", func(t *testing.T, repo interfaces.Repository) {
-		ctx := context.Background()
-		p := newPaper(t, repo)
-		gt.NoError(t, repo.DeletePaper(ctx, p.WorkspaceID, p.ID))
-		_, err := repo.GetPaper(ctx, p.WorkspaceID, p.ID)
-		gt.True(t, errors.Is(err, model.ErrNotFound))
-		gt.True(t, errors.Is(repo.DeletePaper(ctx, p.WorkspaceID, p.ID), model.ErrNotFound))
-	})
-
-	runRepositoryTest(t, "versions are readable inside a transaction", func(t *testing.T, repo interfaces.Repository) {
-		ctx := context.Background()
-		p := newPaper(t, repo)
-		b := newBlock(p, "V", "v1")
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b) }))
-		b2 := b.Clone()
-		b2.Content, b2.Version = "v2", 2
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b2) }))
-
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			v1, err := tx.BlockVersion(b.ID, 1)
-			gt.NoError(t, err)
-			gt.Equal(t, v1.Content, "v1")
-			latest, err := tx.LatestBlockVersion(b.ID)
-			gt.NoError(t, err)
-			gt.Equal(t, latest.Version, int64(2))
-			_, err = tx.BlockVersion(b.ID, 7)
-			gt.True(t, errors.Is(err, model.ErrNotFound))
-			_, err = tx.LatestBlockVersion(model.NewBlockID())
-			gt.True(t, errors.Is(err, model.ErrNotFound))
-
-			// staged writes are visible, and history outlives a delete
-			b3 := b2.Clone()
-			b3.Content, b3.Version = "v3", 3
-			gt.NoError(t, tx.PutBlock(b3))
-			staged, err := tx.BlockVersion(b.ID, 3)
-			gt.NoError(t, err)
-			gt.Equal(t, staged.Content, "v3")
-			latest, err = tx.LatestBlockVersion(b.ID)
-			gt.NoError(t, err)
-			gt.Equal(t, latest.Version, int64(3))
-			return nil
+		home, child := homeAndChild(t, repo)
+		second := paperIn(home.WorkspaceID, home.ID, "Second")
+		gt.NoError(t, repo.RunTx(ctx, home.WorkspaceID, func(tx interfaces.Tx) error {
+			if err := tx.PutPaper(second); err != nil {
+				return err
+			}
+			if err := tx.PutBlock(blockIn(home, "", "a0V", "text")); err != nil {
+				return err
+			}
+			return tx.PutBlock(paperLink(home, second, "Z"))
 		}))
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.DeleteBlock(b.ID) }))
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
-			latest, err := tx.LatestBlockVersion(b.ID)
-			gt.NoError(t, err)
-			gt.Equal(t, latest.Content, "v3")
-			return nil
-		}))
+		got := gt.R1(repo.ListPaperBlocks(ctx, home.WorkspaceID, home.ID)).NoError(t)
+		gt.A(t, got).Length(2)
+		gt.Equal(t, got[0].Props.PaperID, second.ID) // "Z" sorts before "a1"
+		gt.Equal(t, got[1].Props.PaperID, child.ID)
 	})
 }

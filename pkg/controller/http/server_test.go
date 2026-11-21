@@ -19,6 +19,8 @@ import (
 	httpctrl "github.com/m-mizutani/papers/pkg/controller/http"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 	"github.com/m-mizutani/papers/pkg/repository/memory"
+	"github.com/m-mizutani/papers/pkg/service/attachment"
+	"github.com/m-mizutani/papers/pkg/service/workspace"
 	"github.com/m-mizutani/papers/pkg/usecase"
 )
 
@@ -55,14 +57,16 @@ var testUI = fstest.MapFS{
 func newTestServer(t *testing.T, devMode bool) *testServer {
 	t.Helper()
 	repo := memory.New(memory.WithEventBuffer(64))
-	uc := gt.R1(usecase.New(repo, usecase.Config{WorkspaceCreation: usecase.WorkspaceCreationEveryone, MaxOpsPerCommit: 100, PaperTouchInterval: time.Minute})).NoError(t)
+	wss := workspace.Static(&model.Workspace{ID: "team", Name: "Team", Description: "Write runbooks as numbered lists."}, &model.Workspace{ID: "other", Name: "Other"})
+	uc := gt.R1(usecase.New(repo, wss, attachment.NewMemory(), usecase.Config{MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour})).NoError(t)
+	gt.NoError(t, uc.Init(context.Background())).Required()
 	idp := &fakeIdP{claims: map[string]*model.ExternalClaims{}}
 	var auth *usecase.Auth
 	if devMode {
-		auth = gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour, AdminEmails: []string{"dev@localhost"}})).NoError(t)
+		auth = gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour})).NoError(t)
 		gt.NoError(t, auth.EnableDevUser(context.Background(), "dev@localhost", "Dev"))
 	} else {
-		auth = gt.R1(usecase.NewAuth(repo, idp, usecase.AuthConfig{SessionTTL: time.Hour, AllowedDomains: []string{"example.com"}, AdminEmails: []string{"admin@example.com"}})).NoError(t)
+		auth = gt.R1(usecase.NewAuth(repo, idp, usecase.AuthConfig{SessionTTL: time.Hour, AllowedDomains: []string{"example.com"}})).NoError(t)
 	}
 	h := gt.R1(httpctrl.New(uc, auth, httpctrl.WithMCP(true), httpctrl.WithStaticFS(testUI))).NoError(t)
 	srv := httptest.NewServer(h)
@@ -173,7 +177,7 @@ func TestHealthzAndSPA(t *testing.T) {
 	c.expect("GET", "/healthz", nil, http.StatusOK, &health)
 	gt.Equal(t, health["status"], "ok")
 
-	for _, p := range []string{"/", "/w/abc/p/def"} {
+	for _, p := range []string{"/", "/ws/team/p/def"} {
 		resp := c.do("GET", p, nil)
 		gt.Equal(t, resp.StatusCode, http.StatusOK)
 		gt.Equal(t, string(gt.R1(io.ReadAll(resp.Body)).NoError(t)), "<html>papers</html>")
@@ -194,4 +198,8 @@ func TestNewRequiresDependencies(t *testing.T) {
 
 func claimsFor(email string) *model.ExternalClaims {
 	return &model.ExternalClaims{Provider: model.ProviderGoogle, Subject: "sub-" + email, Email: email, EmailVerified: true}
+}
+
+func decodeBody(resp *http.Response, out any) error {
+	return json.NewDecoder(resp.Body).Decode(out)
 }

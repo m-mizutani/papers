@@ -70,29 +70,34 @@ func TestLiveConnection(t *testing.T) {
 	ts := newTestServer(t, false)
 	alice, bob, ws, paper := setupPaper(t, ts)
 	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
-	var view paperViewResp
-	alice.expect("GET", base, nil, http.StatusOK, &view)
-	block := view.Blocks[0]
+	var page blocksPage
+	alice.expect("GET", base+"/blocks", nil, http.StatusOK, &page)
+	block := page.Blocks[0]
 
 	ac := dial(t, ts, alice, base+"/live")
 	read(t, ac, "hello")
 	bc := dial(t, ts, bob, base+"/live")
 	read(t, bc, "hello")
 
-	// alice commits; bob receives the resulting block
-	alice.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "live!", "base_version": block.Version}}}, http.StatusOK, nil)
+	// alice writes; bob receives the resulting block
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "live!", "base_rev": block.Rev}}}, http.StatusOK, nil)
 	ev := readEvent(t, bc, model.EventBlockPut)
 	gt.Equal(t, ev.Block.ID, block.ID)
 	gt.Equal(t, ev.Block.Content, "live!")
-	gt.Equal(t, ev.Block.Version, block.Version+1)
+	gt.Equal(t, ev.Block.Rev, block.Rev+1)
+
+	// presence goes through HTTP and arrives on the feed
+	alice.expect("POST", base+"/presence", map[string]any{"block_id": block.ID}, http.StatusNoContent, nil)
+	pe := readEvent(t, bc, model.EventPresence)
+	gt.Equal(t, pe.Presence.BlockID, block.ID)
 
 	// the feed takes no messages from clients
 	write(t, ac, map[string]any{"type": "lock", "block_id": block.ID})
 	gt.NotEqual(t, read(t, ac, "error").Error, "")
 	gt.NoError(t, ac.Close(websocket.StatusNormalClosure, "bye"))
 
-	// revoking access closes bob's connection
-	alice.expect("PUT", base+"/access", map[string]any{"restricted": true}, http.StatusOK, nil)
+	// sending the paper to the trash closes bob's connection
+	alice.expect("POST", base+"/trash", nil, http.StatusOK, nil)
 	m := read(t, bc, "closing")
 	gt.Equal(t, m.Reason, "access revoked")
 
@@ -101,8 +106,10 @@ func TestLiveConnection(t *testing.T) {
 
 func TestLiveRequiresAccess(t *testing.T) {
 	ts := newTestServer(t, false)
-	_, _, ws, paper := setupPaper(t, ts)
+	alice := ts.login("alice@example.com")
+	var memo model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Memo", "visibility": "private"}, http.StatusCreated, &memo)
 	carol := ts.login("carol@example.com")
-	resp := carol.do("GET", "/api/v1/workspaces/"+string(ws)+"/papers/"+string(paper)+"/live", nil)
+	resp := carol.do("GET", "/api/v1/workspaces/team/papers/"+string(memo.ID)+"/live", nil)
 	gt.Equal(t, resp.StatusCode, http.StatusNotFound)
 }

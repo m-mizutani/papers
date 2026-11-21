@@ -1,23 +1,15 @@
 package model
 
-// Principal is the authenticated caller of a request.
+// Principal is whoever is making the current request: a user, and the token
+// they used if any. It is built per request and never stored.
 type Principal struct {
-	User *User
-	// Groups are the IDs of groups the user belongs to, resolved once per
-	// request.
-	Groups []GroupID
-	// SystemAdmin users are owners of everything. Configured by email at
-	// deployment time, never stored.
-	SystemAdmin bool
-	// Token is set when the request was authenticated by an API token; it
-	// caps the user's roles by its scope and workspace list.
+	User  *User
 	Token *APIToken
-	// AgentName marks requests made by an AI client (e.g. through MCP) even
-	// when they are not authenticated by an agent token.
+	// AgentName marks MCP calls made with a browser session (development).
 	AgentName string
 }
 
-// Actor returns the actor recorded for writes made by the principal.
+// Actor is the record a write leaves behind.
 func (p *Principal) Actor() Actor {
 	a := Actor{Kind: ActorHuman, UserID: p.User.ID, Name: p.User.Name}
 	if a.Name == "" {
@@ -37,99 +29,29 @@ func (p *Principal) Actor() Actor {
 	return a
 }
 
-func (p *Principal) inGroup(id GroupID) bool {
-	for _, g := range p.Groups {
-		if g == id {
-			return true
-		}
-	}
-	return false
+// TokenAllows reports whether the token (if any) lets the principal use the
+// workspace at all.
+func (p *Principal) TokenAllows(ws WorkspaceID) bool {
+	return p.Token == nil || p.Token.AllowsWorkspace(ws)
 }
 
-func (p *Principal) matches(s Subject) bool {
-	switch s.Kind {
-	case SubjectUser:
-		return UserID(s.ID) == p.User.ID
-	case SubjectGroup:
-		return p.inGroup(GroupID(s.ID))
-	case SubjectDomain:
-		return s.ID != "" && p.User.EmailDomain() == s.ID
-	case SubjectAuthenticated:
-		return true
-	default:
-		return false
-	}
+// CanWrite reports whether the token (if any) allows writing.
+func (p *Principal) CanWrite() bool {
+	return p.Token == nil || p.Token.Scope == ScopeWrite
 }
 
-func (p *Principal) roleFromBindings(bs []RoleBinding) Role {
-	r := RoleNone
-	for _, b := range bs {
-		if p.matches(b.Subject) {
-			r = r.Max(b.Role)
-		}
+// SeesPaper reports whether the principal may see the paper, given that it
+// can use the paper's workspace. Private papers are seen only by their
+// owner; trashed papers too, so that the owner can restore them.
+func (p *Principal) SeesPaper(paper *Paper) bool {
+	if paper.IsPrivate() || paper.IsTrashed() {
+		return paper.Owner() == p.User.ID
 	}
-	return r
+	return true
 }
 
-// tokenCap returns the highest role the principal's token allows in ws.
-func (p *Principal) tokenCap(ws WorkspaceID) Role {
-	if p.Token == nil {
-		return RoleOwner
-	}
-	if !p.Token.AllowsWorkspace(ws) {
-		return RoleNone
-	}
-	switch p.Token.Scope {
-	case ScopeWrite:
-		// Tokens never administer: access control stays a human decision.
-		return RoleEditor
-	case ScopeRead:
-		return RoleViewer
-	default:
-		return RoleNone
-	}
-}
-
-// WorkspaceRole is the principal's effective role in ws.
-func (p *Principal) WorkspaceRole(ws *Workspace) Role {
-	r := RoleNone
-	if p.SystemAdmin {
-		r = RoleOwner
-	} else {
-		r = p.roleFromBindings(ws.Bindings)
-	}
-	return r.Min(p.tokenCap(ws.ID))
-}
-
-// PaperRole is the principal's effective role on paper in ws.
-//
-//   - Workspace owners (and system admins) own every paper.
-//   - A human creator of a paper owns it.
-//   - Unrestricted papers: max(workspace role, paper bindings).
-//   - Restricted papers: paper bindings only.
-//
-// The result is capped by the token, if any.
-func (p *Principal) PaperRole(ws *Workspace, paper *Paper) Role {
-	var r Role
-	wsRole := RoleNone
-	if p.SystemAdmin {
-		wsRole = RoleOwner
-	} else {
-		wsRole = p.roleFromBindings(ws.Bindings)
-	}
-
-	switch {
-	case wsRole == RoleOwner:
-		r = RoleOwner
-	case paper.CreatedBy.UserID == p.User.ID && wsRole.AtLeast(RoleEditor):
-		// Creators keep ownership only while they can still edit the
-		// workspace; removing someone from a workspace removes their papers'
-		// ownership too.
-		r = RoleOwner
-	case paper.Access.Restricted:
-		r = p.roleFromBindings(paper.Access.Bindings)
-	default:
-		r = wsRole.Max(p.roleFromBindings(paper.Access.Bindings))
-	}
-	return r.Min(p.tokenCap(ws.ID))
+// Owns reports whether the principal is the paper's creator (or acts for
+// them). Only the owner deletes, restores and purges.
+func (p *Principal) Owns(paper *Paper) bool {
+	return paper.Owner() == p.User.ID
 }

@@ -21,7 +21,13 @@ export const TYPE_CHOICES: TypeChoice[] = [
   { key: 'callout', label: 'typeCallout', type: 'callout', props: { icon: '💡' } },
   { key: 'code', label: 'typeCode', type: 'code', props: {} },
   { key: 'divider', label: 'typeDivider', type: 'divider', props: {} },
-  { key: 'table', label: 'typeTable', type: 'table', props: { rows: 2, cols: 2, header_row: true } },
+]
+
+/** What the "add" menu can insert besides a paragraph. */
+export const INSERT_CHOICES: { key: string; label: MsgKey }[] = [
+  { key: 'table', label: 'typeTable' },
+  { key: 'image', label: 'typeImage' },
+  { key: 'paper', label: 'typeChildPaper' },
 ]
 
 export function choiceKey(type: BlockType, props: BlockProps): string {
@@ -30,7 +36,7 @@ export function choiceKey(type: BlockType, props: BlockProps): string {
 }
 
 export const HUMAN_EDITABLE = new Set<BlockType>([
-  'paragraph', 'heading', 'quote', 'bulleted_list_item', 'numbered_list_item', 'todo', 'callout', 'code', 'divider', 'image', 'table', 'table_cell',
+  'paragraph', 'heading', 'quote', 'bulleted_list_item', 'numbered_list_item', 'todo', 'callout', 'code', 'divider', 'image', 'table', 'table_cell', 'paper',
 ])
 
 /** Types whose Enter key continues with a new block of the same type. */

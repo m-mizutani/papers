@@ -1,60 +1,71 @@
 // Package usecase implements the application logic shared by the Web UI
 // (REST + WebSocket), the API and the MCP server. Every method takes the
-// calling principal explicitly and enforces authorization itself, so no
-// transport can bypass it.
+// calling principal explicitly and enforces access itself, so no transport
+// can bypass it.
+//
+// Access has two parts (docs/model.html, "アクセス"): whether the principal
+// may use the workspace (the workspace's rule, narrowed by the token), and
+// whether the paper is public or the principal's own private paper. A
+// principal that may not see something gets ErrNotFound; one that may see but
+// not write (a read-only token) gets ErrPermissionDenied.
 package usecase
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/m-mizutani/goerr/v2"
 
 	"github.com/m-mizutani/papers/pkg/domain/interfaces"
 	"github.com/m-mizutani/papers/pkg/domain/model"
-)
-
-// WorkspaceCreation decides who may create workspaces.
-type WorkspaceCreation string
-
-const (
-	WorkspaceCreationEveryone WorkspaceCreation = "everyone"
-	WorkspaceCreationAdmin    WorkspaceCreation = "admin"
+	"github.com/m-mizutani/papers/pkg/utils/logging"
 )
 
 // Config holds the knobs of the use cases. Defaults are owned by the CLI
 // layer, never by this package.
 type Config struct {
-	WorkspaceCreation WorkspaceCreation
-	// MaxOpsPerCommit bounds one commit request.
-	MaxOpsPerCommit int
+	// MaxOpsPerBatch bounds the operations of one request.
+	MaxOpsPerBatch int
 	// PaperTouchInterval is how stale a paper's UpdatedAt may get before a
-	// commit refreshes it. Refreshing on every commit would make the paper
-	// record a write hotspot (see docs/design.html).
+	// write refreshes it. Refreshing on every write would make the paper
+	// document a write hotspot (D6).
 	PaperTouchInterval time.Duration
+	// TrashRetention is how long a trashed paper is kept before it is
+	// purged.
+	TrashRetention time.Duration
 }
 
 func (c Config) validate() error {
-	switch c.WorkspaceCreation {
-	case WorkspaceCreationEveryone, WorkspaceCreationAdmin:
-	default:
-		return goerr.New("invalid workspace creation policy", goerr.V("value", c.WorkspaceCreation))
-	}
-	if c.MaxOpsPerCommit <= 0 {
-		return goerr.New("max ops per commit must be positive")
+	if c.MaxOpsPerBatch <= 0 {
+		return goerr.New("max ops per batch must be positive")
 	}
 	if c.PaperTouchInterval < 0 {
 		return goerr.New("paper touch interval must not be negative")
 	}
+	if c.TrashRetention <= 0 {
+		return goerr.New("trash retention must be positive")
+	}
 	return nil
 }
 
+// Limits of one batch (docs/model.html, "操作のまとまりの約束").
+const (
+	MaxBlocksPerBatch = 240
+	MaxBatchBytes     = 3 << 20
+	// MaxSubtree bounds how many papers one tree operation (trash, archive,
+	// restore, cross-workspace move) may touch in one transaction.
+	MaxSubtree = 500
+)
+
 // UseCases bundles the application services.
 type UseCases struct {
-	repo interfaces.Repository
-	cfg  Config
-	now  func() time.Time
+	repo       interfaces.Repository
+	workspaces interfaces.Workspaces
+	store      interfaces.AttachmentStore
+	cfg        Config
+	now        func() time.Time
 }
 
 type Option func(*UseCases)
@@ -64,19 +75,49 @@ func WithClock(now func() time.Time) Option {
 	return func(u *UseCases) { u.now = now }
 }
 
-func New(repo interfaces.Repository, cfg Config, opts ...Option) (*UseCases, error) {
-	if repo == nil {
-		return nil, goerr.New("repository is required")
+func New(repo interfaces.Repository, workspaces interfaces.Workspaces, store interfaces.AttachmentStore, cfg Config, opts ...Option) (*UseCases, error) {
+	if repo == nil || workspaces == nil || store == nil {
+		return nil, goerr.New("repository, workspaces and attachment store are required")
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	u := &UseCases{repo: repo, cfg: cfg, now: func() time.Time { return time.Now().UTC() }}
+	u := &UseCases{repo: repo, workspaces: workspaces, store: store, cfg: cfg, now: func() time.Time { return time.Now().UTC() }}
 	for _, opt := range opts {
 		opt(u)
 	}
 	return u, nil
 }
+
+// Init prepares the stored data for the configured workspaces: it creates
+// the home paper of every workspace that has none yet, and warns about
+// stored workspaces that are no longer configured (their data is kept but
+// cannot be reached, D13).
+func (u *UseCases) Init(ctx context.Context) error {
+	now := u.now()
+	system := model.Actor{Kind: model.ActorSystem, Name: "papers"}
+	for _, ws := range u.workspaces.List() {
+		home := &model.Paper{
+			ID: model.NewPaperID(), WorkspaceID: ws.ID, Title: ws.Name, Visibility: model.VisibilityPublic,
+			CreatedBy: system, CreatedAt: now, UpdatedBy: system, UpdatedAt: now,
+		}
+		if _, err := u.repo.EnsureHome(ctx, ws.ID, home); err != nil {
+			return goerr.Wrap(err, "failed to create home paper", goerr.V("workspace_id", ws.ID))
+		}
+	}
+	records, err := u.repo.ListWorkspaceRecords(ctx)
+	if err != nil {
+		return goerr.Wrap(err, "failed to list stored workspaces")
+	}
+	for _, r := range records {
+		if _, ok := u.workspaces.Get(r.ID); !ok {
+			logging.From(ctx).Warn("stored workspace is not in the configuration; its papers are kept but hidden", slog.String("workspace", string(r.ID)))
+		}
+	}
+	return nil
+}
+
+// --- access
 
 func requirePrincipal(p *model.Principal) error {
 	if p == nil || p.User == nil {
@@ -85,74 +126,117 @@ func requirePrincipal(p *model.Principal) error {
 	return nil
 }
 
-// denied hides existence: callers without read access get NotFound, those
-// with read but insufficient access get PermissionDenied.
-func denied(role model.Role, kind string, id any) error {
-	if role == model.RoleNone {
-		return goerr.Wrap(model.ErrNotFound, kind+" not found", goerr.V("id", id))
-	}
-	return goerr.Wrap(model.ErrPermissionDenied, "insufficient role", goerr.V(kind+"_id", id), goerr.V("role", role))
+func notFound(kind string, id any) error {
+	return goerr.Wrap(model.ErrNotFound, kind+" not found", goerr.V("id", id))
 }
 
-func (u *UseCases) workspaceFor(ctx context.Context, p *model.Principal, id model.WorkspaceID, need model.Role) (*model.Workspace, model.Role, error) {
-	if err := requirePrincipal(p); err != nil {
-		return nil, model.RoleNone, err
-	}
-	ws, err := u.repo.GetWorkspace(ctx, id)
-	if err != nil {
-		return nil, model.RoleNone, goerr.Wrap(err, "failed to get workspace", goerr.V("workspace_id", id))
-	}
-	role := p.WorkspaceRole(ws)
-	if !role.AtLeast(need) {
-		return nil, role, denied(role, "workspace", id)
-	}
-	return ws, role, nil
+func readOnly() error {
+	return goerr.Wrap(model.ErrPermissionDenied, "this token can only read")
 }
 
-func (u *UseCases) paperFor(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID, need model.Role) (*model.Workspace, *model.Paper, model.Role, error) {
+// workspaceFor returns the workspace if the principal may use it.
+func (u *UseCases) workspaceFor(ctx context.Context, p *model.Principal, id model.WorkspaceID) (*model.Workspace, error) {
 	if err := requirePrincipal(p); err != nil {
-		return nil, nil, model.RoleNone, err
+		return nil, err
 	}
-	ws, err := u.repo.GetWorkspace(ctx, wsID)
+	ws, ok := u.workspaces.Get(id)
+	if !ok || !p.TokenAllows(id) {
+		return nil, notFound("workspace", id)
+	}
+	allow, err := u.workspaces.Allow(ctx, p.User, id)
 	if err != nil {
-		return nil, nil, model.RoleNone, goerr.Wrap(err, "failed to get workspace", goerr.V("workspace_id", wsID))
+		// The decision could not be made: deny, and keep the cause.
+		logging.From(ctx).Error("failed to evaluate workspace rule", slog.String("workspace", string(id)), logging.ErrAttr(err))
+		return nil, notFound("workspace", id)
+	}
+	if !allow {
+		return nil, notFound("workspace", id)
+	}
+	return ws, nil
+}
+
+// writableWorkspace is workspaceFor plus the token's write scope.
+func (u *UseCases) writableWorkspace(ctx context.Context, p *model.Principal, id model.WorkspaceID) (*model.Workspace, error) {
+	ws, err := u.workspaceFor(ctx, p, id)
+	if err != nil {
+		return nil, err
+	}
+	if !p.CanWrite() {
+		return nil, readOnly()
+	}
+	return ws, nil
+}
+
+// MovedError reports that a paper moved to another workspace. It matches
+// model.ErrNotFound, so callers that do not follow forwards treat it as gone.
+type MovedError struct {
+	To *model.Forward
+}
+
+func (e *MovedError) Error() string   { return "paper moved to another workspace" }
+func (e *MovedError) Is(t error) bool { return t == model.ErrNotFound }
+func (e *MovedError) Unwrap() []error { return nil }
+func asMoved(err error) (*MovedError, bool) {
+	var m *MovedError
+	ok := errors.As(err, &m)
+	return m, ok
+}
+
+// IsMoved reports whether err says the paper moved, and where.
+func IsMoved(err error) (*model.Forward, bool) {
+	m, ok := asMoved(err)
+	if !ok {
+		return nil, false
+	}
+	return m.To, true
+}
+
+// paperFor returns the paper if the principal may use its workspace and see
+// it. A paper moved to another workspace yields a MovedError.
+func (u *UseCases) paperFor(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID) (*model.Workspace, *model.Paper, error) {
+	ws, err := u.workspaceFor(ctx, p, wsID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !model.ValidID(string(id)) {
+		return nil, nil, notFound("paper", id)
 	}
 	paper, err := u.repo.GetPaper(ctx, wsID, id)
-	if err != nil {
-		return nil, nil, model.RoleNone, goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", id))
-	}
-	role := p.PaperRole(ws, paper)
-	if !role.AtLeast(need) {
-		return nil, nil, role, denied(role, "paper", id)
-	}
-	return ws, paper, role, nil
-}
-
-// validateBindingSubjects checks that user and group subjects exist, so a
-// typo cannot silently grant nothing.
-func (u *UseCases) validateBindingSubjects(ctx context.Context, bs []model.RoleBinding) error {
-	for _, b := range bs {
-		switch b.Subject.Kind {
-		case model.SubjectUser:
-			if _, err := u.repo.GetUser(ctx, model.UserID(b.Subject.ID)); err != nil {
-				return unknownSubject(err, "user", b.Subject.ID)
-			}
-		case model.SubjectGroup:
-			if _, err := u.repo.GetGroup(ctx, model.GroupID(b.Subject.ID)); err != nil {
-				return unknownSubject(err, "group", b.Subject.ID)
-			}
-		}
-	}
-	return nil
-}
-
-func unknownSubject(err error, kind, id string) error {
 	if errors.Is(err, model.ErrNotFound) {
-		return goerr.Wrap(model.ErrInvalidArgument, "binding refers to an unknown "+kind, goerr.V("id", id))
+		if f, ferr := u.repo.GetForward(ctx, wsID, id); ferr == nil {
+			return nil, nil, &MovedError{To: f}
+		}
+		return nil, nil, notFound("paper", id)
 	}
-	return goerr.Wrap(err, "failed to look up binding subject", goerr.V("kind", kind), goerr.V("id", id))
+	if err != nil {
+		return nil, nil, goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", id))
+	}
+	if !p.SeesPaper(paper) {
+		return nil, nil, notFound("paper", id)
+	}
+	return ws, paper, nil
 }
 
-func isAccessError(err error) bool {
-	return errors.Is(err, model.ErrNotFound) || errors.Is(err, model.ErrPermissionDenied)
+// writablePaper is paperFor plus the token's write scope, and refuses
+// trashed papers (they must be restored first).
+func (u *UseCases) writablePaper(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID) (*model.Workspace, *model.Paper, error) {
+	ws, paper, err := u.paperFor(ctx, p, wsID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !p.CanWrite() {
+		return nil, nil, readOnly()
+	}
+	if paper.IsTrashed() {
+		return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "the paper is in the trash; restore it first", goerr.V("paper_id", id))
+	}
+	return ws, paper, nil
+}
+
+func (u *UseCases) homeID(ctx context.Context, ws model.WorkspaceID) (model.PaperID, error) {
+	rec, err := u.repo.GetWorkspaceRecord(ctx, ws)
+	if err != nil {
+		return "", goerr.Wrap(err, "failed to get workspace record", goerr.V("workspace_id", ws))
+	}
+	return rec.HomePaperID, nil
 }

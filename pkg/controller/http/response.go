@@ -27,6 +27,10 @@ type errorDetail struct {
 	// older version, with the block as it is now. Resend with force to
 	// overwrite.
 	Conflicts []usecase.Conflict `json:"conflicts,omitempty"`
+	// MovedTo is set for "moved": the paper now lives in another workspace.
+	MovedTo *model.Forward `json:"moved_to,omitempty"`
+	// Candidates is set when a path names more than one paper.
+	Candidates []*usecase.PaperRef `json:"candidates,omitempty"`
 }
 
 // statusOf maps a domain error to an HTTP status and a stable error code.
@@ -74,6 +78,13 @@ func writeError(ctx context.Context, w http.ResponseWriter, err error) {
 	var conflict *usecase.ConflictError
 	if errors.As(err, &conflict) {
 		detail.Conflicts = conflict.Conflicts
+	}
+	if f, ok := usecase.IsMoved(err); ok {
+		detail.Code, detail.MovedTo = "moved", f
+	}
+	var amb *usecase.AmbiguousError
+	if errors.As(err, &amb) {
+		detail.Code, detail.Candidates = "ambiguous", amb.Candidates
 	}
 	writeJSON(ctx, w, status, errorBody{Error: detail})
 }

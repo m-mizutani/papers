@@ -1,6 +1,7 @@
 package http
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -8,18 +9,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/m-mizutani/goerr/v2"
 
+	"github.com/m-mizutani/papers/pkg/domain/markup"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 	"github.com/m-mizutani/papers/pkg/usecase"
+	"github.com/m-mizutani/papers/pkg/utils/safe"
 )
 
 func (s *Server) routeAPI(r chi.Router) {
 	r.Get("/block-types", s.handleBlockTypes)
-	r.Get("/users", s.handleListUsers)
-
-	r.Get("/groups", s.handleListGroups)
-	r.With(sessionOnly).Post("/groups", s.handleCreateGroup)
-	r.With(sessionOnly).Put("/groups/{group}", s.handleUpdateGroup)
-	r.With(sessionOnly).Delete("/groups/{group}", s.handleDeleteGroup)
 
 	r.Route("/tokens", func(r chi.Router) {
 		r.Use(sessionOnly)
@@ -29,21 +26,36 @@ func (s *Server) routeAPI(r chi.Router) {
 	})
 
 	r.Get("/workspaces", s.handleListWorkspaces)
-	r.Post("/workspaces", s.handleCreateWorkspace)
 	r.Route("/workspaces/{ws}", func(r chi.Router) {
 		r.Get("/", s.handleGetWorkspace)
-		r.Patch("/", s.handleUpdateWorkspace)
+		r.Get("/sidebar", s.handleSidebar)
 		r.Get("/search", s.handleSearch)
-		r.Get("/papers", s.handleListPapers)
+		r.Get("/trash", s.handleListTrash)
+		r.Get("/resolve", s.handleResolve)
 		r.Post("/papers", s.handleCreatePaper)
 		r.Route("/papers/{paper}", func(r chi.Router) {
 			r.Get("/", s.handleGetPaper)
-			r.Delete("/", s.handleDeletePaper)
-			r.Put("/access", s.handleUpdateAccess)
-			r.Get("/commits", s.handleListCommits)
-			r.Post("/commits", s.handleCommit)
+			r.Get("/blocks", s.handleListBlocks)
+			r.Post("/ops", s.handleOps)
+			r.Get("/children", s.handleChildren)
+			r.Get("/status", s.handleStatus)
+			r.Get("/versions", s.handleListVersions)
+			r.Post("/versions", s.handleSaveVersion)
+			r.Get("/versions/{n}", s.handleGetVersion)
+			r.Post("/versions/{n}/restore", s.handleRestoreVersion)
+			r.Get("/diff", s.handleDiff)
+			r.Post("/move", s.handleMove)
+			r.Put("/visibility", s.handleVisibility)
+			r.Post("/archive", s.handleArchive(true))
+			r.Post("/unarchive", s.handleArchive(false))
+			r.Post("/trash", s.handleTrash)
+			r.Post("/restore", s.handleRestoreTrash)
+			r.Put("/pin", s.handlePin)
+			r.Delete("/pin", s.handleUnpin)
+			r.Post("/presence", s.handlePresence)
 			r.Get("/markdown", s.handleMarkdown)
-			r.Get("/blocks/{block}/versions", s.handleBlockVersions)
+			r.Post("/attachments", s.handleUpload)
+			r.Get("/attachments/{att}", s.handleAttachment)
 			r.Get("/live", s.handleLive)
 		})
 	})
@@ -52,104 +64,50 @@ func (s *Server) routeAPI(r chi.Router) {
 func wsParam(r *http.Request) model.WorkspaceID { return model.WorkspaceID(chi.URLParam(r, "ws")) }
 func paperParam(r *http.Request) model.PaperID  { return model.PaperID(chi.URLParam(r, "paper")) }
 
-// --- meta ---------------------------------------------------------------
+// respond writes v, or the error.
+func respond(w http.ResponseWriter, r *http.Request, status int, v any, err error) {
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	writeJSON(r.Context(), w, status, v)
+}
+
+func queryInt(r *http.Request, name string) (int, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, goerr.Wrap(model.ErrInvalidArgument, "invalid "+name, goerr.V(name, v))
+	}
+	return n, nil
+}
+
+// --- meta
 
 type blockTypeInfo struct {
 	Type          model.BlockType `json:"type"`
 	HumanEditable bool            `json:"human_editable"`
 	Container     bool            `json:"container"`
 	Parent        model.BlockType `json:"parent,omitempty"`
+	Markup        bool            `json:"markup"`
 }
 
 func blockTypeInfos() []blockTypeInfo {
 	var out []blockTypeInfo
 	for _, t := range model.BlockTypes() {
-		out = append(out, blockTypeInfo{Type: t, HumanEditable: t.HumanEditable(), Container: t.IsContainer(), Parent: t.RequiredParent()})
+		out = append(out, blockTypeInfo{Type: t, HumanEditable: t.HumanEditable(), Container: t.IsContainer(), Parent: t.RequiredParent(), Markup: t.UsesMarkup()})
 	}
 	return out
 }
 
 func (s *Server) handleBlockTypes(w http.ResponseWriter, r *http.Request) {
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"block_types": blockTypeInfos()})
+	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"block_types": blockTypeInfos(), "palette": markup.Palette})
 }
 
-type userJSON struct {
-	ID        model.UserID `json:"id"`
-	Email     string       `json:"email"`
-	Name      string       `json:"name"`
-	AvatarURL string       `json:"avatar_url,omitempty"`
-}
-
-func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.uc.ListUsers(r.Context(), principalFrom(r.Context()))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	out := make([]userJSON, 0, len(users))
-	for _, u := range users {
-		out = append(out, userJSON{ID: u.ID, Email: u.Email, Name: u.Name, AvatarURL: u.AvatarURL})
-	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"users": out})
-}
-
-// --- groups ---------------------------------------------------------------
-
-type groupRequest struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Members     []model.UserID `json:"members"`
-}
-
-func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
-	gs, err := s.uc.ListGroups(r.Context(), principalFrom(r.Context()))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	if gs == nil {
-		gs = []*model.Group{}
-	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"groups": gs})
-}
-
-func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
-	var req groupRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	g, err := s.uc.CreateGroup(r.Context(), principalFrom(r.Context()), usecase.GroupInput(req))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	writeJSON(r.Context(), w, http.StatusCreated, g)
-}
-
-func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
-	var req groupRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	g, err := s.uc.UpdateGroup(r.Context(), principalFrom(r.Context()), model.GroupID(chi.URLParam(r, "group")), usecase.GroupInput(req))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	writeJSON(r.Context(), w, http.StatusOK, g)
-}
-
-func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
-	if err := s.uc.DeleteGroup(r.Context(), principalFrom(r.Context()), model.GroupID(chi.URLParam(r, "group"))); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// --- tokens ---------------------------------------------------------------
+// --- tokens
 
 // tokenJSON never carries the secret hash.
 type tokenJSON struct {
@@ -170,15 +128,11 @@ func toTokenJSON(t *model.APIToken) tokenJSON {
 
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	toks, err := s.auth.ListTokens(r.Context(), principalFrom(r.Context()))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
 	out := make([]tokenJSON, 0, len(toks))
 	for _, t := range toks {
 		out = append(out, toTokenJSON(t))
 	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"tokens": out})
+	respond(w, r, http.StatusOK, map[string]any{"tokens": out}, err)
 }
 
 type createTokenRequest struct {
@@ -215,114 +169,64 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- workspaces -------------------------------------------------------------
-
-type workspaceJSON struct {
-	*model.Workspace
-	Role model.Role `json:"role"`
-}
+// --- workspaces
 
 func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
-	views, err := s.uc.ListWorkspaces(r.Context(), principalFrom(r.Context()))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
+	list, groups, err := s.uc.ListWorkspaces(r.Context(), principalFrom(r.Context()))
+	if list == nil {
+		list = []*usecase.WorkspaceView{}
 	}
-	out := make([]workspaceJSON, 0, len(views))
-	for _, v := range views {
-		out = append(out, workspaceJSON{Workspace: v.Workspace, Role: v.Role})
+	if groups == nil {
+		groups = []model.WorkspaceGroup{}
 	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"workspaces": out})
-}
-
-type createWorkspaceRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Emoji       string `json:"emoji"`
-}
-
-func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
-	var req createWorkspaceRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	v, err := s.uc.CreateWorkspace(r.Context(), principalFrom(r.Context()), usecase.CreateWorkspaceInput(req))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	writeJSON(r.Context(), w, http.StatusCreated, workspaceJSON{Workspace: v.Workspace, Role: v.Role})
+	respond(w, r, http.StatusOK, map[string]any{"workspaces": list, "groups": groups}, err)
 }
 
 func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 	v, err := s.uc.GetWorkspace(r.Context(), principalFrom(r.Context()), wsParam(r))
+	respond(w, r, http.StatusOK, v, err)
+}
+
+func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
+	v, err := s.uc.Sidebar(r.Context(), principalFrom(r.Context()), wsParam(r))
+	respond(w, r, http.StatusOK, v, err)
+}
+
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	limit, err := queryInt(r, "limit")
 	if err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
-	writeJSON(r.Context(), w, http.StatusOK, workspaceJSON{Workspace: v.Workspace, Role: v.Role})
+	q := r.URL.Query()
+	hits, err := s.uc.Search(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.SearchInput{
+		Query: q.Get("q"), Under: model.PaperID(q.Get("under")), Limit: limit, IncludeArchived: q.Get("archived") == "true",
+	})
+	if hits == nil {
+		hits = []*usecase.SearchHit{}
+	}
+	respond(w, r, http.StatusOK, map[string]any{"hits": hits}, err)
 }
 
-type updateWorkspaceRequest struct {
-	Name        *string              `json:"name"`
-	Description *string              `json:"description"`
-	Emoji       *string              `json:"emoji"`
-	Bindings    *[]model.RoleBinding `json:"bindings"`
+func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
+	list, err := s.uc.ListTrash(r.Context(), principalFrom(r.Context()), wsParam(r))
+	if list == nil {
+		list = []*usecase.PaperRef{}
+	}
+	respond(w, r, http.StatusOK, map[string]any{"papers": list}, err)
 }
 
-func (s *Server) handleUpdateWorkspace(w http.ResponseWriter, r *http.Request) {
-	var req updateWorkspaceRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	v, err := s.uc.UpdateWorkspace(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.UpdateWorkspaceInput(req))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	writeJSON(r.Context(), w, http.StatusOK, workspaceJSON{Workspace: v.Workspace, Role: v.Role})
-}
-
-// --- papers -----------------------------------------------------------------
-
-type paperJSON struct {
-	*model.Paper
-	Role model.Role `json:"role"`
-}
-
-func (s *Server) handleListPapers(w http.ResponseWriter, r *http.Request) {
-	list, err := s.uc.ListPapers(r.Context(), principalFrom(r.Context()), wsParam(r))
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	out := make([]paperJSON, 0, len(list))
-	for _, p := range list {
-		out = append(out, paperJSON{Paper: p.Paper, Role: p.Role})
-	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"papers": out})
+func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
+	p, err := s.uc.ResolvePaper(r.Context(), principalFrom(r.Context()), wsParam(r), r.URL.Query().Get("path"))
+	respond(w, r, http.StatusOK, p, err)
 }
 
 type createPaperRequest struct {
-	Title      string `json:"title"`
-	Markdown   string `json:"markdown"`
-	Restricted bool   `json:"restricted"`
-}
-
-type paperViewJSON struct {
-	Paper  *model.Paper   `json:"paper"`
-	Blocks []*model.Block `json:"blocks"`
-	Role   model.Role     `json:"role"`
-}
-
-func (s *Server) toPaperView(v *usecase.PaperView) paperViewJSON {
-	out := paperViewJSON{Paper: v.Paper, Blocks: v.Blocks, Role: v.Role}
-	if out.Blocks == nil {
-		out.Blocks = []*model.Block{}
-	}
-	return out
+	Title      string           `json:"title"`
+	Visibility model.Visibility `json:"visibility"`
+	Parent     string           `json:"parent"`
+	After      *string          `json:"after"`
+	Markdown   string           `json:"markdown"`
 }
 
 func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
@@ -331,160 +235,286 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 		writeError(r.Context(), w, err)
 		return
 	}
-	v, err := s.uc.CreatePaper(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.CreatePaperInput{
-		Title: req.Title, Markdown: req.Markdown, Restricted: req.Restricted,
+	p, err := s.uc.CreatePaper(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.CreateInput{
+		Title: req.Title, Visibility: req.Visibility, Parent: req.Parent, After: req.After, Markdown: req.Markdown,
 	})
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	writeJSON(r.Context(), w, http.StatusCreated, s.toPaperView(v))
+	respond(w, r, http.StatusCreated, p, err)
 }
+
+// --- papers
 
 func (s *Server) handleGetPaper(w http.ResponseWriter, r *http.Request) {
 	v, err := s.uc.GetPaper(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r))
+	respond(w, r, http.StatusOK, v, err)
+}
+
+func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
+	limit, err := queryInt(r, "limit")
 	if err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
-	writeJSON(r.Context(), w, http.StatusOK, s.toPaperView(v))
+	page, err := s.uc.ListBlocks(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), r.URL.Query().Get("after"), limit)
+	if page != nil && page.Blocks == nil {
+		page.Blocks = []*model.Block{}
+	}
+	respond(w, r, http.StatusOK, page, err)
 }
 
-func (s *Server) handleDeletePaper(w http.ResponseWriter, r *http.Request) {
-	if err := s.uc.DeletePaper(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r)); err != nil {
+type opsRequest struct {
+	Ops   []usecase.Op `json:"ops"`
+	Force bool         `json:"force"`
+}
+
+func (s *Server) handleOps(w http.ResponseWriter, r *http.Request) {
+	var req opsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	res, err := s.uc.Apply(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.BatchInput{Ops: req.Ops, Force: req.Force})
+	respond(w, r, http.StatusOK, res, err)
+}
+
+func (s *Server) handleChildren(w http.ResponseWriter, r *http.Request) {
+	list, err := s.uc.ListChildren(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), r.URL.Query().Get("archived") == "true")
+	if list == nil {
+		list = []*usecase.PaperRef{}
+	}
+	respond(w, r, http.StatusOK, map[string]any{"papers": list}, err)
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	st, err := s.uc.Status(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r))
+	respond(w, r, http.StatusOK, st, err)
+}
+
+func (s *Server) handleListVersions(w http.ResponseWriter, r *http.Request) {
+	before, err := queryInt(r, "before")
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	limit, err := queryInt(r, "limit")
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	list, err := s.uc.ListVersions(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), before, limit)
+	if list == nil {
+		list = []*usecase.VersionSummary{}
+	}
+	respond(w, r, http.StatusOK, map[string]any{"versions": list}, err)
+}
+
+type saveVersionRequest struct {
+	Note string `json:"note"`
+}
+
+func (s *Server) handleSaveVersion(w http.ResponseWriter, r *http.Request) {
+	var req saveVersionRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	v, err := s.uc.SaveVersion(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), req.Note)
+	var out *usecase.VersionSummary
+	if v != nil {
+		out = &usecase.VersionSummary{Number: v.Number, Title: v.Title, Note: v.Note, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt, BlockCount: len(v.Blocks)}
+	}
+	// version is null when nothing changed since the latest version
+	respond(w, r, http.StatusOK, map[string]any{"version": out}, err)
+}
+
+func versionParam(r *http.Request) (int, error) {
+	return usecase.ParseAt(chi.URLParam(r, "n"))
+}
+
+func (s *Server) handleGetVersion(w http.ResponseWriter, r *http.Request) {
+	n, err := versionParam(r)
+	if err == nil && n == 0 {
+		err = goerr.Wrap(model.ErrInvalidArgument, "a version number or latest is required")
+	}
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	v, err := s.uc.GetVersion(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), n)
+	respond(w, r, http.StatusOK, v, err)
+}
+
+func (s *Server) handleRestoreVersion(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(chi.URLParam(r, "n"))
+	if err != nil {
+		writeError(r.Context(), w, goerr.Wrap(model.ErrInvalidArgument, "invalid version number"))
+		return
+	}
+	res, err := s.uc.RestoreVersion(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), n)
+	respond(w, r, http.StatusOK, res, err)
+}
+
+// handleDiff compares ?from= and ?to=: version numbers, "latest", or
+// empty / "current" for the current state.
+func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
+	from, err := usecase.ParseAt(r.URL.Query().Get("from"))
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	to, err := usecase.ParseAt(r.URL.Query().Get("to"))
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	d, err := s.uc.Diff(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), from, to)
+	respond(w, r, http.StatusOK, d, err)
+}
+
+type moveRequest struct {
+	Parent    string            `json:"parent"`
+	After     *string           `json:"after"`
+	Workspace model.WorkspaceID `json:"workspace"`
+}
+
+func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
+	var req moveRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	res, err := s.uc.MovePaper(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.MoveInput{Parent: req.Parent, After: req.After, Workspace: req.Workspace})
+	respond(w, r, http.StatusOK, res, err)
+}
+
+type visibilityRequest struct {
+	Visibility model.Visibility `json:"visibility"`
+	Parent     string           `json:"parent"`
+	After      *string          `json:"after"`
+}
+
+func (s *Server) handleVisibility(w http.ResponseWriter, r *http.Request) {
+	var req visibilityRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	res, err := s.uc.SetVisibility(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.VisibilityInput{Visibility: req.Visibility, Parent: req.Parent, After: req.After})
+	respond(w, r, http.StatusOK, res, err)
+}
+
+type archiveRequest struct {
+	Subtree bool `json:"subtree"`
+}
+
+func (s *Server) handleArchive(archived bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req archiveRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(r.Context(), w, err)
+			return
+		}
+		p := principalFrom(r.Context())
+		var res *usecase.BatchResult
+		var err error
+		if archived {
+			res, err = s.uc.Archive(r.Context(), p, wsParam(r), paperParam(r), req.Subtree)
+		} else {
+			res, err = s.uc.Unarchive(r.Context(), p, wsParam(r), paperParam(r), req.Subtree)
+		}
+		respond(w, r, http.StatusOK, res, err)
+	}
+}
+
+func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request) {
+	res, err := s.uc.Trash(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r))
+	respond(w, r, http.StatusOK, res, err)
+}
+
+func (s *Server) handleRestoreTrash(w http.ResponseWriter, r *http.Request) {
+	res, err := s.uc.RestoreFromTrash(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r))
+	respond(w, r, http.StatusOK, res, err)
+}
+
+type pinRequest struct {
+	After *string `json:"after"`
+}
+
+func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
+	var req pinRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	if err := s.uc.Pin(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), req.After); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleUpdateAccess(w http.ResponseWriter, r *http.Request) {
-	var req model.PaperAccess
+func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
+	if err := s.uc.Unpin(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r)); err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type presenceRequest struct {
+	BlockID model.BlockID `json:"block_id"`
+	Leaving bool          `json:"leaving"`
+}
+
+func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request) {
+	var req presenceRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
-	p, err := s.uc.UpdatePaperAccess(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), req)
-	if err != nil {
+	if err := s.uc.ReportPresence(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), req.BlockID, req.Leaving); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
-	writeJSON(r.Context(), w, http.StatusOK, p)
-}
-
-func parseLimit(r *http.Request) (int, error) {
-	v := r.URL.Query().Get("limit")
-	if v == "" {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 0, goerr.Wrap(model.ErrInvalidArgument, "invalid limit")
-	}
-	return n, nil
-}
-
-// handleListCommits returns commits newest first. Pass the last commit ID
-// of a page as ?before= to get the next (older) page.
-func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
-	limit, err := parseLimit(r)
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	before := model.CommitID(r.URL.Query().Get("before"))
-	commits, err := s.uc.ListCommits(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), before, limit)
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	if commits == nil {
-		commits = []*model.Commit{}
-	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"commits": commits})
-}
-
-func (s *Server) handleBlockVersions(w http.ResponseWriter, r *http.Request) {
-	limit, err := parseLimit(r)
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	vs, err := s.uc.ListBlockVersions(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), model.BlockID(chi.URLParam(r, "block")), limit)
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	if vs == nil {
-		vs = []*model.Block{}
-	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"versions": vs})
-}
-
-type commitRequest struct {
-	Ops     []usecase.Op `json:"ops"`
-	Message string       `json:"message"`
-	Force   bool         `json:"force"`
-}
-
-type commitResponse struct {
-	Commit  *model.Commit   `json:"commit"`
-	Paper   *model.Paper    `json:"paper"`
-	Blocks  []*model.Block  `json:"blocks"`
-	Deleted []model.BlockID `json:"deleted"`
-}
-
-func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
-	var req commitRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	res, err := s.uc.Commit(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.CommitInput{
-		Ops: req.Ops, Message: req.Message, Force: req.Force,
-	})
-	if err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	resp := commitResponse{Commit: res.Commit, Paper: res.Paper, Blocks: res.Blocks, Deleted: res.Deleted}
-	if resp.Blocks == nil {
-		resp.Blocks = []*model.Block{}
-	}
-	if resp.Deleted == nil {
-		resp.Deleted = []model.BlockID{}
-	}
-	writeJSON(r.Context(), w, http.StatusOK, resp)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleMarkdown(w http.ResponseWriter, r *http.Request) {
-	md, err := s.uc.ExportMarkdown(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r))
+	md, err := s.uc.Export(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r))
 	if err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(md)); err != nil {
-		writeError(r.Context(), w, goerr.Wrap(err, "failed to write markdown"))
-	}
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, md)
 }
 
-type searchHitJSON struct {
-	Paper   *model.Paper  `json:"paper"`
-	BlockID model.BlockID `json:"block_id,omitempty"`
-	Snippet string        `json:"snippet"`
+// handleUpload takes the image as the raw request body; its Content-Type
+// is the image type and ?name= the file name.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, model.MaxAttachmentSize+1)
+	a, err := s.uc.Upload(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.UploadInput{
+		Name: r.URL.Query().Get("name"), ContentType: r.Header.Get("Content-Type"), Body: body,
+	})
+	respond(w, r, http.StatusCreated, a, err)
 }
 
-func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
-	hits, err := s.uc.SearchPapers(r.Context(), principalFrom(r.Context()), wsParam(r), r.URL.Query().Get("q"), 50)
+func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
+	c, err := s.uc.OpenAttachment(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), model.AttachmentID(chi.URLParam(r, "att")))
 	if err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
-	out := make([]searchHitJSON, 0, len(hits))
-	for _, h := range hits {
-		out = append(out, searchHitJSON{Paper: h.Paper, BlockID: h.BlockID, Snippet: h.Snippet})
+	if c.URL != "" {
+		http.Redirect(w, r, c.URL, http.StatusFound)
+		return
 	}
-	writeJSON(r.Context(), w, http.StatusOK, map[string]any{"hits": out})
+	defer safe.Close(r.Context(), c.Body)
+	h := w.Header()
+	h.Set("Content-Type", c.Attachment.ContentType)
+	h.Set("Content-Length", strconv.FormatInt(c.Attachment.Size, 10))
+	// immutable: an attachment never changes
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	safe.Copy(r.Context(), w, c.Body)
 }

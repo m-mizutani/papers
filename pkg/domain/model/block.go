@@ -1,13 +1,13 @@
 package model
 
 import (
+	"slices"
 	"time"
 
 	"github.com/m-mizutani/goerr/v2"
 )
 
-// BlockType is the kind of a block. Text-like blocks hold inline Markdown in
-// Content; source-like blocks (code, html, svg, mermaid) hold source code.
+// BlockType is the kind of a block.
 type BlockType string
 
 const (
@@ -21,53 +21,51 @@ const (
 	BlockCode      BlockType = "code"
 	BlockDivider   BlockType = "divider"
 	BlockImage     BlockType = "image"
-	// BlockTable is a container; its cells are child blocks of type
-	// BlockTableCell, each addressed by Props.Row / Props.Col. A cell is a
-	// block of its own so it can be edited (and locked) independently.
 	BlockTable     BlockType = "table"
 	BlockTableCell BlockType = "table_cell"
-	// Rich blocks. They are produced by AI through the API / MCP; the Web UI
-	// renders them but does not offer an editor for them.
+	// BlockPaper places a child paper in its parent's body.
+	BlockPaper BlockType = "paper"
+
+	// Rich blocks are drawn in a sandboxed frame; only agents edit them.
 	BlockHTML    BlockType = "html"
 	BlockSVG     BlockType = "svg"
 	BlockMermaid BlockType = "mermaid"
 )
 
 type blockTypeSpec struct {
-	// humanEditable is false for rich blocks that the UI only renders.
 	humanEditable bool
-	// container blocks may have children.
-	container bool
-	// child blocks must have a parent of this type.
-	parentType BlockType
-	// noContent blocks must have an empty Content.
-	noContent bool
+	container     bool
+	parentType    BlockType
+	noContent     bool
+	// markup means the content is inline markup (Markdown + colour spans).
+	markup bool
 }
 
 var blockTypeSpecs = map[BlockType]blockTypeSpec{
-	BlockParagraph: {humanEditable: true},
-	BlockHeading:   {humanEditable: true},
-	BlockQuote:     {humanEditable: true},
-	BlockBullet:    {humanEditable: true},
-	BlockNumbered:  {humanEditable: true},
-	BlockTodo:      {humanEditable: true},
-	BlockCallout:   {humanEditable: true},
+	BlockParagraph: {humanEditable: true, markup: true},
+	BlockHeading:   {humanEditable: true, markup: true},
+	BlockQuote:     {humanEditable: true, markup: true},
+	BlockBullet:    {humanEditable: true, markup: true},
+	BlockNumbered:  {humanEditable: true, markup: true},
+	BlockTodo:      {humanEditable: true, markup: true},
+	BlockCallout:   {humanEditable: true, markup: true},
 	BlockCode:      {humanEditable: true},
 	BlockDivider:   {humanEditable: true, noContent: true},
-	BlockImage:     {humanEditable: true},
+	BlockImage:     {humanEditable: true, markup: true},
 	BlockTable:     {humanEditable: true, container: true, noContent: true},
-	BlockTableCell: {humanEditable: true, parentType: BlockTable},
+	BlockTableCell: {humanEditable: true, parentType: BlockTable, markup: true},
+	BlockPaper:     {humanEditable: true, noContent: true},
 	BlockHTML:      {},
 	BlockSVG:       {},
 	BlockMermaid:   {},
 }
 
-// BlockTypes returns every known block type in a stable order.
+// BlockTypes lists every block type in display order.
 func BlockTypes() []BlockType {
 	return []BlockType{
 		BlockParagraph, BlockHeading, BlockQuote, BlockBullet, BlockNumbered,
 		BlockTodo, BlockCallout, BlockCode, BlockDivider, BlockImage,
-		BlockTable, BlockTableCell, BlockHTML, BlockSVG, BlockMermaid,
+		BlockTable, BlockTableCell, BlockPaper, BlockHTML, BlockSVG, BlockMermaid,
 	}
 }
 
@@ -78,56 +76,63 @@ func (t BlockType) Validate() error {
 	return nil
 }
 
-// HumanEditable reports whether the Web UI offers an editor for this type.
+// HumanEditable reports whether the Web UI offers an editor for the type.
 func (t BlockType) HumanEditable() bool { return blockTypeSpecs[t].humanEditable }
 
-// IsContainer reports whether blocks of this type may have children.
+// IsContainer reports whether the type owns child blocks.
 func (t BlockType) IsContainer() bool { return blockTypeSpecs[t].container }
 
-// RequiredParent returns the parent type a block of this type must have, or
-// "" if it must be a top-level block.
+// RequiredParent is the parent type the block must live under, if any.
 func (t BlockType) RequiredParent() BlockType { return blockTypeSpecs[t].parentType }
 
-// BlockProps holds the type-specific attributes of a block. Only the fields
-// relevant to the type are meaningful; Normalize clears the rest so stored
-// blocks never carry stale attributes after a type change.
+// UsesMarkup reports whether the content is inline markup.
+func (t BlockType) UsesMarkup() bool { return blockTypeSpecs[t].markup }
+
+// TableLine is a row or a column of a table: an ID and an order key.
+type TableLine struct {
+	ID    LineID `json:"id"`
+	Order string `json:"order"`
+}
+
+// BlockProps holds the type-specific values of a block. Fields that do not
+// belong to the type are dropped by Normalize.
 type BlockProps struct {
-	// heading: 1..3
-	Level int `json:"level,omitempty"`
-	// list items, todo: nesting depth 0..MaxIndent
-	Indent int `json:"indent,omitempty"`
-	// todo
-	Checked bool `json:"checked,omitempty"`
-	// code: highlight language
+	Level    int    `json:"level,omitempty"`
+	Indent   int    `json:"indent,omitempty"`
+	Checked  bool   `json:"checked,omitempty"`
 	Language string `json:"language,omitempty"`
-	// callout: an emoji or short icon
-	Icon string `json:"icon,omitempty"`
-	// image: source URL. Content is the caption.
-	URL string `json:"url,omitempty"`
-	// table: shape and whether the first row is a header
-	Rows      int  `json:"rows,omitempty"`
-	Cols      int  `json:"cols,omitempty"`
-	HeaderRow bool `json:"header_row,omitempty"`
-	// table_cell: position in the parent table (0-origin)
-	Row int `json:"row,omitempty"`
-	Col int `json:"col,omitempty"`
-	// html / svg / mermaid: rendered height hint in pixels (0 = auto)
+	Icon     string `json:"icon,omitempty"`
+
+	// image: an attachment of the same paper, or an external URL.
+	URL          string       `json:"url,omitempty"`
+	AttachmentID AttachmentID `json:"attachment_id,omitempty"`
+
+	// table
+	Rows      []TableLine `json:"rows,omitempty"`
+	Cols      []TableLine `json:"cols,omitempty"`
+	HeaderRow bool        `json:"header_row,omitempty"`
+	// table_cell
+	RowID LineID `json:"row_id,omitempty"`
+	ColID LineID `json:"col_id,omitempty"`
+
+	// paper: the child paper this block places.
+	PaperID PaperID `json:"paper_id,omitempty"`
+
+	// rich blocks
 	Height int `json:"height,omitempty"`
 }
 
 const (
-	MaxIndent       = 6
-	MaxHeadingLevel = 3
-	MaxTableRows    = 100
-	MaxTableCols    = 20
-	// MaxTableCells bounds rows x cols so that creating a table fits in
-	// one commit (see MaxChangesPerCommit).
-	MaxTableCells    = 200
+	MaxIndent        = 6
+	MaxHeadingLevel  = 3
+	MaxTableRows     = 100
+	MaxTableCols     = 20
+	MaxTableCells    = 2000
 	MaxContentLength = 256 * 1024
 	MaxRichHeight    = 4000
 )
 
-// Normalize clears props that do not apply to t.
+// Normalize keeps only the props that belong to t.
 func (p BlockProps) Normalize(t BlockType) BlockProps {
 	var n BlockProps
 	switch t {
@@ -143,15 +148,43 @@ func (p BlockProps) Normalize(t BlockType) BlockProps {
 	case BlockCallout:
 		n.Icon = p.Icon
 	case BlockImage:
-		n.URL = p.URL
+		n.URL, n.AttachmentID = p.URL, p.AttachmentID
 	case BlockTable:
-		n.Rows, n.Cols, n.HeaderRow = p.Rows, p.Cols, p.HeaderRow
+		n.Rows = slices.Clone(p.Rows)
+		n.Cols = slices.Clone(p.Cols)
+		n.HeaderRow = p.HeaderRow
 	case BlockTableCell:
-		n.Row, n.Col = p.Row, p.Col
+		n.RowID, n.ColID = p.RowID, p.ColID
+	case BlockPaper:
+		n.PaperID = p.PaperID
 	case BlockHTML, BlockSVG, BlockMermaid:
 		n.Height = p.Height
 	}
 	return n
+}
+
+// Equal compares props including table lines.
+func (p BlockProps) Equal(o BlockProps) bool {
+	return p.Level == o.Level && p.Indent == o.Indent && p.Checked == o.Checked &&
+		p.Language == o.Language && p.Icon == o.Icon && p.URL == o.URL &&
+		p.AttachmentID == o.AttachmentID && slices.Equal(p.Rows, o.Rows) &&
+		slices.Equal(p.Cols, o.Cols) && p.HeaderRow == o.HeaderRow &&
+		p.RowID == o.RowID && p.ColID == o.ColID && p.PaperID == o.PaperID &&
+		p.Height == o.Height
+}
+
+func validLines(lines []TableLine, max int, what string) error {
+	if len(lines) < 1 || len(lines) > max {
+		return goerr.Wrap(ErrInvalidArgument, "table "+what+" out of range", goerr.V("count", len(lines)))
+	}
+	seen := map[LineID]bool{}
+	for _, l := range lines {
+		if !ValidID(string(l.ID)) || seen[l.ID] || !ValidOrderKey(l.Order) {
+			return goerr.Wrap(ErrInvalidArgument, "invalid table "+what, goerr.V("id", l.ID), goerr.V("order", l.Order))
+		}
+		seen[l.ID] = true
+	}
+	return nil
 }
 
 func (p BlockProps) validate(t BlockType) error {
@@ -164,13 +197,30 @@ func (p BlockProps) validate(t BlockType) error {
 		if p.Indent < 0 || p.Indent > MaxIndent {
 			return goerr.Wrap(ErrInvalidArgument, "indent out of range", goerr.V("indent", p.Indent))
 		}
+	case BlockImage:
+		if p.URL != "" && p.AttachmentID != "" {
+			return goerr.Wrap(ErrInvalidArgument, "an image uses either an attachment or a URL")
+		}
+		if p.AttachmentID != "" && !ValidID(string(p.AttachmentID)) {
+			return goerr.Wrap(ErrInvalidArgument, "invalid attachment id", goerr.V("attachment_id", p.AttachmentID))
+		}
 	case BlockTable:
-		if p.Rows < 1 || p.Rows > MaxTableRows || p.Cols < 1 || p.Cols > MaxTableCols || p.Rows*p.Cols > MaxTableCells {
-			return goerr.Wrap(ErrInvalidArgument, "table shape out of range", goerr.V("rows", p.Rows), goerr.V("cols", p.Cols))
+		if err := validLines(p.Rows, MaxTableRows, "rows"); err != nil {
+			return err
+		}
+		if err := validLines(p.Cols, MaxTableCols, "columns"); err != nil {
+			return err
+		}
+		if len(p.Rows)*len(p.Cols) > MaxTableCells {
+			return goerr.Wrap(ErrInvalidArgument, "table has too many cells", goerr.V("rows", len(p.Rows)), goerr.V("cols", len(p.Cols)))
 		}
 	case BlockTableCell:
-		if p.Row < 0 || p.Row >= MaxTableRows || p.Col < 0 || p.Col >= MaxTableCols {
-			return goerr.Wrap(ErrInvalidArgument, "table cell position out of range", goerr.V("row", p.Row), goerr.V("col", p.Col))
+		if !ValidID(string(p.RowID)) || !ValidID(string(p.ColID)) {
+			return goerr.Wrap(ErrInvalidArgument, "table cell needs a row id and a column id")
+		}
+	case BlockPaper:
+		if !ValidID(string(p.PaperID)) {
+			return goerr.Wrap(ErrInvalidArgument, "paper block needs a paper id", goerr.V("paper_id", p.PaperID))
 		}
 	case BlockHTML, BlockSVG, BlockMermaid:
 		if p.Height < 0 || p.Height > MaxRichHeight {
@@ -180,22 +230,22 @@ func (p BlockProps) validate(t BlockType) error {
 	return nil
 }
 
-// Block is the unit of editing and of soft locking. Blocks are ordered among
-// their siblings by Order, a fractional index key (see KeyBetween), so an
-// insertion never rewrites the order of other blocks.
+// Block is the unit of editing and conflict detection. Its contents are
+// Type, Content and Props; its position is ParentID and Order.
 type Block struct {
 	ID          BlockID     `json:"id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
 	PaperID     PaperID     `json:"paper_id"`
-	ParentID    BlockID     `json:"parent_id,omitempty"`
-	Order       string      `json:"order"`
-	Type        BlockType   `json:"type"`
-	Content     string      `json:"content"`
-	Props       BlockProps  `json:"props"`
-	// Version increases by one on every change to this block. Writers may
-	// send the version they based their edit on; a mismatch does not reject
-	// the write (last writer wins) but is reported as an overwrite.
-	Version   int64     `json:"version"`
+	// ParentID is set only for table cells.
+	ParentID BlockID    `json:"parent_id,omitempty"`
+	Order    string     `json:"order"`
+	Type     BlockType  `json:"type"`
+	Content  string     `json:"content"`
+	Props    BlockProps `json:"props"`
+	// Rev is an internal revision: it starts at 1 and grows by one each
+	// time the contents change. Moving a block does not change it.
+	Rev int64 `json:"rev"`
+
 	CreatedBy Actor     `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedBy Actor     `json:"updated_by"`
@@ -203,8 +253,8 @@ type Block struct {
 }
 
 func (b *Block) Validate() error {
-	if b.ID == "" || b.WorkspaceID == "" || b.PaperID == "" {
-		return goerr.Wrap(ErrInvalidArgument, "block id, workspace id and paper id are required")
+	if !ValidID(string(b.ID)) || b.WorkspaceID == "" || b.PaperID == "" {
+		return goerr.Wrap(ErrInvalidArgument, "block id, workspace id and paper id are required", goerr.V("id", b.ID))
 	}
 	if err := b.Type.Validate(); err != nil {
 		return err
@@ -233,14 +283,21 @@ func (b *Block) Validate() error {
 	if err := b.UpdatedBy.Validate(); err != nil {
 		return goerr.Wrap(err, "invalid block updater")
 	}
-	if b.Version < 1 {
-		return goerr.Wrap(ErrInvalidArgument, "block version must be positive")
+	if b.Rev < 1 {
+		return goerr.Wrap(ErrInvalidArgument, "block rev must be positive")
 	}
 	return nil
 }
 
-// Clone returns a deep copy (Block has no reference fields beyond values).
 func (b *Block) Clone() *Block {
 	c := *b
+	c.Props.Rows = slices.Clone(b.Props.Rows)
+	c.Props.Cols = slices.Clone(b.Props.Cols)
 	return &c
+}
+
+// SameContents reports whether two blocks look the same (type, content and
+// props); position and authorship are ignored.
+func SameContents(x, y *Block) bool {
+	return x.Type == y.Type && x.Content == y.Content && x.Props.Equal(y.Props)
 }

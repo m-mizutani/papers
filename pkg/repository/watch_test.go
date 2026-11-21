@@ -11,96 +11,54 @@ import (
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-func next(t *testing.T, ch <-chan *model.Event, want model.EventType) *model.Event {
-	t.Helper()
-	deadline := time.After(10 * time.Second)
-	for {
-		select {
-		case ev, ok := <-ch:
-			if !ok {
-				t.Fatalf("watch closed while waiting for %s", want)
-			}
-			if ev.Type == want {
-				return ev
-			}
-		case <-deadline:
-			t.Fatalf("no %s event", want)
-		}
-	}
-}
-
-func TestWatchPaper(t *testing.T) {
-	runRepositoryTest(t, "streams block and paper changes", func(t *testing.T, repo interfaces.Repository) {
-		ctx, cancel := context.WithCancel(context.Background())
+func TestFeed(t *testing.T) {
+	runRepositoryTest(t, "transaction events and presence reach watchers", func(t *testing.T, repo interfaces.Repository) {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		p := newPaper(t, repo)
-		existing := newBlock(p, "V", "before watch")
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(existing) }))
+		_, p := homeAndChild(t, repo)
+		ws := p.WorkspaceID
+		start := time.Now().UTC().Add(-time.Second)
 
-		ch := gt.R1(repo.WatchPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		ch := gt.R1(repo.Watch(ctx, ws, p.ID)).NoError(t)
+		b := blockIn(p, "", "a1", "x")
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			if err := tx.PutBlock(b); err != nil {
+				return err
+			}
+			return tx.AddEvent(&model.Event{Type: model.EventBlockPut, WorkspaceID: ws, PaperID: p.ID, At: time.Now().UTC(), Block: b})
+		}))
+		gt.NoError(t, repo.PutEvent(ctx, &model.Event{
+			Type: model.EventPresence, WorkspaceID: ws, PaperID: p.ID, At: time.Now().UTC(),
+			Presence: &model.Presence{BlockID: b.ID, Actor: p.CreatedBy, Until: time.Now().UTC().Add(model.PresenceTTL)},
+		}))
 
-		b := newBlock(p, "k", "new")
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b) }))
-		ev := next(t, ch, model.EventBlockPut)
-		gt.Equal(t, ev.Block.ID, b.ID)
-		gt.Equal(t, ev.Block.Content, "new")
-		gt.Equal(t, ev.PaperID, p.ID)
-		gt.Equal(t, ev.WorkspaceID, p.WorkspaceID)
+		var got []model.EventType
+		for len(got) < 2 {
+			select {
+			case ev, ok := <-ch:
+				gt.True(t, ok).Required()
+				got = append(got, ev.Type)
+			case <-ctx.Done():
+				t.Fatal("feed timed out")
+			}
+		}
+		gt.Equal(t, got, []model.EventType{model.EventBlockPut, model.EventPresence})
 
-		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.DeleteBlock(existing.ID) }))
-		gt.Equal(t, next(t, ch, model.EventBlockDeleted).BlockID, existing.ID)
-
-		now := time.Now().UTC()
-
-		gt.R1(repo.UpdatePaperAccess(ctx, p.WorkspaceID, p.ID, model.PaperAccess{Restricted: false}, humanActor("u"), now)).NoError(t)
-		gt.Equal(t, next(t, ch, model.EventPaperUpdated).Paper.Access.Restricted, false)
-
-		gt.NoError(t, repo.DeletePaper(ctx, p.WorkspaceID, p.ID))
-		next(t, ch, model.EventPaperDeleted)
+		list := gt.R1(repo.ListEvents(ctx, ws, p.ID, start)).NoError(t)
+		gt.A(t, list).Length(2)
+		gt.Equal(t, list[0].Block.ID, b.ID)
 	})
 
 	runRepositoryTest(t, "cancel closes the channel", func(t *testing.T, repo interfaces.Repository) {
 		ctx, cancel := context.WithCancel(context.Background())
-		p := newPaper(t, repo)
-		ch := gt.R1(repo.WatchPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		_, p := homeAndChild(t, repo)
+		ch := gt.R1(repo.Watch(ctx, p.WorkspaceID, p.ID)).NoError(t)
 		cancel()
 		select {
 		case _, ok := <-ch:
-			for ok {
-				_, ok = <-ch
-			}
+			gt.False(t, ok)
 		case <-time.After(10 * time.Second):
-			t.Fatal("channel not closed")
-		}
-	})
-
-	runRepositoryTest(t, "missing paper", func(t *testing.T, repo interfaces.Repository) {
-		_, err := repo.WatchPaper(context.Background(), model.NewWorkspaceID(), model.NewPaperID())
-		gt.Error(t, err)
-	})
-}
-
-func TestWatchPaperOverflowClosesChannel(t *testing.T) {
-	runRepositoryTest(t, "slow watcher is dropped", func(t *testing.T, repo interfaces.Repository) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		p := newPaper(t, repo)
-		ch := gt.R1(repo.WatchPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
-		// The test backends buffer 64 events; write more without reading.
-		for i := 0; i < 80; i++ {
-			b := newBlock(p, "V", "x")
-			gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b) }))
-		}
-		deadline := time.After(10 * time.Second)
-		for {
-			select {
-			case _, ok := <-ch:
-				if !ok {
-					return
-				}
-			case <-deadline:
-				t.Fatal("overflowing watch was not closed")
-			}
+			t.Fatal("channel was not closed")
 		}
 	})
 }

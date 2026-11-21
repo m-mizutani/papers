@@ -67,7 +67,7 @@ func TestAPIRequiresAuthAndCSRF(t *testing.T) {
 	c := ts.login("alice@example.com")
 	c.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, nil)
 	c.csrf = false
-	c.expect("POST", "/api/v1/workspaces", map[string]string{"name": "x"}, http.StatusForbidden, nil)
+	c.expect("POST", "/api/v1/workspaces/team/papers", map[string]string{"title": "x"}, http.StatusForbidden, nil)
 
 	bad := &client{ts: ts, hc: &http.Client{}, bearer: "pap_nope.nope"}
 	resp := bad.do("GET", "/api/v1/workspaces", nil)
@@ -83,10 +83,8 @@ func TestDevModeLogin(t *testing.T) {
 	gt.Equal(t, resp.Header.Get("Location"), "/w/1")
 
 	var me struct {
-		NoAuthn     bool `json:"no_authn"`
-		SystemAdmin bool `json:"system_admin"`
+		NoAuthn bool `json:"no_authn"`
 	}
 	c.expect("GET", "/api/auth/me", nil, http.StatusOK, &me)
 	gt.True(t, me.NoAuthn)
-	gt.True(t, me.SystemAdmin)
 }

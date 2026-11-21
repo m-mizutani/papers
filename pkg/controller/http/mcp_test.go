@@ -38,19 +38,24 @@ func callTool[T any](t *testing.T, s *mcp.ClientSession, name string, args any) 
 	return out, true
 }
 
+func connectMCP(t *testing.T, ts *testServer, bearer string) *mcp.ClientSession {
+	t.Helper()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:   ts.srv.URL + "/mcp",
+		HTTPClient: &http.Client{Transport: &bearerTransport{token: bearer, base: http.DefaultTransport}},
+	}
+	session, err := client.Connect(context.Background(), transport, nil)
+	gt.NoError(t, err).Required()
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
 func TestMCP(t *testing.T) {
 	ts := newTestServer(t, false)
 	alice, _, ws, paper := setupPaper(t, ts)
 	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	transport := &mcp.StreamableClientTransport{
-		Endpoint:   ts.srv.URL + "/mcp",
-		HTTPClient: &http.Client{Transport: &bearerTransport{token: agent.bearer, base: http.DefaultTransport}},
-	}
-	session, err := client.Connect(context.Background(), transport, nil)
-	gt.NoError(t, err)
-	defer func() { _ = session.Close() }()
+	session := connectMCP(t, ts, agent.bearer)
 
 	tools, err := session.ListTools(context.Background(), nil)
 	gt.NoError(t, err)
@@ -58,121 +63,88 @@ func TestMCP(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_list_papers", "papers_search", "papers_read_paper", "papers_create_paper", "papers_commit", "papers_history", "papers_block_history"} {
-		gt.True(t, names[n])
+	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_search", "papers_read", "papers_create_paper", "papers_write", "papers_save_version", "papers_versions", "papers_diff"} {
+		gt.True(t, names[n]).Describef("tool %s", n)
 	}
-
-	type wsOut struct {
-		Workspaces []struct {
-			ID model.WorkspaceID `json:"id"`
-		} `json:"workspaces"`
-	}
-	wl, ok := callTool[wsOut](t, session, "papers_list_workspaces", map[string]any{})
-	gt.True(t, ok)
-	gt.A(t, wl.Workspaces).Length(1)
-	gt.Equal(t, wl.Workspaces[0].ID, ws)
-
-	type readOut struct {
-		Blocks []struct {
-			ID      model.BlockID `json:"id"`
-			Version int64         `json:"version"`
-		} `json:"blocks"`
-		Markdown string `json:"markdown"`
-	}
-	rp, ok := callTool[readOut](t, session, "papers_read_paper", map[string]any{"workspace_id": ws, "paper_id": paper})
-	gt.True(t, ok)
-	gt.A(t, rp.Blocks).Length(3)
-
-	type commitOut struct {
-		Inserted    []model.BlockID         `json:"inserted"`
-		Versions    map[model.BlockID]int64 `json:"versions"`
-		Overwritten []model.BlockID         `json:"overwritten"`
-	}
-	co, ok := callTool[commitOut](t, session, "papers_commit", map[string]any{
-		"workspace_id": ws, "paper_id": paper, "message": "add diagram",
-		"ops": []map[string]any{{"op": "insert_markdown", "markdown": "## Flow\n\n```mermaid\ngraph TD; A-->B\n```", "after": rp.Blocks[0].ID}},
-	})
-	gt.True(t, ok)
-	gt.A(t, co.Inserted).Length(2)
-	gt.Equal(t, co.Versions[co.Inserted[0]], int64(1))
-
-	type blockHistOut struct {
-		Versions []struct {
-			Version int64  `json:"version"`
-			By      string `json:"by"`
-		} `json:"versions"`
-	}
-	bh, ok := callTool[blockHistOut](t, session, "papers_block_history", map[string]any{"workspace_id": ws, "paper_id": paper, "block_id": co.Inserted[0]})
-	gt.True(t, ok)
-	gt.A(t, bh.Versions).Length(1)
-	gt.Equal(t, bh.Versions[0].By, "t (for alice)")
-
-	// a human saves first; the agent's write based on v1 fails with the
-	// current contents, and succeeds when forced
-	blockID := co.Inserted[0]
-	alice.expect("POST", "/api/v1/workspaces/"+string(ws)+"/papers/"+string(paper)+"/commits", map[string]any{
-		"ops": []map[string]any{{"op": "update", "block_id": blockID, "content": "human edit", "base_version": 1}},
-	}, http.StatusOK, nil)
-	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "papers_commit", Arguments: map[string]any{
-		"workspace_id": ws, "paper_id": paper, "message": "x",
-		"ops": []map[string]any{{"op": "update", "block_id": blockID, "content": "agent edit", "base_version": 1}},
-	}})
-	gt.NoError(t, err)
-	gt.True(t, res.IsError)
-	text := res.Content[0].(*mcp.TextContent).Text
-	gt.True(t, strings.Contains(text, "conflict"))
-	gt.True(t, strings.Contains(text, "human edit"))
-	forced, ok := callTool[commitOut](t, session, "papers_commit", map[string]any{
-		"workspace_id": ws, "paper_id": paper, "message": "x", "force": true,
-		"ops": []map[string]any{{"op": "update", "block_id": blockID, "content": "agent edit", "base_version": 1}},
-	})
-	gt.True(t, ok)
-	gt.A(t, forced.Overwritten).Length(1)
-
-	type histOut struct {
-		Commits []struct {
-			Kind  model.ActorKind `json:"actor_kind"`
-			Actor string          `json:"actor"`
-		} `json:"commits"`
-	}
-	h, ok := callTool[histOut](t, session, "papers_history", map[string]any{"workspace_id": ws, "paper_id": paper})
-	gt.True(t, ok)
-	gt.A(t, h.Commits).Length(4)
-	gt.Equal(t, h.Commits[0].Kind, model.ActorAgent)
-	gt.Equal(t, h.Commits[1].Kind, model.ActorHuman)
-	gt.Equal(t, h.Commits[3].Kind, model.ActorHuman)
-
-	type created struct {
-		ID model.PaperID `json:"id"`
-	}
-	cp, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "AI notes", "markdown": "hello"})
-	gt.True(t, ok)
-	gt.NotEqual(t, cp.ID, model.PaperID(""))
-
-	type searchOut struct {
-		Hits []struct {
-			PaperID model.PaperID `json:"paper_id"`
-		} `json:"hits"`
-	}
-	so, ok := callTool[searchOut](t, session, "papers_search", map[string]any{"workspace_id": ws, "query": "hello"})
-	gt.True(t, ok)
-	gt.A(t, so.Hits).Length(1)
-
-	type papersOut struct {
-		Papers []struct {
-			ID model.PaperID `json:"id"`
-		} `json:"papers"`
-	}
-	pl, ok := callTool[papersOut](t, session, "papers_list_papers", map[string]any{"workspace_id": ws})
-	gt.True(t, ok)
-	gt.A(t, pl.Papers).Length(2)
 
 	type guideOut struct {
-		Guide string `json:"guide"`
+		WorkspaceRules string `json:"workspace_rules"`
+		Home           string `json:"home"`
 	}
-	g, ok := callTool[guideOut](t, session, "papers_guide", map[string]any{})
+	g, ok := callTool[guideOut](t, session, "papers_guide", map[string]any{"workspace_id": ws})
 	gt.True(t, ok)
-	gt.True(t, len(g.Guide) > 100)
+	gt.Equal(t, g.WorkspaceRules, "Write runbooks as numbered lists.")
+	gt.True(t, strings.Contains(g.Home, "Runbook"))
+
+	type readOut struct {
+		ID     model.PaperID `json:"id"`
+		Blocks []struct {
+			ID  model.BlockID `json:"id"`
+			Rev int64         `json:"rev"`
+		} `json:"blocks"`
+		WorkspaceRules string `json:"workspace_rules"`
+	}
+	rp, ok := callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": ws, "paper": "Runbook"})
+	gt.True(t, ok)
+	gt.Equal(t, rp.ID, paper)
+	gt.A(t, rp.Blocks).Length(3)
+	gt.NotEqual(t, rp.WorkspaceRules, "")
+
+	type writeOut struct {
+		Refs    map[string]string       `json:"refs"`
+		Revs    map[model.BlockID]int64 `json:"revs"`
+		Unsaved bool                    `json:"unsaved"`
+	}
+	wo, ok := callTool[writeOut](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(paper), "ops": []map[string]any{
+		{"op": "update", "block_id": rp.Blocks[0].ID, "base_rev": rp.Blocks[0].Rev, "content": "Steps (agent)"},
+		{"op": "insert", "ref": "n1", "type": "paragraph", "content": "note"},
+	}})
+	gt.True(t, ok)
+	gt.True(t, wo.Unsaved)
+	gt.Equal(t, wo.Revs[rp.Blocks[0].ID], int64(2))
+	gt.True(t, model.ValidID(wo.Refs["n1"]))
+
+	// a stale base revision is an error explaining the current state
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "papers_write", Arguments: map[string]any{"workspace_id": ws, "paper": string(paper), "ops": []map[string]any{
+		{"op": "update", "block_id": rp.Blocks[0].ID, "base_rev": 1, "content": "x"},
+	}}})
+	gt.NoError(t, err)
+	gt.True(t, res.IsError)
+
+	type saveOut struct {
+		Saved   bool `json:"saved"`
+		Version int  `json:"version"`
+	}
+	so, ok := callTool[saveOut](t, session, "papers_save_version", map[string]any{"workspace_id": ws, "paper": string(paper), "note": "by agent"})
+	gt.True(t, ok)
+	gt.True(t, so.Saved)
+	gt.Equal(t, so.Version, 1)
+
+	type versionsOut struct {
+		Versions []struct {
+			By string `json:"by"`
+		} `json:"versions"`
+	}
+	vo, ok := callTool[versionsOut](t, session, "papers_versions", map[string]any{"workspace_id": ws, "paper": string(paper)})
+	gt.True(t, ok)
+	gt.Equal(t, vo.Versions[0].By, "t (for alice)")
+
+	type createOut struct {
+		ID model.PaperID `json:"id"`
+	}
+	co, ok := callTool[createOut](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Child", "parent": "Runbook", "markdown": "hello"})
+	gt.True(t, ok)
+	type searchOut struct {
+		Hits []struct {
+			Paper struct {
+				ID model.PaperID `json:"id"`
+			} `json:"paper"`
+		} `json:"hits"`
+	}
+	sr, ok := callTool[searchOut](t, session, "papers_search", map[string]any{"workspace_id": ws, "query": "hello", "under": "Runbook"})
+	gt.True(t, ok)
+	gt.A(t, sr.Hits).Length(1)
+	gt.Equal(t, sr.Hits[0].Paper.ID, co.ID)
 }
 
 func TestMCPRequiresAuth(t *testing.T) {
@@ -188,20 +160,26 @@ func TestMCPRequiresAuth(t *testing.T) {
 
 func TestMCPInDevModeActsAsAgent(t *testing.T) {
 	ts := newTestServer(t, true)
-	c := ts.anonymous()
-	var ws wsResp
-	c.expect("POST", "/api/v1/workspaces", map[string]string{"name": "W"}, http.StatusCreated, &ws)
-
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: ts.srv.URL + "/mcp"}, nil)
 	gt.NoError(t, err).Required()
 	defer func() { _ = session.Close() }()
 
 	type created struct {
-		ID        model.PaperID `json:"id"`
-		UpdatedBy string        `json:"updated_by"`
+		ID model.PaperID `json:"id"`
 	}
-	cp, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": ws.ID, "title": "x", "markdown": "y"})
+	cp, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": "team", "title": "x"})
 	gt.True(t, ok)
-	gt.Equal(t, cp.UpdatedBy, "MCP client (for Dev)")
+	type versionsOut struct {
+		Versions []struct {
+			By string `json:"by"`
+		} `json:"versions"`
+	}
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": "team", "paper": string(cp.ID), "ops": []map[string]any{{"op": "insert", "type": "paragraph", "content": "y"}}})
+	gt.True(t, ok)
+	_, ok = callTool[struct{}](t, session, "papers_save_version", map[string]any{"workspace_id": "team", "paper": string(cp.ID)})
+	gt.True(t, ok)
+	vo, ok := callTool[versionsOut](t, session, "papers_versions", map[string]any{"workspace_id": "team", "paper": string(cp.ID)})
+	gt.True(t, ok)
+	gt.Equal(t, vo.Versions[0].By, "MCP client (for Dev)")
 }

@@ -13,7 +13,7 @@ func TestServer(t *testing.T) {
 	gt.NoError(t, s.Validate())
 	gt.True(t, s.SecureCookie())
 	gt.Equal(t, s.BaseURL(), "https://papers.example.com")
-	gt.Equal(t, s.UseCaseConfig().MaxOpsPerCommit, 1)
+	gt.Equal(t, s.UseCaseConfig().MaxOpsPerBatch, 1)
 
 	gt.False(t, config.NewServerForTest("http://localhost:8080").SecureCookie())
 	gt.Error(t, config.NewServerForTest("papers.example.com").Validate())

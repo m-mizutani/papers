@@ -3,17 +3,25 @@
 // Layout (see docs/design.html for the rationale):
 //
 //	users/{userID}
-//	emails/{base64url(lower(email))}                      -> {UserID}
+//	users/{userID}/pins/{wsID}_{paperID}
+//	users/{userID}/recents/{wsID}
+//	emails/{base64url(lower(email))}                 -> {UserID}
 //	identities/{provider}/subjects/{subject}
-//	sessions/{sessionID}                                   TTL on ExpiresAt
+//	sessions/{sessionID}                             TTL on ExpiresAt
 //	tokens/{tokenID}
-//	groups/{groupID}
-//	workspaces/{wsID}
+//	workspaces/{wsID}                                WorkspaceRecord
 //	workspaces/{wsID}/papers/{paperID}
-//	  .../blocks/{blockID}
-//	  .../blocks/{blockID}/versions/{version}             immutable snapshots
-//	  .../commits/{commitID}
-//	workspaces/{wsID}/search/{paperID}_{blockID|title}     search entries
+//	  .../blocks/{blockID}                           current state
+//	  .../versions/{number, zero padded}             saved versions
+//	  .../snapshots/{blockID}_{rev}                  block contents of versions
+//	  .../events/{auto}                              change feed, TTL on ExpireAt
+//	  .../attachments/{attachmentID}
+//	workspaces/{wsID}/forwards/{paperID}             papers moved to another workspace
+//	workspaces/{wsID}/search/{paperID}_{blockID|title}
+//
+// A transaction spans one workspace. Firestore transactions must perform
+// every read before any write, so writes are staged and flushed when the
+// transaction function returns; reads overlay the staged writes.
 //
 // The database must be a Firestore Enterprise edition database in Native
 // mode: search uses the Search pipeline stage, and Enterprise creates no
@@ -21,7 +29,8 @@
 // RequiredIndexes (a query without one silently scans the collection).
 //
 // Models are persisted as-is (field names are the Go field names) and read
-// back with DataTo; there are no mirror structs.
+// back with DataTo. The only envelope is the feed entry, which carries its
+// expiry time for the TTL policy.
 package firestore
 
 import (
@@ -41,18 +50,22 @@ import (
 )
 
 const (
-	colUsers      = "users"
-	colEmails     = "emails"
-	colIdentities = "identities"
-	colSubjects   = "subjects"
-	colSessions   = "sessions"
-	colTokens     = "tokens"
-	colGroups     = "groups"
-	colWorkspaces = "workspaces"
-	colPapers     = "papers"
-	colBlocks     = "blocks"
-	colVersions   = "versions"
-	colCommits    = "commits"
+	colUsers       = "users"
+	colPins        = "pins"
+	colRecents     = "recents"
+	colEmails      = "emails"
+	colIdentities  = "identities"
+	colSubjects    = "subjects"
+	colSessions    = "sessions"
+	colTokens      = "tokens"
+	colWorkspaces  = "workspaces"
+	colPapers      = "papers"
+	colBlocks      = "blocks"
+	colVersions    = "versions"
+	colSnapshots   = "snapshots"
+	colEvents      = "events"
+	colAttachments = "attachments"
+	colForwards    = "forwards"
 )
 
 type Repository struct {
@@ -114,6 +127,14 @@ func validID(id string) error {
 	return nil
 }
 
+func decode[T any](snap *firestore.DocumentSnapshot, kind string) (*T, error) {
+	var v T
+	if err := snap.DataTo(&v); err != nil {
+		return nil, goerr.Wrap(err, "failed to decode "+kind, goerr.V("id", snap.Ref.ID))
+	}
+	return &v, nil
+}
+
 // get reads one document into a new T, mapping NotFound to model.ErrNotFound.
 func get[T any](ctx context.Context, doc *firestore.DocumentRef, kind string) (*T, error) {
 	if err := validID(doc.ID); err != nil {
@@ -126,11 +147,34 @@ func get[T any](ctx context.Context, doc *firestore.DocumentRef, kind string) (*
 		}
 		return nil, goerr.Wrap(err, "failed to get "+kind, goerr.V("id", doc.ID))
 	}
-	var v T
-	if err := snap.DataTo(&v); err != nil {
-		return nil, goerr.Wrap(err, "failed to decode "+kind, goerr.V("id", doc.ID))
+	return decode[T](snap, kind)
+}
+
+// getAll reads many documents in one round trip, omitting missing ones.
+func getAll[T any](ctx context.Context, client *firestore.Client, refs []*firestore.DocumentRef, kind string) ([]*T, error) {
+	if len(refs) == 0 {
+		return nil, nil
 	}
-	return &v, nil
+	snaps, err := client.GetAll(ctx, refs)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to get "+kind)
+	}
+	return decodeSnaps[T](snaps, kind)
+}
+
+func decodeSnaps[T any](snaps []*firestore.DocumentSnapshot, kind string) ([]*T, error) {
+	var out []*T
+	for _, s := range snaps {
+		if !s.Exists() {
+			continue
+		}
+		v, err := decode[T](s, kind)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 // all reads every document of an iterator.
@@ -145,11 +189,11 @@ func all[T any](it *firestore.DocumentIterator, kind string) ([]*T, error) {
 		if err != nil {
 			return nil, goerr.Wrap(err, "failed to list "+kind)
 		}
-		var v T
-		if err := snap.DataTo(&v); err != nil {
-			return nil, goerr.Wrap(err, "failed to decode "+kind, goerr.V("id", snap.Ref.ID))
+		v, err := decode[T](snap, kind)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, &v)
+		out = append(out, v)
 	}
 }
 
@@ -161,6 +205,20 @@ func (r *Repository) workspaceDoc(ws model.WorkspaceID) *firestore.DocumentRef {
 	return r.client.Collection(colWorkspaces).Doc(string(ws))
 }
 
+func (r *Repository) papersCol(ws model.WorkspaceID) *firestore.CollectionRef {
+	return r.workspaceDoc(ws).Collection(colPapers)
+}
+
 func (r *Repository) paperDoc(ws model.WorkspaceID, paper model.PaperID) *firestore.DocumentRef {
-	return r.workspaceDoc(ws).Collection(colPapers).Doc(string(paper))
+	return r.papersCol(ws).Doc(string(paper))
+}
+
+// validKeys reports whether every key can name a document.
+func validKeys(keys ...string) bool {
+	for _, k := range keys {
+		if validID(k) != nil {
+			return false
+		}
+	}
+	return true
 }

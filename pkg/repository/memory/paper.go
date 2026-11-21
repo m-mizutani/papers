@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/m-mizutani/goerr/v2"
@@ -12,102 +11,6 @@ import (
 	"github.com/m-mizutani/papers/pkg/domain/interfaces"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
-
-func (r *Repository) CreatePaper(_ context.Context, paper *model.Paper) error {
-	if err := paper.Validate(); err != nil {
-		return err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	key := paperKey{paper.WorkspaceID, paper.ID}
-	if _, ok := r.papers[key]; ok {
-		return goerr.Wrap(model.ErrAlreadyExists, "paper already exists", goerr.V("id", paper.ID))
-	}
-	r.papers[key] = &paperData{
-		paper:    clone(paper),
-		blocks:   map[model.BlockID]*model.Block{},
-		versions: map[model.BlockID][]*model.Block{},
-		search:   map[model.BlockID]*model.SearchEntry{},
-	}
-	r.papers[key].indexTitle()
-	return nil
-}
-
-func (r *Repository) getPaperData(ws model.WorkspaceID, id model.PaperID) (*paperData, error) {
-	d, ok := r.papers[paperKey{ws, id}]
-	if !ok {
-		return nil, notFound("paper", id)
-	}
-	return d, nil
-}
-
-func (r *Repository) GetPaper(_ context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	d, err := r.getPaperData(ws, id)
-	if err != nil {
-		return nil, err
-	}
-	return clone(d.paper), nil
-}
-
-func (r *Repository) ListPapers(_ context.Context, ws model.WorkspaceID) ([]*model.Paper, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	var out []*model.Paper
-	for k, d := range r.papers {
-		if k.ws == ws {
-			out = append(out, clone(d.paper))
-		}
-	}
-	slices.SortFunc(out, func(a, b *model.Paper) int { return cmp.Compare(a.ID, b.ID) })
-	return out, nil
-}
-
-func (r *Repository) UpdatePaperAccess(_ context.Context, ws model.WorkspaceID, id model.PaperID, access model.PaperAccess, updatedBy model.Actor, updatedAt time.Time) (*model.Paper, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, err := r.getPaperData(ws, id)
-	if err != nil {
-		return nil, err
-	}
-	p := clone(d.paper)
-	p.Access = access
-	p.UpdatedBy = updatedBy
-	p.UpdatedAt = updatedAt
-	if err := p.Validate(); err != nil {
-		return nil, err
-	}
-	d.paper = clone(p)
-	r.emit(paperKey{ws, id}, &model.Event{Type: model.EventPaperUpdated, Paper: clone(p)})
-	return p, nil
-}
-
-func (r *Repository) DeletePaper(_ context.Context, ws model.WorkspaceID, id model.PaperID) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, err := r.getPaperData(ws, id); err != nil {
-		return err
-	}
-	key := paperKey{ws, id}
-	delete(r.papers, key)
-	r.emit(key, &model.Event{Type: model.EventPaperDeleted})
-	return nil
-}
-
-func (r *Repository) GetBlock(_ context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID) (*model.Block, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	d, err := r.getPaperData(ws, paper)
-	if err != nil {
-		return nil, err
-	}
-	b, ok := d.blocks[id]
-	if !ok {
-		return nil, notFound("block", id)
-	}
-	return clone(b), nil
-}
 
 func compareBlocks(a, b *model.Block) int {
 	if c := cmp.Compare(a.ParentID, b.ParentID); c != 0 {
@@ -119,173 +22,346 @@ func compareBlocks(a, b *model.Block) int {
 	return cmp.Compare(a.ID, b.ID)
 }
 
+func (r *Repository) data(ws model.WorkspaceID, id model.PaperID) (*paperData, error) {
+	d, ok := r.papers[paperKey{ws, id}]
+	if !ok {
+		return nil, notFound("paper", id)
+	}
+	return d, nil
+}
+
+func (r *Repository) GetPaper(_ context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, id)
+	if err != nil {
+		return nil, err
+	}
+	return clone(d.paper), nil
+}
+
+func (r *Repository) GetPapers(_ context.Context, ws model.WorkspaceID, ids []model.PaperID) ([]*model.Paper, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*model.Paper
+	for _, id := range ids {
+		if d, ok := r.papers[paperKey{ws, id}]; ok {
+			out = append(out, clone(d.paper))
+		}
+	}
+	return out, nil
+}
+
+func (r *Repository) listPapers(ws model.WorkspaceID, keep func(*model.Paper) bool) []*model.Paper {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*model.Paper
+	for k, d := range r.papers {
+		if k.ws == ws && keep(d.paper) {
+			out = append(out, clone(d.paper))
+		}
+	}
+	slices.SortFunc(out, func(a, b *model.Paper) int {
+		return cmp.Or(cmp.Compare(a.Title, b.Title), cmp.Compare(a.ID, b.ID))
+	})
+	return out
+}
+
+func (r *Repository) ListChildren(_ context.Context, ws model.WorkspaceID, parent model.PaperID) ([]*model.Paper, error) {
+	return r.listPapers(ws, func(p *model.Paper) bool { return p.ParentID == parent && parent != "" }), nil
+}
+
+func (r *Repository) ListPrivatePapers(_ context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
+	return r.listPapers(ws, func(p *model.Paper) bool {
+		return p.Visibility == model.VisibilityPrivate && p.Owner() == owner && p.DeletedAt == nil
+	}), nil
+}
+
+func (r *Repository) ListTrash(_ context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
+	return r.listPapers(ws, func(p *model.Paper) bool { return p.DeletedAt != nil && p.Owner() == owner }), nil
+}
+
+func (r *Repository) ListTrashedBefore(_ context.Context, ws model.WorkspaceID, t time.Time) ([]*model.Paper, error) {
+	return r.listPapers(ws, func(p *model.Paper) bool { return p.DeletedAt != nil && p.DeletedAt.Before(t) }), nil
+}
+
+func (r *Repository) PurgePaper(_ context.Context, ws model.WorkspaceID, id model.PaperID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := paperKey{ws, id}
+	if _, ok := r.papers[key]; !ok {
+		return notFound("paper", id)
+	}
+	delete(r.papers, key)
+	for wid, c := range r.watchers[key] {
+		close(c)
+		delete(r.watchers[key], wid)
+	}
+	return nil
+}
+
+func (r *Repository) GetBlocks(_ context.Context, ws model.WorkspaceID, paper model.PaperID, ids []model.BlockID) ([]*model.Block, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, paper)
+	if err != nil {
+		return nil, err
+	}
+	var out []*model.Block
+	for _, id := range ids {
+		if b, ok := d.blocks[id]; ok {
+			out = append(out, b.Clone())
+		}
+	}
+	return out, nil
+}
+
 func (r *Repository) ListBlocks(_ context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	d, err := r.getPaperData(ws, paper)
+	d, err := r.data(ws, paper)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]*model.Block, 0, len(d.blocks))
 	for _, b := range d.blocks {
-		out = append(out, clone(b))
+		out = append(out, b.Clone())
 	}
 	slices.SortFunc(out, compareBlocks)
 	return out, nil
 }
 
-func (r *Repository) GetBlockVersion(_ context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, version int64) (*model.Block, error) {
+func (r *Repository) ListPaperBlocks(_ context.Context, ws model.WorkspaceID, paper model.PaperID) ([]*model.Block, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	d, err := r.getPaperData(ws, paper)
+	d, err := r.data(ws, paper)
 	if err != nil {
 		return nil, err
 	}
-	for _, v := range d.versions[id] {
-		if v.Version == version {
-			return clone(v), nil
-		}
-	}
-	return nil, notFound("block version", string(id)+"@"+strconv.FormatInt(version, 10))
-}
-
-func (r *Repository) ListBlockVersions(_ context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID, limit int) ([]*model.Block, error) {
-	if limit <= 0 {
-		return nil, goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	d, err := r.getPaperData(ws, paper)
-	if err != nil {
-		return nil, err
-	}
-	vs := d.versions[id]
-	out := make([]*model.Block, 0, min(limit, len(vs)))
-	for i := len(vs) - 1; i >= 0 && len(out) < limit; i-- {
-		out = append(out, clone(vs[i]))
-	}
-	return out, nil
-}
-
-func compareCommitsDesc(a, b *model.Commit) int {
-	if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
-		return c
-	}
-	return cmp.Compare(b.ID, a.ID)
-}
-
-func (r *Repository) ListCommits(_ context.Context, ws model.WorkspaceID, paper model.PaperID, before model.CommitID, limit int) ([]*model.Commit, error) {
-	if limit <= 0 {
-		return nil, goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	d, err := r.getPaperData(ws, paper)
-	if err != nil {
-		return nil, err
-	}
-	sorted := slices.Clone(d.commits)
-	slices.SortFunc(sorted, compareCommitsDesc)
-	start := 0
-	if before != "" {
-		idx := slices.IndexFunc(sorted, func(c *model.Commit) bool { return c.ID == before })
-		if idx < 0 {
-			return nil, notFound("commit", before)
-		}
-		start = idx + 1
-	}
-	var out []*model.Commit
-	for _, c := range sorted[start:] {
-		if len(out) >= limit {
-			break
-		}
-		out = append(out, clone(c))
-	}
-	return out, nil
-}
-
-// paperTx stages writes and applies them when the transaction function
-// succeeds. The whole repository is locked for the duration, which
-// serialises transactions.
-type paperTx struct {
-	data    *paperData
-	paper   *model.Paper
-	puts    map[model.BlockID]*model.Block
-	deletes map[model.BlockID]struct{}
-	commits []*model.Commit
-	paperW  bool
-}
-
-func (t *paperTx) Paper() *model.Paper { return clone(t.paper) }
-
-func (t *paperTx) GetBlock(id model.BlockID) (*model.Block, error) {
-	if _, ok := t.deletes[id]; ok {
-		return nil, notFound("block", id)
-	}
-	if b, ok := t.puts[id]; ok {
-		return clone(b), nil
-	}
-	if b, ok := t.data.blocks[id]; ok {
-		return clone(b), nil
-	}
-	return nil, notFound("block", id)
-}
-
-func (t *paperTx) BlockVersion(id model.BlockID, version int64) (*model.Block, error) {
-	if b, ok := t.puts[id]; ok && b.Version == version {
-		return clone(b), nil
-	}
-	for _, v := range t.data.versions[id] {
-		if v.Version == version {
-			return clone(v), nil
-		}
-	}
-	return nil, notFound("block version", version)
-}
-
-func (t *paperTx) LatestBlockVersion(id model.BlockID) (*model.Block, error) {
-	if b, ok := t.puts[id]; ok {
-		return clone(b), nil
-	}
-	var latest *model.Block
-	for _, v := range t.data.versions[id] {
-		if latest == nil || v.Version > latest.Version {
-			latest = v
-		}
-	}
-	if latest == nil {
-		return nil, notFound("block", id)
-	}
-	return clone(latest), nil
-}
-
-func (t *paperTx) Children(parent model.BlockID) ([]*model.Block, error) {
 	var out []*model.Block
-	for id, b := range t.data.blocks {
-		if _, ok := t.puts[id]; ok {
-			continue
-		}
-		if _, ok := t.deletes[id]; ok {
-			continue
-		}
-		if b.ParentID == parent {
-			out = append(out, clone(b))
-		}
-	}
-	for _, b := range t.puts {
-		if b.ParentID == parent {
-			out = append(out, clone(b))
+	for _, b := range d.blocks {
+		if b.Type == model.BlockPaper && b.ParentID == "" {
+			out = append(out, b.Clone())
 		}
 	}
 	slices.SortFunc(out, compareBlocks)
 	return out, nil
 }
 
-func (t *paperTx) FirstAfter(parent model.BlockID, order string) (*model.Block, error) {
-	children, err := t.Children(parent)
+func (r *Repository) ListBlocksRange(_ context.Context, ws model.WorkspaceID, paper model.PaperID, after string, limit int) ([]*model.Block, string, error) {
+	if limit < 1 {
+		return nil, "", goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, paper)
+	if err != nil {
+		return nil, "", err
+	}
+	var top []*model.Block
+	for _, b := range d.blocks {
+		if b.ParentID == "" && b.Order > after {
+			top = append(top, b)
+		}
+	}
+	slices.SortFunc(top, compareBlocks)
+	next := ""
+	if len(top) > limit {
+		top = top[:limit]
+		next = top[len(top)-1].Order
+	}
+	var out []*model.Block
+	tables := map[model.BlockID]bool{}
+	for _, b := range top {
+		out = append(out, b.Clone())
+		if b.Type == model.BlockTable {
+			tables[b.ID] = true
+		}
+	}
+	for _, b := range d.blocks {
+		if tables[b.ParentID] {
+			out = append(out, b.Clone())
+		}
+	}
+	slices.SortFunc(out, compareBlocks)
+	return out, next, nil
+}
+
+func (r *Repository) ListVersions(_ context.Context, ws model.WorkspaceID, paper model.PaperID, before, limit int) ([]*model.Version, error) {
+	if limit < 1 {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "limit must be positive")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, paper)
 	if err != nil {
 		return nil, err
 	}
+	var out []*model.Version
+	for n, v := range d.versions {
+		if before <= 0 || n < before {
+			out = append(out, clone(v))
+		}
+	}
+	slices.SortFunc(out, func(a, b *model.Version) int { return cmp.Compare(b.Number, a.Number) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r *Repository) GetVersion(_ context.Context, ws model.WorkspaceID, paper model.PaperID, number int) (*model.Version, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, paper)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := d.versions[number]
+	if !ok {
+		return nil, notFound("version", number)
+	}
+	return clone(v), nil
+}
+
+func (r *Repository) GetSnapshots(_ context.Context, ws model.WorkspaceID, paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, paper)
+	if err != nil {
+		return nil, err
+	}
+	var out []*model.BlockSnapshot
+	for _, ref := range refs {
+		if s, ok := d.snapshots[ref]; ok {
+			out = append(out, clone(s))
+		}
+	}
+	return out, nil
+}
+
+// --- transactions
+
+type stagedSnapshot struct {
+	paper model.PaperID
+	snap  *model.BlockSnapshot
+}
+
+type memTx struct {
+	r         *Repository
+	ws        model.WorkspaceID
+	papers    map[model.PaperID]*model.Paper
+	blocks    map[model.PaperID]map[model.BlockID]*model.Block
+	deleted   map[model.PaperID]map[model.BlockID]bool
+	versions  []*model.Version
+	snapshots []stagedSnapshot
+	forwards  []*model.Forward
+	events    []*model.Event
+}
+
+func (t *memTx) paperExists(id model.PaperID) bool {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	if _, ok := t.papers[id]; ok {
+		return true
+	}
+	_, ok := t.r.papers[paperKey{t.ws, id}]
+	return ok
+}
+
+func (t *memTx) GetPaper(id model.PaperID) (*model.Paper, error) {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	if p, ok := t.papers[id]; ok {
+		return clone(p), nil
+	}
+	d, err := t.r.data(t.ws, id)
+	if err != nil {
+		return nil, err
+	}
+	return clone(d.paper), nil
+}
+
+func (t *memTx) GetPapers(ids []model.PaperID) ([]*model.Paper, error) {
+	var out []*model.Paper
+	for _, id := range ids {
+		if p, err := t.GetPaper(id); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (t *memTx) PutPaper(paper *model.Paper) error {
+	if err := paper.Validate(); err != nil {
+		return err
+	}
+	if paper.WorkspaceID != t.ws {
+		return goerr.Wrap(model.ErrInvalidArgument, "paper belongs to another workspace")
+	}
+	t.papers[paper.ID] = clone(paper)
+	return nil
+}
+
+func (t *memTx) GetBlock(paper model.PaperID, id model.BlockID) (*model.Block, error) {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	if t.deleted[paper][id] {
+		return nil, notFound("block", id)
+	}
+	if b, ok := t.blocks[paper][id]; ok {
+		return b.Clone(), nil
+	}
+	d, ok := t.r.papers[paperKey{t.ws, paper}]
+	if !ok {
+		return nil, notFound("block", id)
+	}
+	b, ok := d.blocks[id]
+	if !ok {
+		return nil, notFound("block", id)
+	}
+	return b.Clone(), nil
+}
+
+func (t *memTx) GetBlocks(paper model.PaperID, ids []model.BlockID) ([]*model.Block, error) {
+	var out []*model.Block
+	for _, id := range ids {
+		if b, err := t.GetBlock(paper, id); err == nil {
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
+
+func (t *memTx) all(paper model.PaperID, keep func(*model.Block) bool) []*model.Block {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	var out []*model.Block
+	for _, b := range t.blocks[paper] {
+		if keep == nil || keep(b) {
+			out = append(out, b.Clone())
+		}
+	}
+	if d, ok := t.r.papers[paperKey{t.ws, paper}]; ok {
+		for id, b := range d.blocks {
+			if _, staged := t.blocks[paper][id]; staged || t.deleted[paper][id] {
+				continue
+			}
+			if keep == nil || keep(b) {
+				out = append(out, b.Clone())
+			}
+		}
+	}
+	slices.SortFunc(out, compareBlocks)
+	return out
+}
+
+func (t *memTx) Children(paper model.PaperID, parent model.BlockID) ([]*model.Block, error) {
+	return t.all(paper, func(b *model.Block) bool { return b.ParentID == parent }), nil
+}
+
+func (t *memTx) FirstAfter(paper model.PaperID, parent model.BlockID, order string) (*model.Block, error) {
+	children, _ := t.Children(paper, parent)
 	for _, b := range children {
 		if b.Order > order {
 			return b, nil
@@ -294,136 +370,266 @@ func (t *paperTx) FirstAfter(parent model.BlockID, order string) (*model.Block, 
 	return nil, nil
 }
 
-func (t *paperTx) Last(parent model.BlockID) (*model.Block, error) {
-	children, err := t.Children(parent)
-	if err != nil {
-		return nil, err
-	}
+func (t *memTx) Last(paper model.PaperID, parent model.BlockID) (*model.Block, error) {
+	children, _ := t.Children(paper, parent)
 	if len(children) == 0 {
 		return nil, nil
 	}
 	return children[len(children)-1], nil
 }
 
-func (t *paperTx) PutBlock(block *model.Block) error {
-	if err := block.Validate(); err != nil {
-		return err
-	}
-	if block.WorkspaceID != t.paper.WorkspaceID || block.PaperID != t.paper.ID {
-		return goerr.Wrap(model.ErrInvalidArgument, "block belongs to another paper", goerr.V("block_id", block.ID))
-	}
-	delete(t.deletes, block.ID)
-	t.puts[block.ID] = clone(block)
-	return nil
+func (t *memTx) ListBlocks(paper model.PaperID) ([]*model.Block, error) {
+	return t.all(paper, nil), nil
 }
 
-func (t *paperTx) DeleteBlock(id model.BlockID) error {
-	delete(t.puts, id)
-	t.deletes[id] = struct{}{}
-	return nil
-}
-
-func (t *paperTx) PutPaper(paper *model.Paper) error {
-	if err := paper.Validate(); err != nil {
-		return err
+func (t *memTx) CountBlocks(paper model.PaperID) (int, error) {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	n := 0
+	for id := range t.blocks[paper] {
+		if d, ok := t.r.papers[paperKey{t.ws, paper}]; !ok || d.blocks[id] == nil {
+			n++
+		}
 	}
-	if paper.ID != t.paper.ID || paper.WorkspaceID != t.paper.WorkspaceID {
-		return goerr.Wrap(model.ErrInvalidArgument, "cannot replace another paper in a paper transaction")
-	}
-	t.paper = clone(paper)
-	t.paperW = true
-	return nil
-}
-
-func (t *paperTx) AddCommit(commit *model.Commit) error {
-	if err := commit.Validate(); err != nil {
-		return err
-	}
-	if commit.PaperID != t.paper.ID || commit.WorkspaceID != t.paper.WorkspaceID {
-		return goerr.Wrap(model.ErrInvalidArgument, "commit belongs to another paper")
-	}
-	t.commits = append(t.commits, clone(commit))
-	return nil
-}
-
-func (r *Repository) RunPaperTx(_ context.Context, ws model.WorkspaceID, paper model.PaperID, fn func(tx interfaces.PaperTx) error) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, err := r.getPaperData(ws, paper)
-	if err != nil {
-		return err
-	}
-	tx := &paperTx{
-		data:    d,
-		paper:   clone(d.paper),
-		puts:    map[model.BlockID]*model.Block{},
-		deletes: map[model.BlockID]struct{}{},
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-
-	// A block version is written once; rewriting one would corrupt the
-	// history, which is what a real backend's create-only write prevents.
-	for id, b := range tx.puts {
-		for _, v := range d.versions[id] {
-			if v.Version == b.Version {
-				return goerr.Wrap(model.ErrAlreadyExists, "block version already exists", goerr.V("block_id", id), goerr.V("version", b.Version))
+	if d, ok := t.r.papers[paperKey{t.ws, paper}]; ok {
+		for id := range d.blocks {
+			if !t.deleted[paper][id] {
+				n++
 			}
 		}
 	}
+	return n, nil
+}
 
-	key := paperKey{ws, paper}
-	for id := range tx.deletes {
-		if _, ok := d.blocks[id]; !ok {
+func (t *memTx) PutBlock(block *model.Block) error {
+	if err := block.Validate(); err != nil {
+		return err
+	}
+	if block.WorkspaceID != t.ws || !t.paperExists(block.PaperID) {
+		return goerr.Wrap(model.ErrInvalidArgument, "block belongs to an unknown paper", goerr.V("paper_id", block.PaperID))
+	}
+	if t.blocks[block.PaperID] == nil {
+		t.blocks[block.PaperID] = map[model.BlockID]*model.Block{}
+	}
+	delete(t.deleted[block.PaperID], block.ID)
+	t.blocks[block.PaperID][block.ID] = clone(block)
+	return nil
+}
+
+func (t *memTx) DeleteBlock(paper model.PaperID, id model.BlockID) error {
+	delete(t.blocks[paper], id)
+	if t.deleted[paper] == nil {
+		t.deleted[paper] = map[model.BlockID]bool{}
+	}
+	t.deleted[paper][id] = true
+	return nil
+}
+
+func (t *memTx) GetVersion(paper model.PaperID, number int) (*model.Version, error) {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	for _, v := range t.versions {
+		if v.PaperID == paper && v.Number == number {
+			return clone(v), nil
+		}
+	}
+	d, err := t.r.data(t.ws, paper)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := d.versions[number]
+	if !ok {
+		return nil, notFound("version", number)
+	}
+	return clone(v), nil
+}
+
+func (t *memTx) PutVersion(v *model.Version) error {
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	if _, err := t.GetVersion(v.PaperID, v.Number); err == nil {
+		return goerr.Wrap(model.ErrAlreadyExists, "version already exists", goerr.V("number", v.Number))
+	}
+	t.versions = append(t.versions, clone(v))
+	return nil
+}
+
+func (t *memTx) GetSnapshots(paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error) {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	var out []*model.BlockSnapshot
+	d := t.r.papers[paperKey{t.ws, paper}]
+	for _, ref := range refs {
+		found := false
+		for _, s := range t.snapshots {
+			if s.paper == paper && s.snap.BlockID == ref.BlockID && s.snap.Rev == ref.Rev {
+				out, found = append(out, clone(s.snap)), true
+				break
+			}
+		}
+		if !found && d != nil {
+			if s, ok := d.snapshots[ref]; ok {
+				out = append(out, clone(s))
+			}
+		}
+	}
+	return out, nil
+}
+
+func (t *memTx) PutSnapshot(paper model.PaperID, s *model.BlockSnapshot) error {
+	t.snapshots = append(t.snapshots, stagedSnapshot{paper, clone(s)})
+	return nil
+}
+
+func (t *memTx) PutForward(f *model.Forward) error {
+	t.forwards = append(t.forwards, clone(f))
+	return nil
+}
+
+func (t *memTx) AddEvent(ev *model.Event) error {
+	t.events = append(t.events, clone(ev))
+	return nil
+}
+
+var _ interfaces.Tx = (*memTx)(nil)
+
+// RunTx serialises transactions with txMu. The transaction function reads
+// under the read lock, so it may also call the repository's other methods;
+// the writes are applied under the write lock at the end.
+func (r *Repository) RunTx(_ context.Context, ws model.WorkspaceID, fn func(tx interfaces.Tx) error) error {
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+	t := &memTx{
+		r: r, ws: ws,
+		papers:  map[model.PaperID]*model.Paper{},
+		blocks:  map[model.PaperID]map[model.BlockID]*model.Block{},
+		deleted: map[model.PaperID]map[model.BlockID]bool{},
+	}
+	if err := fn(t); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	type emit struct {
+		key paperKey
+		ev  *model.Event
+	}
+	var emits []emit
+	for id, p := range t.papers {
+		key := paperKey{ws, id}
+		d, ok := r.papers[key]
+		if !ok {
+			d = newPaperData(p)
+			r.papers[key] = d
+		}
+		d.paper = clone(p)
+		d.indexTitle()
+	}
+	for paper, deleted := range t.deleted {
+		d := r.papers[paperKey{ws, paper}]
+		if d == nil {
 			continue
 		}
-		delete(d.blocks, id)
-		delete(d.search, id)
-		r.emit(key, &model.Event{Type: model.EventBlockDeleted, BlockID: id})
+		for id := range deleted {
+			delete(d.blocks, id)
+			delete(d.search, id)
+		}
 	}
-	for id, b := range tx.puts {
-		d.blocks[id] = b
-		d.versions[id] = append(d.versions[id], clone(b))
-		d.indexBlock(b)
-		r.emit(key, &model.Event{Type: model.EventBlockPut, Block: clone(b)})
+	for paper, blocks := range t.blocks {
+		d := r.papers[paperKey{ws, paper}]
+		for id, b := range blocks {
+			d.blocks[id] = b.Clone()
+			d.indexBlock(b)
+		}
 	}
-	d.commits = append(d.commits, tx.commits...)
-	if tx.paperW {
-		d.paper = tx.paper
-		d.indexTitle()
-		r.emit(key, &model.Event{Type: model.EventPaperUpdated, Paper: clone(tx.paper)})
+	for _, v := range t.versions {
+		r.papers[paperKey{ws, v.PaperID}].versions[v.Number] = clone(v)
+	}
+	for _, s := range t.snapshots {
+		d := r.papers[paperKey{ws, s.paper}]
+		ref := model.SnapshotRef{BlockID: s.snap.BlockID, Rev: s.snap.Rev}
+		if _, ok := d.snapshots[ref]; !ok {
+			d.snapshots[ref] = clone(s.snap)
+		}
+	}
+	for _, f := range t.forwards {
+		r.forwards[paperKey{f.WorkspaceID, f.PaperID}] = clone(f)
+	}
+	for _, ev := range t.events {
+		key := paperKey{ws, ev.PaperID}
+		if d, ok := r.papers[key]; ok {
+			d.appendEvent(ev)
+		}
+		emits = append(emits, emit{key, ev})
+	}
+	r.mu.Unlock()
+	for _, e := range emits {
+		r.emit(e.key, e.ev)
 	}
 	return nil
 }
 
-// --- watch -------------------------------------------------------------------
+// --- feed
 
-// emit delivers an event to the paper's watchers. Callers hold r.mu. A
-// watcher whose buffer is full is dropped (its channel closed) so it
-// reloads instead of silently missing a change.
+func (d *paperData) appendEvent(ev *model.Event) {
+	cutoff := ev.At.Add(-model.EventTTL)
+	keep := d.events[:0]
+	for _, e := range d.events {
+		if e.At.After(cutoff) {
+			keep = append(keep, e)
+		}
+	}
+	d.events = append(keep, clone(ev))
+}
+
+func (r *Repository) PutEvent(_ context.Context, ev *model.Event) error {
+	key := paperKey{ev.WorkspaceID, ev.PaperID}
+	r.mu.Lock()
+	d, ok := r.papers[key]
+	if !ok {
+		r.mu.Unlock()
+		return notFound("paper", ev.PaperID)
+	}
+	d.appendEvent(ev)
+	r.mu.Unlock()
+	r.emit(key, ev)
+	return nil
+}
+
+func (r *Repository) ListEvents(_ context.Context, ws model.WorkspaceID, paper model.PaperID, since time.Time) ([]*model.Event, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, err := r.data(ws, paper)
+	if err != nil {
+		return nil, err
+	}
+	var out []*model.Event
+	for _, e := range d.events {
+		if !e.At.Before(since) {
+			out = append(out, clone(e))
+		}
+	}
+	return out, nil
+}
+
 func (r *Repository) emit(key paperKey, ev *model.Event) {
-	ev.WorkspaceID, ev.PaperID = key.ws, key.paper
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, ch := range r.watchers[key] {
 		select {
 		case ch <- clone(ev):
 		default:
-			close(ch)
-			delete(r.watchers[key], id)
-		}
-	}
-	if ev.Type == model.EventPaperDeleted {
-		for id, ch := range r.watchers[key] {
+			// a slow reader loses its feed and must reload
 			close(ch)
 			delete(r.watchers[key], id)
 		}
 	}
 }
 
-func (r *Repository) WatchPaper(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error) {
+func (r *Repository) Watch(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, err := r.getPaperData(ws, paper); err != nil {
+	if _, err := r.data(ws, paper); err != nil {
 		return nil, err
 	}
 	key := paperKey{ws, paper}
@@ -434,7 +640,6 @@ func (r *Repository) WatchPaper(ctx context.Context, ws model.WorkspaceID, paper
 	r.nextWatcher++
 	ch := make(chan *model.Event, r.eventBuffer)
 	r.watchers[key][id] = ch
-
 	context.AfterFunc(ctx, func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()

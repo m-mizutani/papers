@@ -1,0 +1,148 @@
+[
+  {
+    "in": "plain text",
+    "normalized": "plain text",
+    "plain": "plain text"
+  },
+  {
+    "in": "手順は[必ず]{.red}守る。**例外なし**",
+    "normalized": "手順は[必ず]{.red}守る。**例外なし**",
+    "plain": "手順は必ず守る。例外なし"
+  },
+  {
+    "in": "__bold__ and _it_ and *it*",
+    "normalized": "**bold** and *it* and *it*",
+    "plain": "bold and it and it"
+  },
+  {
+    "in": "snake_case_name",
+    "normalized": "snake_case_name",
+    "plain": "snake_case_name"
+  },
+  {
+    "in": "a * b",
+    "normalized": "a \\* b",
+    "plain": "a * b"
+  },
+  {
+    "in": "[x]{.red}[y]{.red}",
+    "normalized": "[xy]{.red}",
+    "plain": "xy"
+  },
+  {
+    "in": "[x]{.pink .bg-yellow}",
+    "normalized": "[x]{.pink .bg-yellow}",
+    "plain": "x"
+  },
+  {
+    "in": "[x]{.bg-blue .green}",
+    "normalized": "[x]{.green .bg-blue}",
+    "plain": "x"
+  },
+  {
+    "in": "[x]{.purplish}",
+    "normalized": "",
+    "plain": "[x]{.purplish}",
+    "error": true
+  },
+  {
+    "in": "`code`",
+    "normalized": "`code`",
+    "plain": "code"
+  },
+  {
+    "in": "``a ` b``",
+    "normalized": "``a ` b``",
+    "plain": "a ` b"
+  },
+  {
+    "in": "see [docs](https://example.com/a)",
+    "normalized": "see [docs](https://example.com/a)",
+    "plain": "see docs"
+  },
+  {
+    "in": "~~gone~~ and ~ tilde",
+    "normalized": "~~gone~~ and ~ tilde",
+    "plain": "gone and ~ tilde"
+  },
+  {
+    "in": "unclosed **bold",
+    "normalized": "unclosed \\*\\*bold",
+    "plain": "unclosed **bold"
+  },
+  {
+    "in": "escape \\* star",
+    "normalized": "escape \\* star",
+    "plain": "escape * star"
+  },
+  {
+    "in": "**  **",
+    "normalized": "\\*\\*  \\*\\*",
+    "plain": "**  **"
+  },
+  {
+    "in": "[link](\u003c/x y\u003e)",
+    "normalized": "[link](/x%20y)",
+    "plain": "link"
+  },
+  {
+    "in": "[a](u)[b](u)",
+    "normalized": "[ab](u)",
+    "plain": "ab"
+  },
+  {
+    "in": "1_000_000",
+    "normalized": "1_000_000",
+    "plain": "1_000_000"
+  },
+  {
+    "in": "`a` `b`",
+    "normalized": "`a` `b`",
+    "plain": "a b"
+  },
+  {
+    "in": "**[赤い太字]{.red}**",
+    "normalized": "**[赤い太字]{.red}**",
+    "plain": "赤い太字"
+  },
+  {
+    "in": "[**太字の赤**]{.red}",
+    "normalized": "[**太字の赤**]{.red}",
+    "plain": "太字の赤"
+  },
+  {
+    "in": "*a* *b*",
+    "normalized": "*a* *b*",
+    "plain": "a b"
+  },
+  {
+    "in": "x [not a link] y",
+    "normalized": "x \\[not a link] y",
+    "plain": "x [not a link] y"
+  },
+  {
+    "in": "back\\slash",
+    "normalized": "back\\slash",
+    "plain": "back\\slash"
+  },
+  {
+    "in": "~~a~~~~b~~",
+    "normalized": "~~ab~~",
+    "plain": "ab"
+  },
+  {
+    "in": "[ ]{.red}",
+    "normalized": "[ ]{.red}",
+    "plain": " "
+  },
+  {
+    "in": "[a]{.red}b[c]{.blue}",
+    "normalized": "[a]{.red}b[c]{.blue}",
+    "plain": "abc"
+  },
+  {
+    "in": "ends with backslash \\",
+    "normalized": "ends with backslash \\\\",
+    "plain": "ends with backslash \\"
+  }
+]

@@ -1,4 +1,4 @@
-import type { Actor, Block, BlockProps, BlockType, Paper, User, Workspace } from '../api/types'
+import type { Actor, Block, BlockProps, BlockType, Paper, TableLine, User, Workspace } from '../api/types'
 import { keyBetween } from './order'
 
 // Sample content for the in-browser demo. Everything here is made up.
@@ -22,13 +22,16 @@ function build(ws: string, paper: string, specs: Spec[], fallback: Actor): Block
     const [type, content, props = {}, actor = fallback] = s
     const id = `${paper}-b${i}`
     const at = new Date(t0 + i * 60000).toISOString()
-    const base = { workspace_id: ws, paper_id: paper, version: 1, created_by: actor, created_at: at, updated_by: actor, updated_at: at }
+    const base = { workspace_id: ws, paper_id: paper, rev: 1, created_by: actor, created_at: at, updated_by: actor, updated_at: at }
     if (type === 'table') {
-      const rows = content as string[][]
-      const cols = Math.max(...rows.map((r) => r.length))
-      out.push({ ...base, id, order, type, content: '', props: { rows: rows.length, cols, header_row: true, ...props } })
-      rows.forEach((row, r) => row.forEach((cell, c) => {
-        out.push({ ...base, id: `${id}-c${r}-${c}`, parent_id: id, order: 'V', type: 'table_cell', content: cell, props: { row: r, col: c } })
+      const grid = content as string[][]
+      let k = ''
+      const cols: TableLine[] = Array.from({ length: Math.max(...grid.map((r) => r.length)) }, (_, c) => ({ id: `${id}-col${c}`, order: (k = keyBetween(k, '')) }))
+      k = ''
+      const rows: TableLine[] = grid.map((_, r) => ({ id: `${id}-row${r}`, order: (k = keyBetween(k, '')) }))
+      out.push({ ...base, id, order, type, content: '', props: { rows, cols, header_row: true, ...props } })
+      grid.forEach((row, r) => row.forEach((cell, c) => {
+        out.push({ ...base, id: `${id}-c${r}-${c}`, parent_id: id, order: 'V', type: 'table_cell', content: cell, props: { row_id: rows[r]?.id, col_id: cols[c]?.id } })
       }))
     } else {
       out.push({ ...base, id, order, type, content: content as string, props })
@@ -55,29 +58,34 @@ const STATS_HTML = `<div style="font-family:system-ui,sans-serif;display:grid;gr
 
 export function seed() {
   const users = [ME, ALICE, BOB]
-  const owner = (u: User) => ({ subject: { kind: 'user' as const, id: u.id }, role: 'owner' as const })
-  const editor = (u: User) => ({ subject: { kind: 'user' as const, id: u.id }, role: 'editor' as const })
+  const system: Actor = { kind: 'system', user_id: '', name: 'papers' }
 
-  const workspaces: Omit<Workspace, 'role'>[] = [
-    { id: 'ws-sec', name: 'Security Team', emoji: '🛡', bindings: [owner(ME), editor(ALICE), editor(BOB)] },
-    { id: 'ws-prod', name: 'Product Notes', emoji: '📓', bindings: [owner(ME), editor(ALICE)] },
+  const workspaces: Workspace[] = [
+    { id: 'security', name: 'Security Team', emoji: '🛡', description: 'Runbooks and incident notes. Write steps as numbered lists; commands go in code blocks.', group: 'Teams', home_paper_id: 'p-home-sec' },
+    { id: 'product', name: 'Product Notes', emoji: '📓', description: 'Ideas and decisions about the product.', home_paper_id: 'p-home-prod' },
   ]
 
-  const paper = (ws: string, id: string, title: string, by: Actor, specs: Spec[]) => {
+  const paper = (ws: string, id: string, title: string, by: Actor, specs: Spec[], extra: Partial<Paper> = {}) => {
     const blocks = build(ws, id, specs, by)
-    const last = blocks.reduce((a, b) => (a.updated_at > b.updated_at ? a : b))
+    const last = blocks.reduce((a, b) => (a.updated_at > b.updated_at ? a : b), blocks[0] as Block)
     const p: Paper = {
-      id, workspace_id: ws, title, access: { restricted: false, bindings: [] },
-      created_by: by, created_at: new Date(t0).toISOString(), updated_by: last.updated_by, updated_at: last.updated_at,
+      id, workspace_id: ws, title, visibility: 'public', version_number: 0,
+      created_by: by, created_at: new Date(t0).toISOString(), updated_by: last?.updated_by ?? by, updated_at: last?.updated_at ?? new Date(t0).toISOString(),
+      ...extra,
     }
     return { paper: p, blocks }
   }
 
   const papers = [
-    paper('ws-sec', 'p-runbook', 'Leaked credential runbook', human(ALICE), [
+    paper('security', 'p-home-sec', 'Security Team', system, [
+      ['paragraph', 'Start here. Runbooks for on-call live below; ask Claude to summarise anything.'],
+      ['paper', '', { paper_id: 'p-runbook' }],
+      ['paper', '', { paper_id: 'p-threat' }],
+    ]),
+    paper('security', 'p-runbook', 'Leaked credential runbook', human(ALICE), [
       ['heading', 'Why this exists', { level: 2 }],
-      ['paragraph', 'Our on-call runbook for **credential leaks**. Keep it short; link out for details.'],
-      ['callout', 'Rotate first, investigate second.', { icon: '⚠️' }],
+      ['paragraph', 'Our on-call runbook for **credential leaks**. [Rotate first]{.red}, investigate second.'],
+      ['callout', 'Keep it short; link out for details.', { icon: '⚠️' }],
       ['numbered_list_item', 'Revoke the leaked key'],
       ['numbered_list_item', 'Search audit logs for any use since the leak'],
       ['numbered_list_item', 'Write the timeline below'],
@@ -89,22 +97,29 @@ export function seed() {
       ['html', STATS_HTML, {}, claudeFor(ALICE)],
       ['heading', 'Timeline', { level: 2 }],
       ['paragraph', 'Nothing yet. Add entries as you go, newest last.'],
-    ]),
-    paper('ws-sec', 'p-threat', 'Threat model: payment API', claudeFor(BOB), [
-      ['paragraph', 'Draft written by Claude from the design review notes. Humans: please correct anything wrong.'],
+    ], { parent_id: 'p-home-sec' }),
+    paper('security', 'p-threat', 'Threat model: payment API', claudeFor(BOB), [
+      ['paragraph', 'Draft written by Claude from the design review notes. [Humans: please correct anything wrong.]{.bg-yellow}'],
       ['heading', 'Assets', { level: 2 }],
       ['bulleted_list_item', 'Card tokens in the vault'],
       ['bulleted_list_item', 'Merchant API keys'],
       ['heading', 'Top risks', { level: 2 }],
       ['table', [['Risk', 'Likelihood', 'Mitigation'], ['Key reuse across merchants', 'Medium', 'Per-merchant scoped keys'], ['Replay of webhooks', 'Low', 'Signed timestamps']]],
       ['code', 'POST /v1/charges\nAuthorization: Bearer <merchant key>\nIdempotency-Key: <uuid>', { language: 'http' }],
+    ], { parent_id: 'p-home-sec' }),
+    paper('product', 'p-home-prod', 'Product Notes', system, [
+      ['paragraph', 'What we are building and why.'],
+      ['paper', '', { paper_id: 'p-ideas' }],
     ]),
-    paper('ws-prod', 'p-ideas', 'Ideas backlog', human(ME), [
+    paper('product', 'p-ideas', 'Ideas backlog', human(ME), [
       ['paragraph', 'Loose ideas. Claude groups and dedupes these every Friday.'],
       ['bulleted_list_item', 'Offline mode for the field app'],
       ['bulleted_list_item', 'Bulk export to CSV'],
       ['quote', 'If it takes more than two clicks, nobody will use it.'],
-    ]),
+    ], { parent_id: 'p-home-prod' }),
+    paper('product', 'p-memo', 'My scratchpad', human(ME), [
+      ['paragraph', 'Only you can see this private paper.'],
+    ], { visibility: 'private' }),
   ]
   return { users, workspaces, papers }
 }

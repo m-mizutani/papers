@@ -20,12 +20,16 @@ import (
 
 func cmdServe() *cli.Command {
 	var (
-		server config.Server
-		auth   config.Auth
-		repo   config.Repository
-		sentry config.Sentry
+		server      config.Server
+		auth        config.Auth
+		repo        config.Repository
+		workspaces  config.Workspaces
+		attachments config.Attachments
+		sentry      config.Sentry
 	)
 	flags := append([]cli.Flag{}, server.Flags()...)
+	flags = append(flags, workspaces.Flags()...)
+	flags = append(flags, attachments.Flags()...)
 	flags = append(flags, auth.Flags()...)
 	flags = append(flags, repo.Flags()...)
 	flags = append(flags, sentry.Flags()...)
@@ -42,7 +46,17 @@ func cmdServe() *cli.Command {
 			defer errutil.FlushSentry(2 * time.Second)
 
 			logger := logging.Default()
-			logger.Info("Configuration", "server", server, "auth", auth, "repository", repo)
+			logger.Info("Configuration", "server", server, "workspaces", workspaces, "attachments", attachments, "auth", auth, "repository", repo)
+
+			registry, err := workspaces.Configure(ctx)
+			if err != nil {
+				return err
+			}
+			registry.LogOpen(logger)
+			store, err := attachments.Configure(ctx)
+			if err != nil {
+				return err
+			}
 
 			repository, err := repo.Configure(ctx)
 			if err != nil {
@@ -54,9 +68,12 @@ func cmdServe() *cli.Command {
 				}
 			}()
 
-			uc, err := usecase.New(repository, server.UseCaseConfig())
+			uc, err := usecase.New(repository, registry, store, server.UseCaseConfig())
 			if err != nil {
 				return goerr.Wrap(err, "failed to build use cases")
+			}
+			if err := uc.Init(logging.With(ctx, logger)); err != nil {
+				return err
 			}
 			authUC, err := auth.Configure(ctx, repository, server.BaseURL())
 			if err != nil {
@@ -81,6 +98,9 @@ func cmdServe() *cli.Command {
 			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
+			// Papers in the trash past the retention are deleted for good.
+			go purgeLoop(ctx, uc, time.Hour)
+
 			errCh := make(chan error, 1)
 			go func() {
 				logger.Info("Listening", "addr", server.Addr(), "base_url", server.BaseURL())
@@ -104,5 +124,23 @@ func cmdServe() *cli.Command {
 			}
 			return nil
 		},
+	}
+}
+
+func purgeLoop(ctx context.Context, uc *usecase.UseCases, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		n, err := uc.PurgeTrash(ctx)
+		if err != nil {
+			errutil.Handle(ctx, err, "failed to purge trash")
+		} else if n > 0 {
+			logging.From(ctx).Info("purged papers from the trash", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }

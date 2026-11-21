@@ -6,6 +6,7 @@ package markdown
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -228,7 +229,7 @@ func Parse(src string) []Draft {
 				}
 				rows[ri] = rows[ri][:cols]
 			}
-			out = append(out, Draft{Type: model.BlockTable, Props: model.BlockProps{Rows: len(rows), Cols: cols, HeaderRow: true}, Cells: rows})
+			out = append(out, Draft{Type: model.BlockTable, Props: model.BlockProps{HeaderRow: true}, Cells: rows})
 			continue
 		}
 
@@ -256,7 +257,10 @@ func prefixLines(s, prefix string) string {
 }
 
 // Render converts a paper's blocks (as returned by ListBlocks) into Markdown.
-func Render(title string, blocks []*model.Block) string {
+// titles gives the titles of child papers for paper blocks; a paper block
+// renders as a link "[title](paper:ID)", and an attached image as
+// "![caption](attachment:ID)".
+func Render(title string, blocks []*model.Block, titles map[model.PaperID]string) string {
 	children := map[model.BlockID][]*model.Block{}
 	var top []*model.Block
 	for _, b := range blocks {
@@ -304,7 +308,17 @@ func Render(title string, blocks []*model.Block) string {
 		case model.BlockDivider:
 			s = "---"
 		case model.BlockImage:
-			s = "![" + b.Content + "](" + b.Props.URL + ")"
+			src := b.Props.URL
+			if b.Props.AttachmentID != "" {
+				src = "attachment:" + string(b.Props.AttachmentID)
+			}
+			s = "![" + b.Content + "](" + src + ")"
+		case model.BlockPaper:
+			name := titles[b.Props.PaperID]
+			if name == "" {
+				name = "Untitled"
+			}
+			s = "[" + name + "](paper:" + string(b.Props.PaperID) + ")"
 		case model.BlockTable:
 			s = renderTable(b, children[b.ID])
 		default:
@@ -325,14 +339,37 @@ func isListItem(t model.BlockType) bool {
 	return t == model.BlockBullet || t == model.BlockNumbered || t == model.BlockTodo
 }
 
+func sortedLines(lines []model.TableLine) []model.TableLine {
+	out := slices.Clone(lines)
+	slices.SortStableFunc(out, func(x, y model.TableLine) int {
+		if c := strings.Compare(x.Order, y.Order); c != 0 {
+			return c
+		}
+		return strings.Compare(string(x.ID), string(y.ID))
+	})
+	return out
+}
+
 func renderTable(table *model.Block, cells []*model.Block) string {
-	grid := make([][]string, table.Props.Rows)
+	rowAt := map[model.LineID]int{}
+	colAt := map[model.LineID]int{}
+	rows, cols := sortedLines(table.Props.Rows), sortedLines(table.Props.Cols)
+	for i, r := range rows {
+		rowAt[r.ID] = i
+	}
+	for i, c := range cols {
+		colAt[c.ID] = i
+	}
+	nCols := len(cols)
+	grid := make([][]string, len(rows))
 	for r := range grid {
-		grid[r] = make([]string, table.Props.Cols)
+		grid[r] = make([]string, nCols)
 	}
 	for _, c := range cells {
-		if c.Props.Row < table.Props.Rows && c.Props.Col < table.Props.Cols {
-			grid[c.Props.Row][c.Props.Col] = escapeCell(c.Content)
+		r, okR := rowAt[c.Props.RowID]
+		col, okC := colAt[c.Props.ColID]
+		if okR && okC {
+			grid[r][col] = escapeCell(c.Content)
 		}
 	}
 	var lines []string
@@ -342,9 +379,9 @@ func renderTable(table *model.Block, cells []*model.Block) string {
 		lines = append(lines, row(grid[0]))
 		start = 1
 	} else {
-		lines = append(lines, row(make([]string, table.Props.Cols)))
+		lines = append(lines, row(make([]string, nCols)))
 	}
-	sep := make([]string, table.Props.Cols)
+	sep := make([]string, nCols)
 	for i := range sep {
 		sep[i] = "---"
 	}

@@ -150,14 +150,13 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 type meResponse struct {
-	User        *model.User `json:"user"`
-	SystemAdmin bool        `json:"system_admin"`
-	NoAuthn     bool        `json:"no_authn"`
+	User    *model.User `json:"user"`
+	NoAuthn bool        `json:"no_authn"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
-	writeJSON(r.Context(), w, http.StatusOK, meResponse{User: p.User, SystemAdmin: p.SystemAdmin, NoAuthn: s.auth.IsNoAuthn()})
+	writeJSON(r.Context(), w, http.StatusOK, meResponse{User: p.User, NoAuthn: s.auth.IsNoAuthn()})
 }
 
 func isSafeMethod(m string) bool {

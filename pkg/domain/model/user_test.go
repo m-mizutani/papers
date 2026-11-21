@@ -38,12 +38,3 @@ func TestSessionExpired(t *testing.T) {
 	gt.True(t, s.Expired(now))
 	gt.False(t, s.Expired(now.Add(-time.Second)))
 }
-
-func TestGroup(t *testing.T) {
-	g := &model.Group{ID: "g", Name: "eng", Members: []model.UserID{"a"}}
-	gt.NoError(t, g.Validate())
-	gt.True(t, g.HasMember("a"))
-	gt.False(t, g.HasMember("b"))
-	g.Name = ""
-	gt.Error(t, g.Validate())
-}

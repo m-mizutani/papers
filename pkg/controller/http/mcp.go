@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/m-mizutani/goerr/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/m-mizutani/papers/pkg/domain/markup"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 	"github.com/m-mizutani/papers/pkg/usecase"
 	"github.com/m-mizutani/papers/pkg/utils/logging"
@@ -16,7 +18,7 @@ import (
 
 const (
 	mcpServerName    = "papers"
-	mcpServerVersion = "0.1.0"
+	mcpServerVersion = "0.2.0"
 	mcpDefaultAgent  = "MCP client"
 )
 
@@ -25,31 +27,27 @@ const (
 const mcpInstructions = `papers is a shared knowledge canvas edited by humans and AI together.
 
 Model
-- A workspace contains papers. A paper has a title and an ordered list of blocks.
-- Every change is a commit (an atomic list of ops). Read a paper before editing it and reference blocks by id.
-- There are no locks. Every update, delete and restore must carry base_version: the block version you read. If someone changed that block's contents since, the whole commit fails with a conflict listing each block's current state. Re-read, redo your edit on top of the current contents, and commit again. Send force:true only when the user explicitly wants their version to win; forced overwrites are recorded.
-- Moves never conflict (the last move wins). Deleting a block someone else already deleted succeeds.
-- Every block keeps its own version history (papers_block_history); a paper's history is its list of commits (papers_history).
+- A workspace holds papers. Each workspace has a home paper; papers nest: a child paper is a "paper" block in its parent's body. Refer to papers by id or by a path of titles from the home ("Runbooks/DB failover").
+- A paper has a title and an ordered list of blocks. What you write becomes the current state at once. A version (v1, v2, ...) exists only when someone saves one explicitly (papers_save_version). Save a version when you finish a coherent change and the user would want to point at it; never save on every edit.
+- Each workspace has rules (its description). Follow them; they come with papers_guide and every read and write.
+- public papers are for everyone who can use the workspace; private papers only for their creator (you act for the user who issued your token).
+- There are no locks. update and delete carry base_rev: the block's rev you read. If someone changed that block's contents since, the whole batch fails with a conflict listing each block's current state. Re-read, redo your edit on top, and send again. Send force:true only when the user explicitly wants their version to win. Moves never conflict.
+- Block IDs are issued by the server. To point at a block you insert in the same batch, give the insert a ref ("n1") and use after:"ref:n1"; the result maps refs to IDs.
 
 Block types (type: props)
-- paragraph, quote: inline Markdown in content (**bold**, *italic*, ` + "`code`" + `, [link](url)).
-- heading: props.level 1-3.
-- bulleted_list_item, numbered_list_item: props.indent 0-6. todo: props.indent, props.checked.
-- callout: props.icon (an emoji). code: props.language. divider: no content. image: props.url, content = caption.
-- table: props.rows, props.cols, props.header_row. Cells are child blocks (table_cell, props.row/col) created automatically; pass "cells" (rows of strings) on insert, update a cell by its block id, resize via the table's props.
-- Rich blocks only AI writes (humans can view, not edit):
-  - mermaid: Mermaid source (flowchart, sequence, gantt, ...).
-  - svg: a complete <svg> element with a viewBox. Rendered in an isolated frame.
-  - html: a self-contained HTML document or fragment, rendered in a sandboxed iframe (scripts allowed, no same-origin access, no cookies). Inline all CSS/JS; external network requests may be blocked. props.height sets the frame height in px.
+- paragraph, quote, heading (props.level 1-3), bulleted_list_item / numbered_list_item (props.indent 0-6), todo (props.indent, props.checked), callout (props.icon, one emoji), table_cell: content is inline markup: **bold**, *italic*, ~~strike~~, ` + "`code`" + `, [link](url), and colour [text]{.red} / background [text]{.bg-yellow}. Colours: gray brown orange yellow green blue purple pink red.
+- code: props.language, content verbatim. divider: no content. image: content = caption, props.url (external) or props.attachment_id (an image attached to this paper).
+- paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them, otherwise archives the child.
+- table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
+- mermaid, svg (a complete <svg> with a viewBox), html (self-contained, rendered in a sandboxed iframe): only AI writes these; props.height sets the frame height.
 
-Ops (papers_commit)
-- {"op":"insert","type":"paragraph","content":"...","after":"<block id>"}  after omitted = append; after "" = top.
-- {"op":"update","block_id":"...","content":"...","props":{...},"type":"...","base_version":3}  props replaces all props.
-- {"op":"delete","block_id":"...","base_version":3}  {"op":"move","block_id":"...","after":"<block id>"}
-- {"op":"restore","block_id":"...","version":2,"base_version":5}  make an earlier version current again (base_version can be omitted for a deleted block, which comes back at its last position)
+Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
+- {"op":"insert","type":"paragraph","content":"...","after":"<block id>|ref:n1|''","ref":"n2"}  after omitted = append, "" = top.
+- {"op":"update","block_id":"...","base_rev":3,"content":"...","props":{...}}  props replaces all props.
+- {"op":"delete","block_id":"...","base_rev":3}   {"op":"move","block_id":"...","after":"..."}
 - {"op":"set_title","title":"..."}
-- {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"<block id>"}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become table blocks.
-Keep one commit per logical change and write a short commit message.`
+- {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
+- Paper-level ops, each alone in its batch: move_paper {parent, after, workspace}, set_visibility {visibility, parent}, save_version {note}, restore_version {version}, archive / unarchive {subtree}.`
 
 func (s *Server) mcpHandler() http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: mcpServerVersion}, &mcp.ServerOptions{Instructions: mcpInstructions})
@@ -81,65 +79,97 @@ func addTool[In, Out any](s *mcp.Server, name, description string, run func(ctx 
 			}
 			out, err := run(ctx, p, in)
 			if err != nil {
-				return nil, zero, err
+				return nil, zero, mcpError(err)
 			}
 			return nil, out, nil
 		})
 }
 
+// mcpError explains errors an agent can act on.
+func mcpError(err error) error {
+	var conflict *usecase.ConflictError
+	if errors.As(err, &conflict) {
+		return mcpConflictError(conflict)
+	}
+	if f, ok := usecase.IsMoved(err); ok {
+		return goerr.Wrap(model.ErrNotFound, "this paper moved to workspace "+string(f.ToWorkspaceID)+" as paper "+string(f.ToPaperID))
+	}
+	var amb *usecase.AmbiguousError
+	if errors.As(err, &amb) {
+		var names []string
+		for _, c := range amb.Candidates {
+			names = append(names, string(c.ID)+" ("+c.Title+")")
+		}
+		return goerr.Wrap(model.ErrInvalidArgument, "the path names several papers; pass one of these ids: "+strings.Join(names, ", "))
+	}
+	return err
+}
+
 type mcpEmpty struct{}
 
+type mcpGuideIn struct {
+	WorkspaceID model.WorkspaceID `json:"workspace_id,omitempty" jsonschema:"optional: also return this workspace's rules and its home paper"`
+}
+
 type mcpGuideOut struct {
-	Guide      string          `json:"guide"`
-	BlockTypes []blockTypeInfo `json:"block_types"`
+	Guide          string          `json:"guide"`
+	BlockTypes     []blockTypeInfo `json:"block_types"`
+	Palette        []string        `json:"palette"`
+	WorkspaceRules string          `json:"workspace_rules,omitempty"`
+	Language       string          `json:"language,omitempty"`
+	// Home is the workspace's home paper as Markdown: its summary and
+	// entry points, written by people and agents.
+	Home string `json:"home,omitempty"`
 }
 
 type mcpWorkspace struct {
 	ID          model.WorkspaceID `json:"id"`
 	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Role        model.Role        `json:"role"`
+	Rules       string            `json:"rules,omitempty"`
+	Language    string            `json:"language,omitempty"`
+	HomePaperID model.PaperID     `json:"home_paper_id"`
 }
 
 type mcpWorkspacesOut struct {
 	Workspaces []mcpWorkspace `json:"workspaces"`
 }
 
-type mcpWorkspaceIn struct {
-	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id from papers_list_workspaces"`
-}
-
-type mcpPaperSummary struct {
-	ID        model.PaperID `json:"id"`
-	Title     string        `json:"title"`
-	Role      model.Role    `json:"role"`
-	UpdatedAt string        `json:"updated_at"`
-	UpdatedBy string        `json:"updated_by"`
-}
-
-type mcpPapersOut struct {
-	Papers []mcpPaperSummary `json:"papers"`
-}
-
 type mcpSearchIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	Query       string            `json:"query" jsonschema:"case-insensitive text to find in titles and blocks"`
+	Query       string            `json:"query" jsonschema:"words to find in titles and blocks; quote a phrase to keep it together"`
+	Under       string            `json:"under,omitempty" jsonschema:"only under this paper (id or path)"`
+	Limit       int               `json:"limit,omitempty" jsonschema:"max hits (default 20)"`
+}
+
+type mcpPaperRef struct {
+	ID      model.PaperID     `json:"id"`
+	Title   string            `json:"title"`
+	Status  model.PaperStatus `json:"status"`
+	Version int               `json:"version"`
+	Private bool              `json:"private,omitempty"`
+}
+
+func toMCPRef(r *usecase.PaperRef) mcpPaperRef {
+	return mcpPaperRef{ID: r.ID, Title: r.Title, Status: r.Status, Version: r.VersionNumber, Private: r.Visibility == model.VisibilityPrivate}
 }
 
 type mcpSearchHit struct {
-	PaperID model.PaperID `json:"paper_id"`
-	Title   string        `json:"title"`
+	Paper   mcpPaperRef   `json:"paper"`
 	BlockID model.BlockID `json:"block_id,omitempty"`
-	Snippet string        `json:"snippet"`
+	Text    string        `json:"text"`
 }
 
 type mcpSearchOut struct {
 	Hits []mcpSearchHit `json:"hits"`
 }
 
-type mcpPaperIn struct {
+type mcpReadIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
+	Paper       string            `json:"paper" jsonschema:"paper id or path of titles from the home"`
+	At          string            `json:"at,omitempty" jsonschema:"omit for the current state; latest or a version number for a saved version"`
+	After       string            `json:"after,omitempty" jsonschema:"cursor from a previous read (next) to continue a long paper"`
+	Limit       int               `json:"limit,omitempty" jsonschema:"max top-level blocks (default 200); 0 with at reads the whole version"`
+	TOC         bool              `json:"toc,omitempty" jsonschema:"only headings and child papers, to find your way in a long paper"`
 }
 
 type mcpBlock struct {
@@ -148,257 +178,380 @@ type mcpBlock struct {
 	Type     model.BlockType  `json:"type"`
 	Content  string           `json:"content,omitempty"`
 	Props    model.BlockProps `json:"props"`
-	Version  int64            `json:"version"`
-	By       string           `json:"last_updated_by"`
+	Rev      int64            `json:"rev"`
+	By       string           `json:"last_updated_by,omitempty"`
 }
 
-type mcpPaperOut struct {
-	ID       model.PaperID `json:"id"`
-	Title    string        `json:"title"`
-	Role     model.Role    `json:"role"`
-	Blocks   []mcpBlock    `json:"blocks"`
-	Markdown string        `json:"markdown"`
+type mcpReadOut struct {
+	ID             model.PaperID     `json:"id"`
+	Title          string            `json:"title"`
+	Path           []mcpPaperRef     `json:"path"`
+	Status         model.PaperStatus `json:"status"`
+	Version        int               `json:"version"`
+	At             string            `json:"at"`
+	URL            string            `json:"url"`
+	Blocks         []mcpBlock        `json:"blocks"`
+	Children       []mcpPaperRef     `json:"children,omitempty"`
+	Next           string            `json:"next,omitempty"`
+	WorkspaceRules string            `json:"workspace_rules,omitempty"`
 }
 
 type mcpCreateIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
 	Title       string            `json:"title" jsonschema:"paper title (single line)"`
+	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit for the home"`
+	Private     bool              `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
 	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown"`
-	Restricted  bool              `json:"restricted,omitempty" jsonschema:"true to hide the paper from workspace members except owners"`
 }
 
-type mcpCommitIn struct {
+type mcpWriteIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
-	Message     string            `json:"message" jsonschema:"short description of the change"`
+	Paper       string            `json:"paper" jsonschema:"paper id or path"`
 	Ops         []usecase.Op      `json:"ops" jsonschema:"operations applied atomically, see papers_guide"`
 	Force       bool              `json:"force,omitempty" jsonschema:"overwrite newer changes by others instead of failing with a conflict; only when the user asks"`
 }
 
-type mcpCommitOut struct {
-	CommitID model.CommitID `json:"commit_id,omitempty"`
-	// Versions maps each changed block to its new version; pass it as
-	// base_version on the next update of that block.
-	Versions map[model.BlockID]int64 `json:"versions,omitempty"`
-	// Inserted lists the ids of blocks created by the commit, in order.
-	Inserted []model.BlockID `json:"inserted,omitempty"`
-	// Overwritten lists blocks whose newer version this commit replaced.
-	Overwritten []model.BlockID `json:"overwritten,omitempty"`
+type mcpWriteOut struct {
+	PaperID model.PaperID `json:"paper_id"`
+	// Refs maps each ref to the ID the server issued.
+	Refs map[string]string `json:"refs,omitempty"`
+	// Revs maps each changed block to its new rev; pass it as base_rev on
+	// the next update of that block.
+	Revs        map[model.BlockID]int64 `json:"revs,omitempty"`
+	Deleted     []model.BlockID         `json:"deleted,omitempty"`
+	Trashed     []model.PaperID         `json:"trashed,omitempty"`
+	Archived    []model.PaperID         `json:"archived,omitempty"`
+	Editing     []usecase.Editing       `json:"editing,omitempty"`
+	Version     *int                    `json:"version,omitempty"`
+	NotRestored []usecase.NotRestored   `json:"not_restored,omitempty"`
+	MovedTo     *model.Forward          `json:"moved_to,omitempty"`
+	// Unsaved reminds that the change is not in a version yet.
+	Unsaved        bool   `json:"unsaved"`
+	WorkspaceRules string `json:"workspace_rules,omitempty"`
 }
 
-type mcpHistoryIn struct {
+type mcpSaveIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
-	Before      model.CommitID    `json:"before,omitempty" jsonschema:"commit id from the previous page; omit for the newest commits"`
-	Limit       int               `json:"limit,omitempty" jsonschema:"max commits (default 50)"`
+	Paper       string            `json:"paper" jsonschema:"paper id or path"`
+	Note        string            `json:"note,omitempty" jsonschema:"what changed in this version"`
 }
 
-type mcpCommitSummary struct {
-	Seq     int64           `json:"seq"`
-	ID      model.CommitID  `json:"id"`
-	Actor   string          `json:"actor"`
-	Kind    model.ActorKind `json:"actor_kind"`
-	Message string          `json:"message,omitempty"`
-	Changes int             `json:"changes"`
-	At      string          `json:"at"`
+type mcpSaveOut struct {
+	Saved   bool   `json:"saved"`
+	Version int    `json:"version"`
+	URL     string `json:"url,omitempty"`
 }
 
-type mcpBlockHistoryIn struct {
+type mcpVersionsIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
-	BlockID     model.BlockID     `json:"block_id" jsonschema:"block id"`
-	Limit       int               `json:"limit,omitempty" jsonschema:"max versions (default 200)"`
+	Paper       string            `json:"paper" jsonschema:"paper id or path"`
+	Before      int               `json:"before,omitempty" jsonschema:"only versions before this number"`
+	Limit       int               `json:"limit,omitempty" jsonschema:"max versions (default 50)"`
 }
 
-type mcpBlockVersion struct {
-	Version int64            `json:"version"`
-	Type    model.BlockType  `json:"type"`
-	Content string           `json:"content,omitempty"`
-	Props   model.BlockProps `json:"props"`
-	By      string           `json:"by"`
-	At      string           `json:"at"`
+type mcpVersion struct {
+	Number int    `json:"number"`
+	Note   string `json:"note,omitempty"`
+	By     string `json:"by"`
+	At     string `json:"at"`
 }
 
-type mcpBlockHistoryOut struct {
-	Versions []mcpBlockVersion `json:"versions"`
+type mcpVersionsOut struct {
+	Versions []mcpVersion `json:"versions"`
 }
 
-type mcpHistoryOut struct {
-	Commits []mcpCommitSummary `json:"commits"`
+type mcpDiffIn struct {
+	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
+	Paper       string            `json:"paper" jsonschema:"paper id or path"`
+	From        string            `json:"from,omitempty" jsonschema:"version number or latest (default latest)"`
+	To          string            `json:"to,omitempty" jsonschema:"version number, latest, or omit for the current state"`
 }
 
+// actorLabel is how a writer is shown: "Claude (for Alice)", or a person,
+// marked when they wrote through the API (D7).
 func actorLabel(a model.Actor) string {
-	if a.Kind == model.ActorAgent {
-		if a.AgentName != "" {
-			return a.AgentName + " (for " + a.Name + ")"
-		}
+	switch {
+	case a.Kind == model.ActorAgent && a.AgentName != "":
+		return a.AgentName + " (for " + a.Name + ")"
+	case a.Kind == model.ActorAgent:
 		return "agent (for " + a.Name + ")"
+	case a.Kind == model.ActorSystem:
+		return "papers"
+	case a.TokenID != "":
+		return a.Name + " (via API)"
 	}
 	return a.Name
 }
 
 const timeLayout = "2006-01-02T15:04:05Z07:00"
 
+func paperURL(ws model.WorkspaceID, id model.PaperID, at string) string {
+	u := "/ws/" + string(ws) + "/p/" + string(id)
+	switch at {
+	case "":
+	case "latest":
+		u += "/latest"
+	default:
+		u += "/v/" + at
+	}
+	return u
+}
+
+func (s *Server) rules(ctx context.Context, p *model.Principal, ws model.WorkspaceID) string {
+	v, err := s.uc.GetWorkspace(ctx, p, ws)
+	if err != nil {
+		return ""
+	}
+	return v.Description
+}
+
+func toMCPBlocks(blocks []*model.Block) []mcpBlock {
+	out := make([]mcpBlock, 0, len(blocks))
+	for _, b := range blocks {
+		by := ""
+		if b.UpdatedBy.Kind != "" {
+			by = actorLabel(b.UpdatedBy)
+		}
+		out = append(out, mcpBlock{ID: b.ID, ParentID: b.ParentID, Type: b.Type, Content: b.Content, Props: b.Props, Rev: b.Rev, By: by})
+	}
+	return out
+}
+
 func (s *Server) registerMCPTools(server *mcp.Server) {
-	addTool(server, "papers_guide", "Explain block types, ops and editing etiquette. Call once before writing.",
-		func(_ context.Context, _ *model.Principal, _ mcpEmpty) (mcpGuideOut, error) {
-			return mcpGuideOut{Guide: mcpInstructions, BlockTypes: blockTypeInfos()}, nil
+	addTool(server, "papers_guide", "Explain papers, block types, ops and the workspace's rules. Call once before writing.",
+		func(ctx context.Context, p *model.Principal, in mcpGuideIn) (mcpGuideOut, error) {
+			out := mcpGuideOut{Guide: mcpInstructions, BlockTypes: blockTypeInfos(), Palette: markup.Palette}
+			if in.WorkspaceID == "" {
+				return out, nil
+			}
+			ws, err := s.uc.GetWorkspace(ctx, p, in.WorkspaceID)
+			if err != nil {
+				return out, err
+			}
+			out.WorkspaceRules, out.Language = ws.Description, ws.Language
+			md, err := s.uc.Export(ctx, p, in.WorkspaceID, ws.HomePaperID)
+			if err != nil {
+				return out, err
+			}
+			out.Home = md
+			return out, nil
 		})
 
-	addTool(server, "papers_list_workspaces", "List workspaces you can access.",
+	addTool(server, "papers_list_workspaces", "List the workspaces you can use, with their rules.",
 		func(ctx context.Context, p *model.Principal, _ mcpEmpty) (mcpWorkspacesOut, error) {
-			views, err := s.uc.ListWorkspaces(ctx, p)
+			list, _, err := s.uc.ListWorkspaces(ctx, p)
 			if err != nil {
 				return mcpWorkspacesOut{}, err
 			}
 			out := mcpWorkspacesOut{Workspaces: []mcpWorkspace{}}
-			for _, v := range views {
-				out.Workspaces = append(out.Workspaces, mcpWorkspace{ID: v.Workspace.ID, Name: v.Workspace.Name, Description: v.Workspace.Description, Role: v.Role})
+			for _, v := range list {
+				out.Workspaces = append(out.Workspaces, mcpWorkspace{ID: v.ID, Name: v.Name, Rules: v.Description, Language: v.Language, HomePaperID: v.HomePaperID})
 			}
 			return out, nil
 		})
 
-	addTool(server, "papers_list_papers", "List papers in a workspace, most recently updated first.",
-		func(ctx context.Context, p *model.Principal, in mcpWorkspaceIn) (mcpPapersOut, error) {
-			list, err := s.uc.ListPapers(ctx, p, in.WorkspaceID)
-			if err != nil {
-				return mcpPapersOut{}, err
-			}
-			out := mcpPapersOut{Papers: []mcpPaperSummary{}}
-			for _, ps := range list {
-				out.Papers = append(out.Papers, mcpPaperSummary{
-					ID: ps.Paper.ID, Title: ps.Paper.Title, Role: ps.Role,
-					UpdatedAt: ps.Paper.UpdatedAt.Format(timeLayout), UpdatedBy: actorLabel(ps.Paper.UpdatedBy),
-				})
-			}
-			return out, nil
-		})
-
-	addTool(server, "papers_search", "Find papers whose title or blocks contain the query.",
+	addTool(server, "papers_search", "Find papers and blocks containing the words (current state; archived papers excluded).",
 		func(ctx context.Context, p *model.Principal, in mcpSearchIn) (mcpSearchOut, error) {
-			hits, err := s.uc.SearchPapers(ctx, p, in.WorkspaceID, in.Query, 50)
+			var under model.PaperID
+			if in.Under != "" {
+				q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Under)
+				if err != nil {
+					return mcpSearchOut{}, err
+				}
+				under = q.ID
+			}
+			hits, err := s.uc.Search(ctx, p, in.WorkspaceID, usecase.SearchInput{Query: in.Query, Under: under, Limit: in.Limit})
 			if err != nil {
 				return mcpSearchOut{}, err
 			}
 			out := mcpSearchOut{Hits: []mcpSearchHit{}}
 			for _, h := range hits {
-				out.Hits = append(out.Hits, mcpSearchHit{PaperID: h.Paper.ID, Title: h.Paper.Title, BlockID: h.BlockID, Snippet: h.Snippet})
+				out.Hits = append(out.Hits, mcpSearchHit{Paper: toMCPRef(h.Paper), BlockID: h.BlockID, Text: h.Text})
 			}
 			return out, nil
 		})
 
-	addTool(server, "papers_read_paper", "Read a paper: blocks with ids and versions (send them back as base_version), plus a Markdown rendering.",
-		func(ctx context.Context, p *model.Principal, in mcpPaperIn) (mcpPaperOut, error) {
-			v, err := s.uc.GetPaper(ctx, p, in.WorkspaceID, in.PaperID)
-			if err != nil {
-				return mcpPaperOut{}, err
-			}
-			md, err := s.uc.ExportMarkdown(ctx, p, in.WorkspaceID, in.PaperID)
-			if err != nil {
-				return mcpPaperOut{}, err
-			}
-			out := mcpPaperOut{ID: v.Paper.ID, Title: v.Paper.Title, Role: v.Role, Blocks: []mcpBlock{}, Markdown: md}
-			for _, b := range v.Blocks {
-				out.Blocks = append(out.Blocks, mcpBlock{
-					ID: b.ID, ParentID: b.ParentID, Type: b.Type, Content: b.Content, Props: b.Props,
-					Version: b.Version, By: actorLabel(b.UpdatedBy),
-				})
-			}
-			return out, nil
+	addTool(server, "papers_read", "Read a paper: blocks with ids and revs (send rev back as base_rev), its place in the tree, and its child papers. Reads the current state unless at is given; long papers come in ranges (pass next as after).",
+		func(ctx context.Context, p *model.Principal, in mcpReadIn) (mcpReadOut, error) {
+			return s.mcpRead(ctx, p, in)
 		})
 
-	addTool(server, "papers_create_paper", "Create a paper, optionally with initial Markdown content.",
-		func(ctx context.Context, p *model.Principal, in mcpCreateIn) (mcpPaperSummary, error) {
-			v, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreatePaperInput{Title: in.Title, Markdown: in.Markdown, Restricted: in.Restricted})
-			if err != nil {
-				return mcpPaperSummary{}, err
+	addTool(server, "papers_create_paper", "Create a paper under a parent (or a private one), optionally with initial Markdown.",
+		func(ctx context.Context, p *model.Principal, in mcpCreateIn) (mcpPaperRef, error) {
+			vis := model.VisibilityPublic
+			if in.Private {
+				vis = model.VisibilityPrivate
 			}
-			return mcpPaperSummary{ID: v.Paper.ID, Title: v.Paper.Title, Role: v.Role,
-				UpdatedAt: v.Paper.UpdatedAt.Format(timeLayout), UpdatedBy: actorLabel(v.Paper.UpdatedBy)}, nil
+			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown})
+			if err != nil {
+				return mcpPaperRef{}, err
+			}
+			return mcpPaperRef{ID: q.ID, Title: q.Title, Status: q.Status(), Private: q.IsPrivate()}, nil
 		})
 
-	addTool(server, "papers_commit", "Apply ops (insert, update, delete, move, restore, set_title, insert_markdown) to a paper atomically. Fails with a conflict when a block changed since your base_version.",
-		func(ctx context.Context, p *model.Principal, in mcpCommitIn) (mcpCommitOut, error) {
-			res, err := s.uc.Commit(ctx, p, in.WorkspaceID, in.PaperID, usecase.CommitInput{Ops: in.Ops, Message: in.Message, Force: in.Force})
-			var conflict *usecase.ConflictError
-			if errors.As(err, &conflict) {
-				return mcpCommitOut{}, mcpConflictError(conflict)
-			}
+	addTool(server, "papers_write", "Apply ops to a paper atomically (see papers_guide). Fails with a conflict when a block changed since your base_rev. Does not save a version.",
+		func(ctx context.Context, p *model.Principal, in mcpWriteIn) (mcpWriteOut, error) {
+			q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
 			if err != nil {
-				return mcpCommitOut{}, err
+				return mcpWriteOut{}, err
 			}
-			out := mcpCommitOut{}
-			if res.Commit == nil {
-				return out, nil
+			res, err := s.uc.Apply(ctx, p, in.WorkspaceID, q.ID, usecase.BatchInput{Ops: in.Ops, Force: in.Force})
+			if err != nil {
+				return mcpWriteOut{}, err
 			}
-			out.CommitID = res.Commit.ID
-			out.Versions = map[model.BlockID]int64{}
-			topLevel := map[model.BlockID]bool{}
+			out := mcpWriteOut{
+				PaperID: q.ID, Refs: res.Refs, Revs: map[model.BlockID]int64{}, Deleted: res.Deleted,
+				Trashed: res.Trashed, Archived: res.Archived, Editing: res.Editing, NotRestored: res.NotRestored,
+				MovedTo: res.Forward, Unsaved: res.Version == nil, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
+			}
 			for _, b := range res.Blocks {
-				out.Versions[b.ID] = b.Version
-				topLevel[b.ID] = b.ParentID == ""
+				out.Revs[b.ID] = b.Rev
 			}
-			for _, ch := range res.Commit.Changes {
-				if ch.Kind == model.ChangeInsert && topLevel[ch.BlockID] {
-					out.Inserted = append(out.Inserted, ch.BlockID)
-				}
-				if ch.OverwroteVersion > 0 {
-					out.Overwritten = append(out.Overwritten, ch.BlockID)
-				}
+			if res.Version != nil {
+				out.Version = &res.Version.Number
 			}
 			return out, nil
 		})
 
-	addTool(server, "papers_block_history", "List the versions of one block, newest first (also works for deleted blocks).",
-		func(ctx context.Context, p *model.Principal, in mcpBlockHistoryIn) (mcpBlockHistoryOut, error) {
-			vs, err := s.uc.ListBlockVersions(ctx, p, in.WorkspaceID, in.PaperID, in.BlockID, in.Limit)
+	addTool(server, "papers_save_version", "Save the paper's current state as its next version (v1 makes a draft canonical). Nothing happens when nothing changed since the latest version.",
+		func(ctx context.Context, p *model.Principal, in mcpSaveIn) (mcpSaveOut, error) {
+			q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
 			if err != nil {
-				return mcpBlockHistoryOut{}, err
+				return mcpSaveOut{}, err
 			}
-			out := mcpBlockHistoryOut{Versions: []mcpBlockVersion{}}
-			for _, b := range vs {
-				out.Versions = append(out.Versions, mcpBlockVersion{Version: b.Version, Type: b.Type, Content: b.Content, Props: b.Props, By: actorLabel(b.UpdatedBy), At: b.UpdatedAt.Format(timeLayout)})
+			v, err := s.uc.SaveVersion(ctx, p, in.WorkspaceID, q.ID, in.Note)
+			if err != nil {
+				return mcpSaveOut{}, err
+			}
+			if v == nil {
+				return mcpSaveOut{Saved: false, Version: q.VersionNumber}, nil
+			}
+			n := v.Number
+			return mcpSaveOut{Saved: true, Version: n, URL: paperURL(in.WorkspaceID, q.ID, itoa(n))}, nil
+		})
+
+	addTool(server, "papers_versions", "List a paper's saved versions, newest first (who saved, when, note).",
+		func(ctx context.Context, p *model.Principal, in mcpVersionsIn) (mcpVersionsOut, error) {
+			q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
+			if err != nil {
+				return mcpVersionsOut{}, err
+			}
+			vs, err := s.uc.ListVersions(ctx, p, in.WorkspaceID, q.ID, in.Before, in.Limit)
+			if err != nil {
+				return mcpVersionsOut{}, err
+			}
+			out := mcpVersionsOut{Versions: []mcpVersion{}}
+			for _, v := range vs {
+				out.Versions = append(out.Versions, mcpVersion{Number: v.Number, Note: v.Note, By: actorLabel(v.CreatedBy), At: v.CreatedAt.Format(timeLayout)})
 			}
 			return out, nil
 		})
 
-	addTool(server, "papers_history", "List a paper's commits newest first (who changed what, when).",
-		func(ctx context.Context, p *model.Principal, in mcpHistoryIn) (mcpHistoryOut, error) {
-			limit := in.Limit
-			if limit <= 0 {
-				limit = 50
-			}
-			commits, err := s.uc.ListCommits(ctx, p, in.WorkspaceID, in.PaperID, in.Before, limit)
+	addTool(server, "papers_diff", "Compare two states of a paper (versions or the current state).",
+		func(ctx context.Context, p *model.Principal, in mcpDiffIn) (*usecase.Diff, error) {
+			q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
 			if err != nil {
-				return mcpHistoryOut{}, err
+				return nil, err
 			}
-			out := mcpHistoryOut{Commits: []mcpCommitSummary{}}
-			for _, c := range commits {
-				out.Commits = append(out.Commits, mcpCommitSummary{ID: c.ID, Actor: actorLabel(c.Actor), Kind: c.Actor.Kind, Message: c.Message, Changes: len(c.Changes), At: c.CreatedAt.Format(timeLayout)})
+			fromRaw := in.From
+			if fromRaw == "" {
+				fromRaw = "latest"
 			}
-			return out, nil
+			from, err := usecase.ParseAt(fromRaw)
+			if err != nil {
+				return nil, err
+			}
+			to, err := usecase.ParseAt(in.To)
+			if err != nil {
+				return nil, err
+			}
+			return s.uc.Diff(ctx, p, in.WorkspaceID, q.ID, from, to)
 		})
+}
+
+func itoa(n int) string {
+	b, _ := json.Marshal(n)
+	return string(b)
+}
+
+func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) (mcpReadOut, error) {
+	q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
+	if err != nil {
+		return mcpReadOut{}, err
+	}
+	view, err := s.uc.GetPaper(ctx, p, in.WorkspaceID, q.ID)
+	if err != nil {
+		return mcpReadOut{}, err
+	}
+	at, err := usecase.ParseAt(in.At)
+	if err != nil {
+		return mcpReadOut{}, err
+	}
+	out := mcpReadOut{
+		ID: q.ID, Title: view.Paper.Title, Status: view.Paper.Status(), Version: view.Paper.VersionNumber,
+		Path: []mcpPaperRef{}, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
+	}
+	for _, a := range view.Path {
+		out.Path = append(out.Path, toMCPRef(a))
+	}
+	var blocks []*model.Block
+	refs := map[model.PaperID]*usecase.PaperRef{}
+	if at == 0 {
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 200
+		}
+		page, err := s.uc.ListBlocks(ctx, p, in.WorkspaceID, q.ID, in.After, limit)
+		if err != nil {
+			return mcpReadOut{}, err
+		}
+		blocks, refs, out.Next = page.Blocks, page.Papers, page.Next
+		out.URL = paperURL(in.WorkspaceID, q.ID, "")
+	} else {
+		v, err := s.uc.GetVersion(ctx, p, in.WorkspaceID, q.ID, at)
+		if err != nil {
+			return mcpReadOut{}, err
+		}
+		blocks, out.Title, out.At = v.Blocks, v.Paper.Title, itoa(v.Version.Number)
+		out.URL = paperURL(in.WorkspaceID, q.ID, out.At)
+	}
+	if in.TOC {
+		var keep []*model.Block
+		for _, b := range blocks {
+			if b.Type == model.BlockHeading || b.Type == model.BlockPaper {
+				keep = append(keep, b)
+			}
+		}
+		blocks = keep
+	}
+	out.Blocks = toMCPBlocks(blocks)
+	for _, b := range blocks {
+		if r, ok := refs[b.Props.PaperID]; ok && b.Type == model.BlockPaper {
+			out.Children = append(out.Children, toMCPRef(r))
+		}
+	}
+	return out, nil
 }
 
 // mcpConflictError explains a conflict to an agent with the current state
 // of every conflicting block, so it can redo its edit without another read.
 func mcpConflictError(c *usecase.ConflictError) error {
 	type current struct {
-		BlockID     model.BlockID     `json:"block_id"`
-		BaseVersion int64             `json:"your_base_version"`
-		Deleted     bool              `json:"deleted,omitempty"`
-		Version     int64             `json:"version,omitempty"`
-		Type        model.BlockType   `json:"type,omitempty"`
-		Content     string            `json:"content,omitempty"`
-		Props       *model.BlockProps `json:"props,omitempty"`
-		By          string            `json:"last_updated_by,omitempty"`
+		BlockID model.BlockID     `json:"block_id"`
+		BaseRev int64             `json:"your_base_rev"`
+		Deleted bool              `json:"deleted,omitempty"`
+		Rev     int64             `json:"rev,omitempty"`
+		Type    model.BlockType   `json:"type,omitempty"`
+		Content string            `json:"content,omitempty"`
+		Props   *model.BlockProps `json:"props,omitempty"`
+		By      string            `json:"last_updated_by,omitempty"`
 	}
 	list := make([]current, 0, len(c.Conflicts))
 	for _, cf := range c.Conflicts {
-		cur := current{BlockID: cf.BlockID, BaseVersion: cf.BaseVersion, Deleted: cf.Current == nil}
+		cur := current{BlockID: cf.BlockID, BaseRev: cf.BaseRev, Deleted: cf.Current == nil}
 		if b := cf.Current; b != nil {
 			props := b.Props
-			cur.Version, cur.Type, cur.Content, cur.Props, cur.By = b.Version, b.Type, b.Content, &props, actorLabel(b.UpdatedBy)
+			cur.Rev, cur.Type, cur.Content, cur.Props, cur.By = b.Rev, b.Type, b.Content, &props, actorLabel(b.UpdatedBy)
 		}
 		list = append(list, cur)
 	}
@@ -406,7 +559,7 @@ func mcpConflictError(c *usecase.ConflictError) error {
 	if err != nil {
 		return goerr.Wrap(err, "failed to encode conflicts")
 	}
-	return goerr.Wrap(model.ErrConflict, "conflict: nothing was written. These blocks changed since your base_version; "+
-		"their current state follows. Redo your edit on top of it with the new version as base_version, "+
-		"or resend with force:true only if the user wants to overwrite. Deleted blocks must be restored first. "+string(body))
+	return goerr.Wrap(model.ErrConflict, "conflict: nothing was written. These blocks changed since your base_rev; "+
+		"their current state follows. Redo your edit on top of it with the new rev as base_rev, "+
+		"or resend with force:true only if the user wants to overwrite. Deleted blocks must be inserted again. "+string(body))
 }

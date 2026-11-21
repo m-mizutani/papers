@@ -17,14 +17,16 @@ import (
 // Realtime protocol (JSON text frames, server -> client only).
 //
 //   {"type":"hello"}                   the feed is live; reload the paper now
-//   {"type":"event","event":{...}}     block_put / block_deleted / paper_updated / paper_deleted
+//   {"type":"event","event":{...}}     block_put / block_deleted / paper_updated /
+//                                      paper_deleted / version_saved / presence
 //   {"type":"closing","reason":"..."}  "resync", "access revoked" or "paper deleted"
 //
-// There are no client messages: writes go through the REST API (commits),
-// and concurrent edits are resolved by block versions, not locks. Events
-// carry resulting state, so applying them is idempotent (a block event older
-// than the client's copy, by Version, is ignored). The client reloads the
-// paper after every hello, which covers anything missed while disconnected.
+// There are no client messages: writes go through the REST API (ops), and
+// concurrent edits are resolved by block revisions, not locks. Presence is
+// reported over HTTP and delivered here. Events carry resulting state, so
+// applying them is idempotent (a block event with a lower Rev than the
+// client's copy is ignored). The client reloads the paper after every
+// hello, which covers anything missed while disconnected.
 // A connection lives at most as long as the platform's request timeout
 // (Cloud Run: up to 60 minutes); clients then reconnect.
 
@@ -81,7 +83,7 @@ func (c *liveConn) forward(ctx context.Context, events <-chan *model.Event) erro
 			case model.EventPaperDeleted:
 				return c.close(ctx, websocket.StatusNormalClosure, "paper deleted")
 			case model.EventPaperUpdated:
-				ok, err := c.s.uc.CanRead(ctx, c.p, c.ws, c.paper)
+				ok, err := c.s.uc.CanSee(ctx, c.p, c.ws, c.paper)
 				if err != nil {
 					return err
 				}

@@ -170,60 +170,13 @@ func (r *Repository) DeleteToken(ctx context.Context, id model.TokenID) error {
 	return nil
 }
 
-// --- groups / workspaces ------------------------------------------------------
-
-func (r *Repository) GetGroup(ctx context.Context, id model.GroupID) (*model.Group, error) {
-	return get[model.Group](ctx, r.client.Collection(colGroups).Doc(string(id)), "group")
-}
-
-func (r *Repository) ListGroups(ctx context.Context) ([]*model.Group, error) {
-	return all[model.Group](r.client.Collection(colGroups).OrderBy(firestore.DocumentID, firestore.Asc).Documents(ctx), "groups")
-}
-
-func (r *Repository) ListGroupsByMember(ctx context.Context, userID model.UserID) ([]*model.Group, error) {
-	return all[model.Group](r.client.Collection(colGroups).Where("Members", "array-contains", string(userID)).Documents(ctx), "groups")
-}
-
-func (r *Repository) PutGroup(ctx context.Context, group *model.Group) error {
-	if err := group.Validate(); err != nil {
-		return err
+// GetUsers reads many users in one round trip. Missing ones are omitted.
+func (r *Repository) GetUsers(ctx context.Context, ids []model.UserID) ([]*model.User, error) {
+	var refs []*firestore.DocumentRef
+	for _, id := range ids {
+		if validID(string(id)) == nil {
+			refs = append(refs, r.client.Collection(colUsers).Doc(string(id)))
+		}
 	}
-	if err := validID(string(group.ID)); err != nil {
-		return err
-	}
-	if _, err := r.client.Collection(colGroups).Doc(string(group.ID)).Set(ctx, group); err != nil {
-		return goerr.Wrap(err, "failed to put group")
-	}
-	return nil
-}
-
-func (r *Repository) DeleteGroup(ctx context.Context, id model.GroupID) error {
-	if validID(string(id)) != nil {
-		return nil
-	}
-	if _, err := r.client.Collection(colGroups).Doc(string(id)).Delete(ctx); err != nil {
-		return goerr.Wrap(err, "failed to delete group")
-	}
-	return nil
-}
-
-func (r *Repository) GetWorkspace(ctx context.Context, id model.WorkspaceID) (*model.Workspace, error) {
-	return get[model.Workspace](ctx, r.workspaceDoc(id), "workspace")
-}
-
-func (r *Repository) ListWorkspaces(ctx context.Context) ([]*model.Workspace, error) {
-	return all[model.Workspace](r.client.Collection(colWorkspaces).OrderBy(firestore.DocumentID, firestore.Asc).Documents(ctx), "workspaces")
-}
-
-func (r *Repository) PutWorkspace(ctx context.Context, ws *model.Workspace) error {
-	if err := ws.Validate(); err != nil {
-		return err
-	}
-	if err := validID(string(ws.ID)); err != nil {
-		return err
-	}
-	if _, err := r.workspaceDoc(ws.ID).Set(ctx, ws); err != nil {
-		return goerr.Wrap(err, "failed to put workspace")
-	}
-	return nil
+	return getAll[model.User](ctx, r.client, refs, "users")
 }
