@@ -59,3 +59,9 @@ tasks:
     cmds:
       - pnpm lint
       - pnpm test
+
+  test:e2e:
+    desc: Run the Playwright end-to-end tests against a freshly built server (in-memory storage, sign-in off)
+    cmds:
+      - task: build
+      - cd frontend && PAPERS_BIN=../papers pnpm test:e2e

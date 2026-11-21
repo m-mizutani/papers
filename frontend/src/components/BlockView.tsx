@@ -36,7 +36,8 @@ export interface BlockActions {
   startEdit: (b: Block) => void
   setDraft: (text: string, changed: boolean) => void
   setDraftProps: (props: BlockProps) => void
-  finishEdit: () => void
+  /** Ends the edit; with a block ID, only if that block is the one being edited. */
+  finishEdit: (block?: string) => void
   split: (before: string, after: string) => void
   join: (text: string) => void
   pasteParagraphs: (paragraphs: string[]) => void
@@ -168,9 +169,9 @@ function EditBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
       value={ed.draft}
       placeholder={ed.type === 'paragraph' ? t('typeHere') : undefined}
       onChange={ctx.actions.setDraft}
-      onBlur={ctx.actions.finishEdit}
+      onBlur={() => ctx.actions.finishEdit(block.id)}
       keys={{
-        onEscape: ctx.actions.finishEdit,
+        onEscape: () => ctx.actions.finishEdit(block.id),
         onSplit: isCell || MULTILINE.has(ed.type) ? undefined : ctx.actions.split,
         onJoin: isCell ? undefined : ctx.actions.join,
         multiline: MULTILINE.has(ed.type),
@@ -209,8 +210,8 @@ function EditBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
               value={ed.draft}
               label={t('typeCode')}
               onChange={(v) => ctx.actions.setDraft(v, v !== ed.orig.content)}
-              onBlur={ctx.actions.finishEdit}
-              keys={{ onEscape: ctx.actions.finishEdit, multiline: true }}
+              onBlur={() => ctx.actions.finishEdit(block.id)}
+              keys={{ onEscape: () => ctx.actions.finishEdit(block.id), multiline: true }}
             />
           </div>
           <div className="editor-meta">

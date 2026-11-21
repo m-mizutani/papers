@@ -10,7 +10,7 @@ import Strike from '@tiptap/extension-strike'
 import Text from '@tiptap/extension-text'
 import { Placeholder } from '@tiptap/extensions'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from '../i18n'
 import { PALETTE } from '../markup/markup'
 import { isNativeEnter } from '../utils/keyboard'
@@ -82,7 +82,6 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
       Placeholder.configure({ placeholder: placeholder ?? '' }),
     ],
     content: toDoc(value),
-    autofocus: 'end',
     onUpdate: ({ editor: ed }) => {
       const doc = docJSON(ed)
       onChange(fromDoc(doc), JSON.stringify(doc) !== initial.current)
@@ -149,6 +148,15 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
   })
   const editorRef = useRef<TiptapEditor | null>(null)
   editorRef.current = editor
+
+  // Focus at the end in the same task that mounts the editor. Tiptap's
+  // autofocus waits a frame, and keys typed in that gap (right after Enter
+  // split a block) would be lost.
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.commands.setTextSelection(Math.max(1, editor.state.doc.content.size - 1))
+    editor.view.focus()
+  }, [editor])
 
   // A different block value (e.g. after a conflict) resets the editor.
   useEffect(() => {

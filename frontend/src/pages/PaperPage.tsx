@@ -175,7 +175,9 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
     setFatal(undefined)
     setEditing(null)
     setConflict(null)
-    void load()
+    // Opening a paper adds it to the recent list (and a new one may be in
+    // the private list), so the sidebar is read again once it has loaded.
+    void load().then(onChanged)
     if (readOnlyVersion) return
     const live = new LiveConnection(api.liveURL(ws, paperId), {
       // Reload after (re)connecting: events may have been missed.
@@ -220,7 +222,7 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
       },
     })
     return () => live.close()
-  }, [ws, paperId, readOnlyVersion, load, receive, commit, refreshStatus, me.user.id, t])
+  }, [ws, paperId, readOnlyVersion, load, receive, commit, refreshStatus, me.user.id, onChanged, t])
 
   // Presence: tell others which block I am editing, and when I stop.
   const editingId = editing?.id
@@ -358,9 +360,13 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
     return [{ op: 'update', block_id: id, content: now.draft, type: now.type === now.orig.type ? undefined : now.type, props: now.props, base_rev: base }]
   }, [realId])
 
-  const finishEdit = useCallback(() => {
+  // An editor that loses focus finishes only its own block: when Enter has
+  // moved the edit to a new block, the old editor's blur must not send the
+  // new block's half-typed text.
+  const finishEdit = useCallback((from?: string) => {
     const ed = editingRef.current
     if (!ed || conflictRef.current) return
+    if (from !== undefined && from !== ed.id) return
     void editOps().then(async (ops) => {
       if (ops === null) return
       if (ops.length && !(await runOk(ops))) return

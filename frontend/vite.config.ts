@@ -23,5 +23,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: 'jsdom',
     globals: true,
+    // e2e/ holds the Playwright tests, run by `pnpm test:e2e`.
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 }))

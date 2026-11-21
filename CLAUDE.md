@@ -23,6 +23,8 @@ Read `docs/model.html` (the source of truth) before changing the model, and
 - `go vet ./...`, `go test ./...` – backend checks (do not use `go build` to check compilation)
 - `cd frontend && pnpm lint && pnpm test` – MANDATORY whenever `frontend/` changes
 - `cd frontend && pnpm build` – type check + bundle into `frontend/dist`
+- `task test:e2e` – Playwright end-to-end tests (`frontend/e2e/`) against a freshly built server; add a test there for every new user-facing flow
+- CI (`.github/workflows/ci.yml`) runs all of the above plus the repository contract tests on the Firestore emulator, and fails when `go.mod`/`go.sum` are not tidy
 
 ## Architecture
 
