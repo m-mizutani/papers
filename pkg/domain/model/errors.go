@@ -13,6 +13,8 @@ var (
 	ErrPermissionDenied = goerr.New("permission denied")
 	ErrUnauthenticated  = goerr.New("unauthenticated")
 	ErrInvalidArgument  = goerr.New("invalid argument")
-	ErrBlockLocked      = goerr.New("block is being edited by someone else")
-	ErrAlreadyExists    = goerr.New("already exists")
+	// ErrConflict: the write was based on an older version of a block whose
+	// contents someone else has changed since. Retrying with force overwrites.
+	ErrConflict      = goerr.New("conflict with a newer change")
+	ErrAlreadyExists = goerr.New("already exists")
 )

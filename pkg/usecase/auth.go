@@ -321,7 +321,6 @@ func (a *Auth) AuthenticateToken(ctx context.Context, raw string) (*model.Princi
 		return nil, err
 	}
 	p.Token = tok
-	p.HolderKey = "token:" + string(tok.ID)
 
 	// Last-used is informative only; record it at most once a minute to
 	// keep a busy agent from turning every read into a write.

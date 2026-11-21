@@ -52,14 +52,14 @@ func (s IndexSpec) String() string {
 }
 
 // RequiredIndexes are the indexes the repository's queries need. Queries
-// that read a whole small collection (locks of a paper, blocks of a paper)
+// that read a whole small collection (the blocks of a paper)
 // or that range over document IDs need no index.
 var RequiredIndexes = []IndexSpec{
 	{CollectionGroup: colTokens, Fields: []IndexField{{"UserID", IndexAsc}}, Query: "ListTokens"},
 	{CollectionGroup: colGroups, Fields: []IndexField{{"Members", IndexContains}}, Query: "ListGroupsByMember"},
 	{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexAsc}}, Query: "PaperTx.FirstAfter, PaperTx.Children"},
 	{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexDesc}}, Query: "PaperTx.Last"},
-	{CollectionGroup: colVersions, Fields: []IndexField{{"Version", IndexDesc}}, Query: "ListBlockVersions"},
+	{CollectionGroup: colVersions, Fields: []IndexField{{"Version", IndexDesc}}, Query: "ListBlockVersions, PaperTx.LatestBlockVersion"},
 	{CollectionGroup: colCommits, Fields: []IndexField{{"CreatedAt", IndexDesc}}, Query: "ListCommits"},
 	{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexText}}, Query: "Search"},
 }
@@ -67,7 +67,6 @@ var RequiredIndexes = []IndexSpec{
 // TTLFields are the fields whose time value expires the document.
 var TTLFields = []struct{ CollectionGroup, Field string }{
 	{colSessions, "ExpiresAt"},
-	{colLocks, "ExpiresAt"},
 }
 
 func (s IndexSpec) proto() *adminpb.Index {

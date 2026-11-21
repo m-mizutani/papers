@@ -51,14 +51,12 @@ type CreatePaperInput struct {
 	Title      string
 	Markdown   string
 	Restricted bool
-	HolderKey  string
 }
 
 // PaperView is everything needed to render a paper.
 type PaperView struct {
 	Paper  *model.Paper
 	Blocks []*model.Block
-	Locks  []*model.BlockLock
 	Role   model.Role
 }
 
@@ -84,9 +82,8 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, wsID mod
 	if strings.TrimSpace(in.Markdown) != "" {
 		md := in.Markdown
 		if _, err := u.Commit(ctx, p, ws.ID, paper.ID, CommitInput{
-			Ops:       []Op{{Kind: OpInsertMarkdown, Markdown: &md}},
-			Message:   "Initial content",
-			HolderKey: in.HolderKey,
+			Ops:     []Op{{Kind: OpInsertMarkdown, Markdown: &md}},
+			Message: "Initial content",
 		}); err != nil {
 			return nil, goerr.Wrap(err, "failed to write initial content")
 		}
@@ -103,11 +100,7 @@ func (u *UseCases) GetPaper(ctx context.Context, p *model.Principal, wsID model.
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to list blocks")
 	}
-	locks, err := u.repo.ListLocks(ctx, wsID, id, u.now())
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to list locks")
-	}
-	return &PaperView{Paper: paper, Blocks: blocks, Locks: locks, Role: role}, nil
+	return &PaperView{Paper: paper, Blocks: blocks, Role: role}, nil
 }
 
 func (u *UseCases) DeletePaper(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, id model.PaperID) error {

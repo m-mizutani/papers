@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/m-mizutani/goerr/v2"
@@ -25,8 +27,8 @@ const mcpInstructions = `papers is a shared knowledge canvas edited by humans an
 Model
 - A workspace contains papers. A paper has a title and an ordered list of blocks.
 - Every change is a commit (an atomic list of ops). Read a paper before editing it and reference blocks by id.
-- Humans soft-lock the block they are editing. Writing to a locked block fails with "block is being edited"; wait, edit something else, or ask the user. Use force only when the user explicitly asks you to override.
-- Concurrent writes are last-writer-wins per block. Pass base_version (the version you read) on update so overwrites are recorded.
+- There are no locks. Every update, delete and restore must carry base_version: the block version you read. If someone changed that block's contents since, the whole commit fails with a conflict listing each block's current state. Re-read, redo your edit on top of the current contents, and commit again. Send force:true only when the user explicitly wants their version to win; forced overwrites are recorded.
+- Moves never conflict (the last move wins). Deleting a block someone else already deleted succeeds.
 - Every block keeps its own version history (papers_block_history); a paper's history is its list of commits (papers_history).
 
 Block types (type: props)
@@ -43,7 +45,8 @@ Block types (type: props)
 Ops (papers_commit)
 - {"op":"insert","type":"paragraph","content":"...","after":"<block id>"}  after omitted = append; after "" = top.
 - {"op":"update","block_id":"...","content":"...","props":{...},"type":"...","base_version":3}  props replaces all props.
-- {"op":"delete","block_id":"..."}  {"op":"move","block_id":"...","after":"<block id>"}
+- {"op":"delete","block_id":"...","base_version":3}  {"op":"move","block_id":"...","after":"<block id>"}
+- {"op":"restore","block_id":"...","version":2,"base_version":5}  make an earlier version current again (base_version can be omitted for a deleted block, which comes back at its last position)
 - {"op":"set_title","title":"..."}
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"<block id>"}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become table blocks.
 Keep one commit per logical change and write a short commit message.`
@@ -62,7 +65,6 @@ func (s *Server) mcpHandler() http.Handler {
 		if p != nil && p.Token == nil && p.AgentName == "" {
 			cp := *p
 			cp.AgentName = mcpDefaultAgent
-			cp.HolderKey = "mcp:" + string(p.User.ID)
 			r = r.WithContext(withPrincipal(r.Context(), &cp))
 		}
 		streamable.ServeHTTP(w, r)
@@ -147,9 +149,7 @@ type mcpBlock struct {
 	Content  string           `json:"content,omitempty"`
 	Props    model.BlockProps `json:"props"`
 	Version  int64            `json:"version"`
-	// EditedBy names who holds the soft lock, if anyone is editing it now.
-	EditedBy string `json:"edited_by,omitempty"`
-	By       string `json:"last_updated_by"`
+	By       string           `json:"last_updated_by"`
 }
 
 type mcpPaperOut struct {
@@ -172,7 +172,7 @@ type mcpCommitIn struct {
 	PaperID     model.PaperID     `json:"paper_id" jsonschema:"paper id"`
 	Message     string            `json:"message" jsonschema:"short description of the change"`
 	Ops         []usecase.Op      `json:"ops" jsonschema:"operations applied atomically, see papers_guide"`
-	Force       bool              `json:"force,omitempty" jsonschema:"overwrite blocks humans are editing; only when the user asks"`
+	Force       bool              `json:"force,omitempty" jsonschema:"overwrite newer changes by others instead of failing with a conflict; only when the user asks"`
 }
 
 type mcpCommitOut struct {
@@ -287,7 +287,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			return out, nil
 		})
 
-	addTool(server, "papers_read_paper", "Read a paper: blocks with ids, versions and who is editing them now, plus a Markdown rendering.",
+	addTool(server, "papers_read_paper", "Read a paper: blocks with ids and versions (send them back as base_version), plus a Markdown rendering.",
 		func(ctx context.Context, p *model.Principal, in mcpPaperIn) (mcpPaperOut, error) {
 			v, err := s.uc.GetPaper(ctx, p, in.WorkspaceID, in.PaperID)
 			if err != nil {
@@ -297,15 +297,11 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			if err != nil {
 				return mcpPaperOut{}, err
 			}
-			editing := map[model.BlockID]string{}
-			for _, l := range v.Locks {
-				editing[l.BlockID] = actorLabel(l.Holder)
-			}
 			out := mcpPaperOut{ID: v.Paper.ID, Title: v.Paper.Title, Role: v.Role, Blocks: []mcpBlock{}, Markdown: md}
 			for _, b := range v.Blocks {
 				out.Blocks = append(out.Blocks, mcpBlock{
 					ID: b.ID, ParentID: b.ParentID, Type: b.Type, Content: b.Content, Props: b.Props,
-					Version: b.Version, EditedBy: editing[b.ID], By: actorLabel(b.UpdatedBy),
+					Version: b.Version, By: actorLabel(b.UpdatedBy),
 				})
 			}
 			return out, nil
@@ -321,9 +317,13 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				UpdatedAt: v.Paper.UpdatedAt.Format(timeLayout), UpdatedBy: actorLabel(v.Paper.UpdatedBy)}, nil
 		})
 
-	addTool(server, "papers_commit", "Apply ops (insert, update, delete, move, set_title, insert_markdown) to a paper atomically.",
+	addTool(server, "papers_commit", "Apply ops (insert, update, delete, move, restore, set_title, insert_markdown) to a paper atomically. Fails with a conflict when a block changed since your base_version.",
 		func(ctx context.Context, p *model.Principal, in mcpCommitIn) (mcpCommitOut, error) {
 			res, err := s.uc.Commit(ctx, p, in.WorkspaceID, in.PaperID, usecase.CommitInput{Ops: in.Ops, Message: in.Message, Force: in.Force})
+			var conflict *usecase.ConflictError
+			if errors.As(err, &conflict) {
+				return mcpCommitOut{}, mcpConflictError(conflict)
+			}
 			if err != nil {
 				return mcpCommitOut{}, err
 			}
@@ -378,4 +378,35 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			}
 			return out, nil
 		})
+}
+
+// mcpConflictError explains a conflict to an agent with the current state
+// of every conflicting block, so it can redo its edit without another read.
+func mcpConflictError(c *usecase.ConflictError) error {
+	type current struct {
+		BlockID     model.BlockID     `json:"block_id"`
+		BaseVersion int64             `json:"your_base_version"`
+		Deleted     bool              `json:"deleted,omitempty"`
+		Version     int64             `json:"version,omitempty"`
+		Type        model.BlockType   `json:"type,omitempty"`
+		Content     string            `json:"content,omitempty"`
+		Props       *model.BlockProps `json:"props,omitempty"`
+		By          string            `json:"last_updated_by,omitempty"`
+	}
+	list := make([]current, 0, len(c.Conflicts))
+	for _, cf := range c.Conflicts {
+		cur := current{BlockID: cf.BlockID, BaseVersion: cf.BaseVersion, Deleted: cf.Current == nil}
+		if b := cf.Current; b != nil {
+			props := b.Props
+			cur.Version, cur.Type, cur.Content, cur.Props, cur.By = b.Version, b.Type, b.Content, &props, actorLabel(b.UpdatedBy)
+		}
+		list = append(list, cur)
+	}
+	body, err := json.Marshal(list)
+	if err != nil {
+		return goerr.Wrap(err, "failed to encode conflicts")
+	}
+	return goerr.Wrap(model.ErrConflict, "conflict: nothing was written. These blocks changed since your base_version; "+
+		"their current state follows. Redo your edit on top of it with the new version as base_version, "+
+		"or resend with force:true only if the user wants to overwrite. Deleted blocks must be restored first. "+string(body))
 }

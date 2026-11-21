@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
@@ -15,46 +14,30 @@ import (
 	"github.com/m-mizutani/papers/pkg/utils/errutil"
 )
 
-// Realtime protocol (JSON text frames).
+// Realtime protocol (JSON text frames, server -> client only).
 //
-// Client -> server:
-//   {"type":"lock","block_id":"..."}    acquire / renew a soft lock
-//   {"type":"unlock","block_id":"..."}  release it
-//   {"type":"heartbeat"}                renew every lock held by this connection
-//
-// Server -> client:
-//   {"type":"hello","connection_id":"...","lock_ttl_ms":30000}
-//   {"type":"lock_result","block_id":"...","ok":true|false,"lock":{...}}
-//   {"type":"lock_lost","block_id":"...","lock":{...}}
-//   {"type":"event","event":{...}}      block_put / block_deleted / paper_updated / lock / unlock
+//   {"type":"hello"}                   the feed is live; reload the paper now
+//   {"type":"event","event":{...}}     block_put / block_deleted / paper_updated / paper_deleted
 //   {"type":"closing","reason":"..."}  "resync", "access revoked" or "paper deleted"
 //
-// Events carry resulting state, so applying them is idempotent (a block
-// event older than the client's copy, by Version, is ignored). The client
-// reloads the paper after every hello, which covers anything missed while
-// disconnected. A connection lives at most as long as the platform's request
-// timeout (Cloud Run: up to 60 minutes); clients then reconnect.
+// There are no client messages: writes go through the REST API (commits),
+// and concurrent edits are resolved by block versions, not locks. Events
+// carry resulting state, so applying them is idempotent (a block event older
+// than the client's copy, by Version, is ignored). The client reloads the
+// paper after every hello, which covers anything missed while disconnected.
+// A connection lives at most as long as the platform's request timeout
+// (Cloud Run: up to 60 minutes); clients then reconnect.
 
 const (
-	liveReadLimit    = 64 << 10
+	liveReadLimit    = 4 << 10
 	liveWriteTimeout = 10 * time.Second
 )
 
-type liveClientMsg struct {
-	Type    string        `json:"type"`
-	BlockID model.BlockID `json:"block_id,omitempty"`
-}
-
 type liveServerMsg struct {
-	Type         string           `json:"type"`
-	ConnectionID string           `json:"connection_id,omitempty"`
-	LockTTLMs    int64            `json:"lock_ttl_ms,omitempty"`
-	BlockID      model.BlockID    `json:"block_id,omitempty"`
-	OK           *bool            `json:"ok,omitempty"`
-	Lock         *model.BlockLock `json:"lock,omitempty"`
-	Event        *model.Event     `json:"event,omitempty"`
-	Error        string           `json:"error,omitempty"`
-	Reason       string           `json:"reason,omitempty"`
+	Type   string       `json:"type"`
+	Event  *model.Event `json:"event,omitempty"`
+	Error  string       `json:"error,omitempty"`
+	Reason string       `json:"reason,omitempty"`
 }
 
 // liveConn is the state of one WebSocket connection. It lives exactly as
@@ -65,8 +48,6 @@ type liveConn struct {
 	p     *model.Principal
 	ws    model.WorkspaceID
 	paper model.PaperID
-	id    string
-	held  map[model.BlockID]struct{}
 }
 
 func (c *liveConn) send(ctx context.Context, msg liveServerMsg) error {
@@ -76,51 +57,6 @@ func (c *liveConn) send(ctx context.Context, msg liveServerMsg) error {
 		return goerr.Wrap(err, "failed to write websocket message")
 	}
 	return nil
-}
-
-func boolPtr(v bool) *bool { return &v }
-
-func (c *liveConn) lock(ctx context.Context, id model.BlockID) error {
-	l, err := c.s.uc.AcquireLock(ctx, c.p, c.ws, c.paper, id, c.id)
-	if err != nil {
-		if errors.Is(err, model.ErrBlockLocked) || errors.Is(err, model.ErrNotFound) || errors.Is(err, model.ErrPermissionDenied) || errors.Is(err, model.ErrInvalidArgument) {
-			return c.send(ctx, liveServerMsg{Type: "lock_result", BlockID: id, OK: boolPtr(false), Lock: l, Error: err.Error()})
-		}
-		return err
-	}
-	c.held[id] = struct{}{}
-	return c.send(ctx, liveServerMsg{Type: "lock_result", BlockID: id, OK: boolPtr(true), Lock: l})
-}
-
-func (c *liveConn) unlock(ctx context.Context, id model.BlockID) error {
-	delete(c.held, id)
-	return c.s.uc.ReleaseLock(ctx, c.p, c.ws, c.paper, id, c.id)
-}
-
-func (c *liveConn) heartbeat(ctx context.Context) error {
-	for id := range c.held {
-		l, err := c.s.uc.AcquireLock(ctx, c.p, c.ws, c.paper, id, c.id)
-		if err == nil {
-			continue
-		}
-		delete(c.held, id)
-		if errors.Is(err, model.ErrBlockLocked) || errors.Is(err, model.ErrNotFound) {
-			if err := c.send(ctx, liveServerMsg{Type: "lock_lost", BlockID: id, Lock: l}); err != nil {
-				return err
-			}
-			continue
-		}
-		return err
-	}
-	return nil
-}
-
-func (c *liveConn) releaseAll(ctx context.Context) {
-	for id := range c.held {
-		if err := c.s.uc.ReleaseLock(ctx, c.p, c.ws, c.paper, id, c.id); err != nil {
-			errutil.Handle(ctx, err, "failed to release lock on disconnect")
-		}
-	}
 }
 
 // forward relays change events to the client and closes the connection
@@ -192,18 +128,12 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	defer conn.CloseNow() //nolint:errcheck // best effort after a normal close
 	conn.SetReadLimit(liveReadLimit)
 
-	id, err := randomHex(16)
-	if err != nil {
-		errutil.Handle(ctx, err, "failed to create connection id")
-		return
-	}
-	c := &liveConn{s: s, conn: conn, p: p, ws: wsID, paper: paperID, id: "conn:" + id, held: map[model.BlockID]struct{}{}}
+	c := &liveConn{s: s, conn: conn, p: p, ws: wsID, paper: paperID}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer c.releaseAll(context.WithoutCancel(ctx))
 
-	if err := c.send(ctx, liveServerMsg{Type: "hello", ConnectionID: c.id, LockTTLMs: s.uc.LockTTL()}); err != nil {
+	if err := c.send(ctx, liveServerMsg{Type: "hello"}); err != nil {
 		return
 	}
 
@@ -212,26 +142,12 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		return c.forward(ctx, events)
 	})
 
+	// The client sends nothing; reading only notices when it goes away.
 	for {
-		var msg liveClientMsg
-		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+		if _, _, err := conn.Read(ctx); err != nil {
 			return // closed by peer, timeout, or forward() ended the context
 		}
-		var herr error
-		switch msg.Type {
-		case "lock":
-			herr = c.lock(ctx, msg.BlockID)
-		case "unlock":
-			herr = c.unlock(ctx, msg.BlockID)
-		case "heartbeat":
-			herr = c.heartbeat(ctx)
-		default:
-			herr = c.send(ctx, liveServerMsg{Type: "error", Error: "unknown message type"})
-		}
-		if herr != nil {
-			if ctx.Err() == nil {
-				errutil.Handle(ctx, herr, "live connection failed")
-			}
+		if err := c.send(ctx, liveServerMsg{Type: "error", Error: "the live feed takes no messages"}); err != nil {
 			return
 		}
 	}

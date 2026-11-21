@@ -60,21 +60,21 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <body>
 <article class="sheet">
 <h1>同時編集: ロックをやめて版で守る</h1>
-<p class="meta">提案 2026-11-21。決まったら <code>docs/design.html</code> の「同時編集」と決定事項に反映する。</p>
-<nav aria-label="目次"><a href="#decided">決まったこと</a><a href="#gaps">今の版管理の穴</a><a href="#versions">版管理の仕様</a><a href="#policy">衝突の扱い（未決）</a><a href="#editing">編集中の体験</a><a href="#remove">消えるもの</a><a href="#open">未決事項</a></nav>
+<p class="meta">2026-11-21 決定・実装済み。要点は <code>docs/design.html</code> の「同時編集」にも反映した。</p>
+<nav aria-label="目次"><a href="#decided">決まったこと</a><a href="#gaps">以前の版管理の穴</a><a href="#versions">版管理の仕様</a><a href="#policy">衝突の扱い</a><a href="#editing">編集中の体験</a><a href="#remove">消したもの</a><a href="#open">未決事項</a></nav>
 
 <section id="decided">
 <h2>決まったこと</h2>
 <ul class="decisions">
 <li class="block human"><b>ブロックのロックをやめる<span class="tag">11-21</span></b><span>書き込みを止める仕組みは持たない。意味としては後勝ち。ロックの記録・延長・TTL・WebSocket のロック操作をすべて削る。</span></li>
 <li class="block human"><b>その代わり版管理を厳密にする<span class="tag">11-21</span></b><span>誰がどの版を元に何を書いたかが、すべての変更について追えること。消えた内容は必ず履歴から戻せること。</span></li>
-<li class="block held"><b>衝突を拒否するか、警告だけにするかは体験設計で決める<span class="tag">未決</span></b><span>下の「衝突の扱い」で 2 案を比べる。どちらでも版管理の仕様は同じ。</span></li>
+<li class="block human"><b>衝突は一度拒否し、その後に強行できる（案 B）<span class="tag">11-21</span></b><span>保存の瞬間に止めて両方の内容を見せ、本人が選んだときだけ <code>force</code> で上書きする。AI も同じで、エラーと現在の内容を受け取って書き直す。</span></li>
 </ul>
 </section>
 
 <section id="gaps">
-<h2>今の版管理の穴</h2>
-<p>ブロックごとの版番号と不変のスナップショットはすでにある。ただ、ロックが前提だったので、ロックなしでは次の穴が表に出る。</p>
+<h2>以前の版管理の穴（すべて対処済み）</h2>
+<p>ブロックごとの版番号と不変のスナップショットはすでにあった。ただ、ロックが前提だったので、ロックなしでは次の穴が表に出る。</p>
 <div class="scroll"><table>
 <thead><tr><th>穴</th><th>起きること</th><th>場所</th></tr></thead>
 <tbody>
@@ -90,7 +90,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <h2>版管理の仕様</h2>
 <p>衝突をどう扱うかに関係なく、まずここを固める。</p>
 <h3>1. 既存ブロックへの op は必ず元の版を持つ</h3>
-<p>update・delete・move は <code>base_version</code> を必須にする。UI は表示中の版を必ず送る。API と MCP で欠けていれば 400。AI には「読んだ版を送る」ことを papers_guide で教えている（今は任意と書いている）ので、必須に変える。</p>
+<p>update・delete・restore は <code>base_version</code> を必須にした（欠けていれば 400）。move は衝突しないので不要。UI は「編集を始めた時点の版」を送る。保存直前の最新版を送ると、編集中に届いた他人の変更を見逃すため。AI には papers_guide で「読んだ版を送る」と教える。</p>
 <h3>2. 衝突は「内容の衝突」だけ</h3>
 <p>版番号は移動でも上がるので、番号の比較だけでは判定しない。<code>base_version</code> が現在より古いときは、そのスナップショットと現在を比べ、型・本文・属性のどれかが変わっていれば衝突とする。並び順と親だけの変化は衝突にしない。</p>
 <div class="scroll"><table>
@@ -108,12 +108,12 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <h3>4. 戻す op を足す</h3>
 <pre><code>{"op":"restore","block_id":"…","version":5,"base_version":7}</code></pre>
 <p>v5 の型・本文・属性で新しい版 v8 を作る（履歴は書き換えない）。削除済みのブロックは、最後の位置の近くに同じ ID で戻す。UI では履歴パネルの各版に「この版に戻す」を付ける。</p>
-<h3>5. 削除も 1 つの版として残す</h3>
-<p>今は削除するとブロックの本体が消え、版のスナップショットだけが残る。削除時に「削除済み」の版を 1 つ書き足し、誰がいつ消したかを版の列だけで追えるようにする。</p>
+<h3>5. 削除の記録（見送り）</h3>
+<p>削除時に「削除済み」の版を書き足す案は見送った。誰がいつ消したかは commit に残り、消したブロックも最後の版から restore で戻せるため。必要になったら足す。</p>
 </section>
 
 <section id="policy">
-<h2>衝突の扱い（未決）</h2>
+<h2>衝突の扱い（決定: 案 B）</h2>
 <p>A さんと B さんが同じ v3 を見て、B さんが先に保存して v4 になった。A さんが v3 を元に保存したとき、何が起きるか。</p>
 <figure>
 <svg viewBox="0 0 900 320" role="img" aria-label="A と B が同じ v3 から編集し、B が先に v4 を保存する。A の保存は、案 A では v5 として通り上書きが記録され、案 B では拒否されて比較画面が出る。">
@@ -159,22 +159,25 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <tr><td>実装</td><td>今の挙動に記録を足すだけ</td><td>use case に衝突エラー、UI に比較ダイアログ、MCP に <code>force</code> の説明</td></tr>
 </tbody></table></div>
 
-<div class="rec"><b class="ui">推奨: 案 B（既定は拒否、明示すれば後勝ち）</b>
+<div class="rec"><b class="ui">採用: 案 B（既定は拒否、明示すれば後勝ち）</b>
 <p>ロックがなくなると、人が衝突を知る機会は保存の瞬間しか残らない。そこで止めれば何も失われず、止まるのは同じブロックを同時に直したときだけなので、体験の負担は小さい。主な書き手の AI にとっても、エラーで止まって読み直すのは自然な動き。後勝ちの意味は <code>force</code> で残り、選んだ上書きはすべて記録される。</p></div>
 </section>
 
 <section id="editing">
 <h2>編集中の体験</h2>
 <ul>
-<li>自分が編集しているブロックに他人の変更が届いても、入力中の内容は置き換えない。ブロックの端に「B さんが更新しました（v4）」と出し、保存したときに上の流れに入る。</li>
+<li>自分が編集しているブロックに他人の変更が届いても、入力中の内容は置き換えない。ブロックの上に「B が更新しました」と出し、保存したときに上の流れに入る。</li>
+<li>「編集を続ける」を選ぶと、下書きを残したまま元の版を相手の最新版に付け替える。次の保存は通常どおり通る。</li>
+<li>編集中のブロックを他人が消したら、下書きを画面上部に残し、「復元して自分の内容を保存」（restore と update を 1 commit）か「自分の内容を捨てる」を選ばせる。</li>
+<li>何も入力していなければ、他人が更新していても保存は何も送らない（衝突にしない）。</li>
 <li>自分が編集していないブロックは、届いた変更をそのまま反映する（今と同じ）。</li>
 <li>「誰がどこを編集中か」の表示はなくす。必要になったら、書き込みを止めない別の仕組み（在席表示）として後で足す。</li>
-<li>保存は、ブロックから離れたとき・Enter・数秒入力が止まったとき。衝突の窓を短くするため、編集中も定期的に保存する。</li>
+<li>保存は、ブロックから離れたとき・Enter・Esc。衝突の窓を短くする定期保存は、まだ入れていない（未決事項）。</li>
 </ul>
 </section>
 
 <section id="remove">
-<h2>消えるもの</h2>
+<h2>消したもの</h2>
 <div class="scroll"><table>
 <thead><tr><th>場所</th><th>削るもの</th></tr></thead>
 <tbody>
@@ -182,7 +185,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <tr><td>model・use case</td><td><code>BlockLock</code>、<code>ErrBlockLocked</code>、<code>AcquireLock</code>・<code>ReleaseLock</code>、commit 時のロック確認、<code>HolderKey</code></td></tr>
 <tr><td>WebSocket</td><td><code>lock</code>・<code>unlock</code>・<code>heartbeat</code> と <code>lock_result</code>・<code>lock_lost</code>。サーバーからの一方向（<code>hello</code>・<code>event</code>・<code>closing</code>）だけになる</td></tr>
 <tr><td>UI</td><td>ロックの取得と延長、他人のロックの表示、ロック中の編集不可</td></tr>
-<tr><td>MCP</td><td><code>force</code> の意味が「他人のロックを無視」から「衝突しても上書き」に変わる（案 B のとき）</td></tr>
+<tr><td>MCP</td><td><code>force</code> の意味が「他人のロックを無視」から「衝突しても上書き」に変わった</td></tr>
 </tbody></table></div>
 <p>ロックの延長は、編集中の人 1 人につき 10 秒に 1 回の書き込みだった。これがなくなるので、ピーク時の書き込みの大半が消える。</p>
 </section>
@@ -190,9 +193,9 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <section id="open">
 <h2>未決事項</h2>
 <ol>
-<li class="block held"><b class="ui">衝突の扱い:</b> 案 A か案 B か。</li>
+<li class="block"><b class="ui">編集中の定期保存:</b> 長く編集するほど衝突しやすい。数秒止まったら保存するかを、使ってみて決める。</li>
 <li class="block"><b class="ui">上書きされた人への知らせ:</b> 履歴に出すだけでよいか。ペーパーを開いたときに「あなたの変更が上書きされています」と出すなら、人ごとの通知の置き場が要る。</li>
-<li class="block"><b class="ui">表のセル:</b> セルも 1 ブロックなので同じ規則で扱う。表の形（行数・列数）の変更とセルの編集が重なったときの扱いを詰める。</li>
+<li class="block"><b class="ui">表:</b> セルは 1 ブロックとして同じ規則で扱う。ただ、表を消したり縮めたりすると、他人が直したばかりのセルも衝突の確認なしに消える（セルの版は履歴に残る）。消した表は restore できない。</li>
 <li class="block"><b class="ui">タイトル:</b> 版を持たない。同じ規則にそろえるなら、ペーパー本体にも版を付ける。</li>
 </ol>
 </section>

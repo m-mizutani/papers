@@ -3,9 +3,11 @@
 An AI-native, real-time knowledge canvas. People and AI agents write
 **papers** together: a paper is an ordered list of **blocks** (headings,
 text, lists, tables, code, and rich blocks such as Mermaid diagrams, SVG and
-sandboxed HTML that AI writes). Every change is a **commit**; a human editing
-a block holds a soft lock on it, so AI and other people see who is typing
-where. Writes are last-writer-wins per block, and overwrites are recorded.
+sandboxed HTML that AI writes). Every change is a **commit**. There are no
+locks: each edit names the block version it was based on, and if someone else
+changed that block in the meantime the save is rejected once with both
+versions shown; the writer can then keep theirs or overwrite (recorded).
+Any earlier version can be restored.
 
 - Web UI (React) with live updates over WebSocket
 - REST API and an MCP endpoint (`/mcp`) for AI agents
@@ -13,7 +15,9 @@ where. Writes are last-writer-wins per block, and overwrites are recorded.
   fine-grained roles (workspace roles, per-paper restrictions, token scopes)
 
 See [docs/design.html](docs/design.html) for the architecture and the
-Firestore schema (also published as a claude.ai artifact).
+Firestore schema, [docs/concurrency.html](docs/concurrency.html) for concurrent
+editing and [docs/codebase.html](docs/codebase.html) for a tour of the code
+(all also published as claude.ai artifacts).
 
 ## Run locally
 
@@ -54,7 +58,6 @@ UI and pass it as a bearer token (the UI shows the exact command).
 | `--admin-email` | | System administrators |
 | `--session-ttl` | `720h` | Browser session lifetime |
 | `--no-authn` | `false` | Development only: every request is the dev user (an admin) |
-| `--lock-ttl` | `30s` | Soft lock lifetime without heartbeat |
 | `--workspace-creation` | `everyone` | `everyone` or `admin` |
 | `--enable-mcp` | `true` | Serve `/mcp` |
 | `--ws-origin` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |

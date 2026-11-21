@@ -10,6 +10,7 @@ import (
 	"github.com/m-mizutani/goerr/v2"
 
 	"github.com/m-mizutani/papers/pkg/domain/model"
+	"github.com/m-mizutani/papers/pkg/usecase"
 	"github.com/m-mizutani/papers/pkg/utils/errutil"
 )
 
@@ -22,8 +23,10 @@ type errorBody struct {
 type errorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-	// Lock is set for "locked" errors: who holds the block.
-	Lock *model.BlockLock `json:"lock,omitempty"`
+	// Conflicts is set for "conflict" errors: each op that was based on an
+	// older version, with the block as it is now. Resend with force to
+	// overwrite.
+	Conflicts []usecase.Conflict `json:"conflicts,omitempty"`
 }
 
 // statusOf maps a domain error to an HTTP status and a stable error code.
@@ -35,8 +38,8 @@ func statusOf(err error) (int, string) {
 		return http.StatusForbidden, "permission_denied"
 	case errors.Is(err, model.ErrNotFound):
 		return http.StatusNotFound, "not_found"
-	case errors.Is(err, model.ErrBlockLocked):
-		return http.StatusConflict, "locked"
+	case errors.Is(err, model.ErrConflict):
+		return http.StatusConflict, "conflict"
 	case errors.Is(err, model.ErrAlreadyExists):
 		return http.StatusConflict, "already_exists"
 	case errors.Is(err, model.ErrInvalidArgument):
@@ -59,10 +62,6 @@ func writeJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
 // tagged benign so they do not page anyone; internal errors keep their
 // message out of the response.
 func writeError(ctx context.Context, w http.ResponseWriter, err error) {
-	writeErrorWithLock(ctx, w, err, nil)
-}
-
-func writeErrorWithLock(ctx context.Context, w http.ResponseWriter, err error, lock *model.BlockLock) {
 	status, code := statusOf(err)
 	msg := err.Error()
 	if status >= 500 {
@@ -71,7 +70,12 @@ func writeErrorWithLock(ctx context.Context, w http.ResponseWriter, err error, l
 	} else {
 		errutil.Handle(ctx, goerr.Wrap(err, "request rejected", goerr.T(errutil.TagBenign)), "request rejected")
 	}
-	writeJSON(ctx, w, status, errorBody{Error: errorDetail{Code: code, Message: msg, Lock: lock}})
+	detail := errorDetail{Code: code, Message: msg}
+	var conflict *usecase.ConflictError
+	if errors.As(err, &conflict) {
+		detail.Conflicts = conflict.Conflicts
+	}
+	writeJSON(ctx, w, status, errorBody{Error: detail})
 }
 
 func decodeJSON(r *http.Request, v any) error {

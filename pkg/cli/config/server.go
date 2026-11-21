@@ -18,7 +18,6 @@ type Server struct {
 	baseURL           string
 	enableMCP         bool
 	wsOrigins         []string
-	lockTTL           time.Duration
 	workspaceCreation string
 	maxOpsPerCommit   int
 	paperTouch        time.Duration
@@ -44,10 +43,6 @@ func (x *Server) Flags() []cli.Flag {
 			Usage:   "Extra Origin host patterns accepted for WebSocket upgrades (e.g. localhost:5173 for the Vite dev server)",
 			Sources: cli.EnvVars("PAPERS_WS_ORIGINS"), Destination: &x.wsOrigins,
 		},
-		&cli.DurationFlag{
-			Name: "lock-ttl", Category: "editing", Usage: "How long a soft block lock lives without renewal",
-			Value: 30 * time.Second, Sources: cli.EnvVars("PAPERS_LOCK_TTL"), Destination: &x.lockTTL,
-		},
 		&cli.StringFlag{
 			Name: "workspace-creation", Category: "editing", Usage: "Who may create workspaces [everyone|admin]",
 			Value: string(usecase.WorkspaceCreationEveryone), Sources: cli.EnvVars("PAPERS_WORKSPACE_CREATION"), Destination: &x.workspaceCreation,
@@ -69,7 +64,6 @@ func (x Server) LogValue() slog.Value {
 		slog.String("addr", x.addr),
 		slog.String("base_url", x.baseURL),
 		slog.Bool("enable_mcp", x.enableMCP),
-		slog.Duration("lock_ttl", x.lockTTL),
 		slog.String("workspace_creation", x.workspaceCreation),
 	)
 }
@@ -82,7 +76,6 @@ func (x *Server) WebSocketOrigins() []string { return x.wsOrigins }
 
 func (x *Server) UseCaseConfig() usecase.Config {
 	return usecase.Config{
-		LockTTL:            x.lockTTL,
 		WorkspaceCreation:  usecase.WorkspaceCreation(x.workspaceCreation),
 		MaxOpsPerCommit:    x.maxOpsPerCommit,
 		PaperTouchInterval: x.paperTouch,

@@ -7,8 +7,10 @@ libraries and conventions follow https://github.com/ubie-oss/hecatoncheires.
 
 papers is an AI-native collaborative knowledge canvas (Go backend + React
 frontend). A **paper** is an ordered list of **blocks**; every change is a
-**commit**; humans hold **soft locks** on the block they edit; writes are
-last-writer-wins per block. AI agents use the REST API and the MCP endpoint.
+**commit**. There are no locks: update, delete and restore carry the block
+version they are based on, a stale base whose contents changed is a conflict
+(409) that the writer resolves or overrides with `force` (last writer wins,
+recorded). AI agents use the REST API and the MCP endpoint.
 Read `docs/design.html` before changing the data model or the realtime protocol.
 
 ## Commands
@@ -48,6 +50,7 @@ Read `docs/design.html` before changing the data model or the realtime protocol.
 
 ### Stateless, multi-instance design
 - The server runs as several Cloud Run instances. Never keep cross-request state in memory. Per-connection state (one WebSocket) is fine.
+- Concurrency is versions, not locks: never add a lock or a write-blocking presence mechanism without a design change. The UI sends the version an edit started from, not the latest one received (`docs/concurrency.html`).
 - Search goes through `Repository.Search`; repositories maintain the search entries in the same transaction as the blocks. Never search by listing papers or blocks in the use case layer.
 - Realtime fan-out comes from the storage change feed (`Repository.WatchPaper`, Firestore listeners). Do not add an application-level pub/sub. Events carry resulting state and must stay idempotent to apply.
 - Never write the paper record on every commit (Firestore sustains about one write per second per document); history lives on blocks. See `docs/design.html#schema`.

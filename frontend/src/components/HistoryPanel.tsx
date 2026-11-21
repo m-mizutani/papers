@@ -10,12 +10,22 @@ function excerpt(b: Block | undefined): string {
   return text.length > 60 ? `${text.slice(0, 60)}…` : text
 }
 
-/** One block's version history, newest first. */
-function BlockVersions({ ws, paper, block }: { ws: string; paper: string; block: string }) {
+/**
+ * One block's version history, newest first. Any version other than the
+ * current one can be restored (as a new version; history is kept).
+ */
+function BlockVersions({ ws, paper, block, current, onRestore }: {
+  ws: string
+  paper: string
+  block: string
+  current: Block | undefined
+  onRestore?: (block: string, version: number) => void
+}) {
+  const { t } = useTranslation()
   const [versions, setVersions] = useState<Block[]>()
   useEffect(() => {
     void api.blockVersions(ws, paper, block).then(setVersions)
-  }, [ws, paper, block])
+  }, [ws, paper, block, current?.version])
   if (!versions) return null
   return (
     <ol className="versions">
@@ -23,13 +33,23 @@ function BlockVersions({ ws, paper, block }: { ws: string; paper: string; block:
         <li key={v.version} className={v.updated_by.kind === 'agent' ? 'by-agent' : undefined}>
           <span className="commit-meta">v{v.version}, {actorLabel(v.updated_by)}, {new Date(v.updated_at).toLocaleString()}</span>
           <div className="version-text">{v.content || '—'}</div>
+          {onRestore && v.version !== current?.version && v.type !== 'table' && !v.parent_id === !current?.parent_id && (
+            <button type="button" className="btn btn-quiet" onClick={() => onRestore(block, v.version)}>{t('restoreVersion')}</button>
+          )}
         </li>
       ))}
     </ol>
   )
 }
 
-export function HistoryPanel({ ws, paper, state, onClose }: { ws: string; paper: string; state: PaperState; onClose: () => void }) {
+export function HistoryPanel({ ws, paper, state, onClose, onRestore }: {
+  ws: string
+  paper: string
+  state: PaperState
+  onClose: () => void
+  /** Restores a block version; omitted for readers. */
+  onRestore?: (block: string, version: number) => void
+}) {
   const { t } = useTranslation()
   const [commits, setCommits] = useState<Commit[]>([])
   const [more, setMore] = useState(false)
@@ -60,7 +80,7 @@ export function HistoryPanel({ ws, paper, state, onClose }: { ws: string; paper:
       {commits.length === 0 && !error && <p className="help">{t('noHistory')}</p>}
       {commits.map((c) => {
         const agent = c.actor.kind === 'agent'
-        const overwrote = c.changes.some((ch) => (ch.overwrote_version ?? 0) > 0)
+        const overwrites = c.changes.filter((ch) => (ch.overwrote_version ?? 0) > 0)
         return (
           <div key={c.id} className={`commit${agent ? ' by-agent' : ''}`}>
             <div>
@@ -81,12 +101,18 @@ export function HistoryPanel({ ws, paper, state, onClose }: { ws: string; paper:
                     <button type="button" className="change-link" onClick={() => setOpen(open === key ? undefined : key)}>
                       {t(`change_${ch.kind}` as 'change_insert')}: {label}
                     </button>
-                    {open === key && ch.block_id && <BlockVersions ws={ws} paper={paper} block={ch.block_id} />}
+                    {open === key && ch.block_id && (
+                      <BlockVersions ws={ws} paper={paper} block={ch.block_id} current={state.blocks.get(ch.block_id)} onRestore={onRestore} />
+                    )}
                   </li>
                 )
               })}
             </ul>
-            {overwrote && <div className="commit-warn">{t('overwroteNotice')}</div>}
+            {overwrites.map((ch, i) => (
+              <div key={i} className="commit-warn">
+                {t('overwroteBy', { version: ch.overwrote_version ?? 0, name: ch.overwrote_by ? actorLabel(ch.overwrote_by) : '?' })}
+              </div>
+            ))}
           </div>
         )
       })}

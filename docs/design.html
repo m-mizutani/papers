@@ -12,7 +12,7 @@
 VOICE   a design doc an engineer can act on: decisions first, then the mechanism, then the details.
 IDEA    a paper sheet on a desk, like the product itself; each section is a block with a margin rail.
 PICTURE the realtime path: people and AI write through Cloud Run into Firestore, listeners fan changes back out.
-COLOUR  papers' own palette: ink on white, cyanotype blue for people, violet for AI, amber for held locks.
+COLOUR  papers' own palette: ink on white, cyanotype blue for people, violet for AI, amber for conflicts.
 TYPE    Source Serif 4 for reading, Instrument Sans for structure. LAYOUT one sheet column, tables scroll on phones.
 */
 :root{color-scheme:light dark;
@@ -65,7 +65,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <body>
 <article class="sheet">
 <h1>papers 設計</h1>
-<p class="meta">最終更新 2026-11-21（保存先を Firestore Enterprise エディションに決定。検索をリポジトリの検索エントリと全文検索に移し、索引は <code>papers firestore setup</code> で作る）。リポジトリ m-mizutani/papers の <code>docs/design.html</code> が正本。</p>
+<p class="meta">最終更新 2026-11-21（ブロックのロックを廃止し、版で衝突を検出して一度拒否・強行で上書きする方式に変更。restore op を追加）。リポジトリ m-mizutani/papers の <code>docs/design.html</code> が正本。</p>
 
 <nav class="scroll" aria-label="目次">
 <a href="#decisions">決定事項</a><a href="#architecture">全体像</a><a href="#model">データモデル</a><a href="#editing">同時編集</a><a href="#auth">認証・認可</a><a href="#api">API と MCP</a><a href="#schema">Firestore スキーマ</a><a href="#search">検索</a><a href="#deploy">デプロイ</a><a href="#scale">規模の見積もり</a><a href="#open">未決事項</a>
@@ -78,7 +78,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <li class="block human"><b>保存先は Firestore Enterprise エディション（Native モード）<span class="tag">11-21</span></b><span>ゼロスケールで安く、リスナーでインスタンス間の配信まで完結し、全文検索も DB の中で済む。書き込みのホットスポットは、履歴をブロック単位にして避ける。リポジトリ層はインターフェースの裏に隠し、別の DB に移せる形を保つ。</span></li>
 <li class="block human"><b>検索は Firestore の全文検索<span class="tag">11-21</span></b><span>ワークスペースごとの検索エントリをブロックと同じトランザクションで書き、Search ステージで引く。use case 層でペーパーやブロックを総なめにする検索はしない（<a href="#search">検索</a>）。</span></li>
 <li class="block human"><b>履歴の単位はブロック<span class="tag">11-21</span></b><span>各ブロックがバージョンとスナップショットを持つ。commit は「どのブロックをどの版からどの版にしたか」だけを記録し、ペーパー全体の通し番号は持たない。</span></li>
-<li class="block human"><b>同時編集はブロック単位の弱いロックと後勝ち<span class="tag">11-20</span></b><span>編集中のブロックは他の人と AI に見え、書き込みは拒否される（force で上書き可）。古い版を元にした上書きは記録して通知する。</span></li>
+<li class="block human"><b>同時編集はロックなし、ブロックの版で衝突を検出<span class="tag">11-21</span></b><span>書き込みを止めるロックは持たない。編集・削除・復元は元にした版を必ず送り、その後に他の人が内容を変えていれば、一度拒否して両方の内容を見せる。<code>force</code> で強行すれば後勝ちで上書きし、誰の何版を上書きしたかを記録する。移動は衝突しない（<a href="#editing">同時編集</a>、<a href="https://claude.ai/artifact/PeJpD9i89oasquNhJJPwmT">詳細の設計</a>）。</span></li>
 <li class="block human"><b>Cloud Run + LB で WebSocket を使う<span class="tag">11-20</span></b><span>接続は最大 60 分で切れる前提で、クライアントは自動再接続して読み直す。</span></li>
 <li class="block human"><b>Google SSO と papers 発行のユーザー ID、ロールベースの認可<span class="tag">11-20</span></b><span>Rego は組織固有のルールが必要になってから追加する。</span></li>
 <li class="block human"><b>利用規模は瞬間最大 300 人<span class="tag">11-21</span></b><span>この規模で、今の「接続ごとに Firestore リスナーを張る」方式は gRPC のストリーム上限に当たる。インスタンス内でリスナーを共有する方式に変える案を検討中（<a href="#scale">規模の見積もり</a>）。</span></li>
@@ -102,18 +102,18 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <text x="105" y="298" text-anchor="middle" fill="var(--soft)">MCP / REST（トークン）</text>
 <rect x="320" y="30" width="220" height="90" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
 <text x="430" y="62" text-anchor="middle" font-weight="600">Cloud Run インスタンス A</text>
-<text x="430" y="84" text-anchor="middle" fill="var(--soft)">WS 接続ごとに Firestore リスナー×3</text>
-<text x="430" y="104" text-anchor="middle" fill="var(--soft)">paper / blocks / locks</text>
+<text x="430" y="84" text-anchor="middle" fill="var(--soft)">WS 接続ごとに Firestore リスナー×2</text>
+<text x="430" y="104" text-anchor="middle" fill="var(--soft)">paper / blocks</text>
 <rect x="320" y="240" width="220" height="90" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
 <text x="430" y="272" text-anchor="middle" font-weight="600">Cloud Run インスタンス B</text>
 <text x="430" y="294" text-anchor="middle" fill="var(--soft)">1 commit = 1 トランザクション</text>
 <rect x="680" y="110" width="200" height="140" rx="8" fill="var(--wash)" stroke="currentColor" stroke-width="1.5"/>
 <text x="780" y="140" text-anchor="middle" font-weight="600">Firestore</text>
 <text x="780" y="166" text-anchor="middle" fill="var(--soft)">blocks / versions</text>
-<text x="780" y="186" text-anchor="middle" fill="var(--soft)">commits / locks</text>
+<text x="780" y="186" text-anchor="middle" fill="var(--soft)">commits / search</text>
 <text x="780" y="206" text-anchor="middle" fill="var(--soft)">papers</text>
 <line x1="190" y1="72" x2="326" y2="72" stroke="var(--human)" stroke-width="2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
-<text x="258" y="62" text-anchor="middle">編集・ロック</text>
+<text x="258" y="62" text-anchor="middle">commit・変更の受信</text>
 <line x1="190" y1="282" x2="326" y2="282" stroke="var(--agent)" stroke-width="2" marker-end="url(#arrow)"/>
 <text x="258" y="272" text-anchor="middle">commit</text>
 <line x1="530" y1="270" x2="676" y2="214" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -130,7 +130,7 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 
 <section id="model">
 <h2>データモデル: ブロックの履歴がペーパーをつくる</h2>
-<p>ペーパーはブロックの並びで、並び順は fractional index（文字列キー）で決める。挿入や移動で他のブロックを書き換えない。表は <code>table</code> ブロックの子として <code>table_cell</code> を持ち、セル単位で編集・ロックできる。</p>
+<p>ペーパーはブロックの並びで、並び順は fractional index（文字列キー）で決める。挿入や移動で他のブロックを書き換えない。表は <code>table</code> ブロックの子として <code>table_cell</code> を持ち、セル単位で編集でき、衝突もセル単位で判定する。</p>
 <figure>
 <svg viewBox="0 0 900 250" role="img" aria-label="2 つの commit が 3 つのブロックの版を進める。commit は版番号だけを参照し、本文は各ブロックの版に保存される">
 <g font-family="Instrument Sans, system-ui, sans-serif" font-size="13" fill="currentColor">
@@ -160,20 +160,25 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <tr><td>Workspace</td><td>名前、ロールバインディング</td><td>UI で切り替える単位</td></tr>
 <tr><td>Paper</td><td>タイトル、アクセス設定、作成者・更新者</td><td>通し番号は持たない。更新時刻は最大 1 分間隔でだけ書く</td></tr>
 <tr><td>Block</td><td>親、順序キー、種類、本文、属性、版</td><td>版ごとのスナップショットを <code>versions</code> に残す</td></tr>
-<tr><td>Commit</td><td>実行者（人 / AI）、メッセージ、変更一覧</td><td>変更は「ブロック・元の版・新しい版・上書きした版」</td></tr>
-<tr><td>BlockLock</td><td>保持者（接続単位）、有効期限</td><td>TTL 30 秒、ハートビートで延長</td></tr>
+<tr><td>Commit</td><td>実行者（人 / AI）、メッセージ、変更一覧</td><td>変更は「ブロック・元の版・新しい版」。強行した上書きでは「上書きした版とその書き手」、復元では「戻した版」も持つ</td></tr>
+
 </tbody></table></div>
 <p>ブロックの種類: 段落、見出し（1〜3）、引用、箇条書き、番号付きリスト、ToDo、コールアウト、コード、区切り線、画像、表と表のセル。AI だけが書くもの: <code>mermaid</code>、<code>svg</code>、<code>html</code>。</p>
 </section>
 
 <section id="editing">
 <h2>同時編集</h2>
+<p>ロックは持たない。後勝ちを基本にしつつ、他人の変更を気づかずに消すことだけは版で防ぐ。決めた経緯と比べた案は <a href="https://claude.ai/artifact/PeJpD9i89oasquNhJJPwmT">同時編集の設計</a> にある。</p>
 <div class="scroll"><table class="stack">
 <thead><tr><th>仕組み</th><th>動き</th></tr></thead>
 <tbody>
-<tr><td>弱いロック</td><td>ブロックをクリックすると WebSocket 経由でロックを取る。他の人には「◯◯が編集中」と表示され、AI はそのブロックへの書き込みを拒否される。</td></tr>
-<tr><td>上書き</td><td>「それでも編集する」（API では <code>force</code>）でロックを越えて書ける。同じブロックへの同時書き込みは後勝ち。</td></tr>
-<tr><td>上書きの記録</td><td>古い <code>base_version</code> を元に書いた場合は commit に上書きした版を残し、UI で通知する。</td></tr>
+<tr><td>元にした版</td><td>update・delete・restore は <code>base_version</code> が必須（欠けていれば 400）。UI は編集を始めた時点の版を送る。保存直前の最新版を送ると、編集中に届いた他人の変更を検出できない。</td></tr>
+<tr><td>衝突の判定</td><td>元の版のスナップショットと現在を比べ、型・本文・属性が変わっていれば衝突。移動だけなら衝突にしない。同じ commit で同じブロックを何度触っても、commit 開始前の状態と比べる。</td></tr>
+<tr><td>衝突したとき</td><td>commit 全体を 409 で拒否し、衝突したブロックごとに現在の状態を返す。何も書かれない。UI は「相手の内容」と「あなたの内容」を並べ、上書き・相手を残す・編集を続ける、から選ばせる。AI は読み直して書き直す。</td></tr>
+<tr><td>強行</td><td><code>force: true</code> で再送すると後勝ちで書き、変更に「上書きした版と書き手」を残す。履歴パネルに「◯◯ の v5 を上書き」と出る。</td></tr>
+<tr><td>削除との衝突</td><td>他人が消したブロックの編集は、force でも衝突（先に restore が要る）。UI は「復元して自分の内容を保存」で restore と update を 1 commit で送る。他人が消したブロックの削除・移動は何もしない。</td></tr>
+<tr><td>戻す</td><td><code>{"op":"restore","block_id","version"}</code> で古い版の内容を新しい版として書く。削除したブロックも最後の位置に戻る（表と表のセルは除く）。履歴パネルの「この版に戻す」。</td></tr>
+<tr><td>編集中の表示</td><td>編集中のブロックに他人の変更が届いても下書きは置き換えず、「◯◯ がこのブロックを更新しました」と出す。誰がどこを編集中かの表示はない。</td></tr>
 <tr><td>配信</td><td>イベントは変更後の状態（ブロック全体）を運ぶ。クライアントは版を比べて反映するので、重複や順序の入れ替わりがあっても収束する。</td></tr>
 <tr><td>再同期</td><td>接続直後（hello 受信時）に必ず読み直す。受け手が遅れてバッファが溢れたら <code>closing: resync</code> を送り、再接続させる。</td></tr>
 </tbody></table></div>
@@ -203,8 +208,9 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <section id="api">
 <h2>API と MCP</h2>
 <ul>
-<li>REST <code>/api/v1/...</code>: ワークスペース、ペーパー、<code>POST .../commits</code>（複数 op をアトミックに適用）、commit 履歴（新しい順、カーソル）、ブロックの版履歴、ロック、Markdown 書き出し、検索、トークン、グループ。</li>
-<li>WebSocket <code>GET .../papers/{id}/live</code>: lock / unlock / heartbeat を送り、block_put / block_deleted / paper_updated / lock / unlock を受け取る。</li>
+<li>REST <code>/api/v1/...</code>: ワークスペース、ペーパー、<code>POST .../commits</code>（複数 op をアトミックに適用）、commit 履歴（新しい順、カーソル）、ブロックの版履歴、Markdown 書き出し、検索、トークン、グループ。</li>
+<li>WebSocket <code>GET .../papers/{id}/live</code>: サーバーからの一方向。hello と、block_put / block_deleted / paper_updated / paper_deleted のイベントを受け取る。書き込みはすべて REST の commit。</li>
+<li>commit の衝突は 409 <code>{"error":{"code":"conflict","conflicts":[{"block_id","base_version","current"}]}}</code>。MCP の <code>papers_commit</code> は同じ内容を、AI が読める説明と JSON にしてエラーで返す。</li>
 <li>MCP（Streamable HTTP、stateless）: <code>papers_guide</code>、<code>papers_list_workspaces</code>、<code>papers_list_papers</code>、<code>papers_search</code>、<code>papers_read_paper</code>、<code>papers_create_paper</code>、<code>papers_commit</code>、<code>papers_history</code>、<code>papers_block_history</code>。</li>
 <li><code>insert_markdown</code> op を使うと、AI は Markdown 1 本でまとめて書ける。mermaid / svg / html のコードフェンスはリッチブロックに、GFM の表は表ブロックになる。</li>
 </ul>
@@ -227,7 +233,6 @@ pre{background:var(--code);color:var(--codeink);padding:16px;border-radius:6px;o
 <tr><td><code>…/papers/{p}/blocks/{b}</code></td><td>ブロックの現在の状態</td><td><code>ParentID ==</code> と <code>Order</code> の範囲・並び</td></tr>
 <tr><td><code>…/blocks/{b}/versions/{n}</code></td><td>版のスナップショット（不変）</td><td><code>Version</code> 降順</td></tr>
 <tr><td><code>…/papers/{p}/commits/{c}</code></td><td>commit</td><td><code>CreatedAt</code> 降順 + カーソル</td></tr>
-<tr><td><code>…/papers/{p}/locks/{b}</code></td><td>ロック</td><td>全件、TTL</td></tr>
 <tr><td><code>workspaces/{ws}/search/{p}_{b}</code><br><code>workspaces/{ws}/search/{p}_title</code></td><td>検索エントリ（ブロックとタイトルの平文、最大 8 KiB）</td><td>全文検索、ID の範囲（ペーパー削除時）</td></tr>
 </tbody></table></div>
 
@@ -238,6 +243,7 @@ read   blocks/{id}                   変更するブロック
 query  blocks where ParentID == X and Order > Y order by Order limit k   挿入位置
 ------ ここから書き込み
 set    blocks/{id}
+read   blocks/{id}/versions/{base}    元の版が古いときだけ（衝突の判定）
 create blocks/{id}/versions/{v}      Create なので同じ版の二重書き込みは失敗する
 set    search/{p}_{id}               平文がなければ delete
 delete blocks/{id}
@@ -262,10 +268,10 @@ set    search/{p}_title              papers/{p} を書くときだけ</pre></div
 <tr><td><code>commits</code></td><td><code>CreatedAt DESC</code></td><td>ListCommits</td></tr>
 <tr><td><code>search</code></td><td><code>Text</code> のテキスト索引</td><td>Search</td></tr>
 </tbody></table></div>
-<p>ペーパー内のブロック全件・ロック全件と ID の範囲指定は索引なしで読む。単一フィールド索引が自動で付かないので、本文で保存量が膨らむ問題もない。</p>
+<p>ペーパー内のブロック全件と ID の範囲指定は索引なしで読む。単一フィールド索引が自動で付かないので、本文で保存量が膨らむ問題もない。</p>
 <div class="codewrap"><button class="copy" type="button">コピー</button><pre>papers firestore setup --firestore-project-id=PROJECT --firestore-database-id=DB --dry-run
 papers firestore setup --firestore-project-id=PROJECT --firestore-database-id=DB</pre></div>
-<p>setup はデータベースが Enterprise であることを確かめ、索引の作成を開始して戻る（構築はサーバー側で非同期）。TTL は <code>sessions.ExpiresAt</code> と <code>locks.ExpiresAt</code>。TTL による削除は最大 24 時間ほど遅れることがあるので、アプリは常に <code>ExpiresAt</code> を見て有効かどうかを判定する。</p>
+<p>setup はデータベースが Enterprise であることを確かめ、索引の作成を開始して戻る（構築はサーバー側で非同期）。TTL は <code>sessions.ExpiresAt</code>。TTL による削除は最大 24 時間ほど遅れることがあるので、アプリは常に <code>ExpiresAt</code> を見て有効かどうかを判定する。</p>
 
 <h3>テスト</h3>
 <p>契約テスト（<code>pkg/repository/*_test.go</code>）はメモリ実装と Firestore 実装の両方で走る。Firestore は <code>TEST_FIRESTORE_PROJECT_ID</code> があるときだけ実行する。エミュレータには Search ステージがないので、検索の契約テストは実際の Enterprise データベース（setup 済み）でだけ走る。</p>
@@ -366,7 +372,7 @@ papers firestore setup --firestore-project-id=PROJECT --firestore-database-id=DB
 <thead><tr><th>項目</th><th>前提</th><th>現状</th><th>共有後</th></tr></thead>
 <tbody>
 <tr><td>ペーパーを開く</td><td>1 人 1 時間に 10 回、100 ブロック</td><td>約 90 万読み取り（GET + 初回スナップショット + 読み直し）</td><td>約 30 万（ハブ未作成のときだけ読む）</td></tr>
-<tr><td>変更の配信</td><td>編集 60 人がロック延長と commit をそれぞれ 10 秒に 1 回、1 ペーパー平均 10 人が閲覧</td><td>約 43 万読み取り</td><td>約 4 万（インスタンスあたり 1 回）</td></tr>
+<tr><td>変更の配信</td><td>編集 60 人が commit を 10 秒に 1 回、1 ペーパー平均 10 人が閲覧（見積もり時はロック延長も含めていた。ロック廃止で半分程度になる）</td><td>約 43 万読み取り</td><td>約 4 万（インスタンスあたり 1 回）</td></tr>
 <tr><td>書き込み</td><td>同上</td><td colspan="2">毎秒 12 件程度。ドキュメント単位でも毎秒 1 回の目安を大きく下回る</td></tr>
 </tbody></table></div>
 <p>Firestore の読み取り単価は 10 万件あたり 0.03〜0.06 ドル（リージョンによる）。現状の方式でもピーク 1 時間で 1 ドル未満、共有後はその 3 分の 1 程度で、料金は判断材料にならない。</p>
@@ -376,7 +382,7 @@ papers firestore setup --firestore-project-id=PROJECT --firestore-database-id=DB
 
 <h4>書き込みとストレージ（どちらの DB でも小さい）</h4>
 <ul>
-<li>書き込みは月 約 710 万件（ブロック本体と版のスナップショット、commit、ロックの延長を含む）。Firestore では月 6〜13 ドル。PostgreSQL ではピークでも毎秒 20〜50 件程度で、負荷にならない。</li>
+<li>書き込みは月 約 710 万件（ブロック本体と版のスナップショット、commit、当時はロックの延長も含む。ロック廃止で減る）。Firestore では月 6〜13 ドル。PostgreSQL ではピークでも毎秒 20〜50 件程度で、負荷にならない。</li>
 <li>既存資料の一括取り込みは 1 回だけで約 1,600 万件の書き込み（Firestore で 14〜29 ドル）。</li>
 <li>版のスナップショットは月 約 220 万件ずつ増える。保存量は 1 年で約 60 GB、3 年で約 130 GB。Firestore で既定の単一フィールドインデックスを残したままだと、それぞれ約 240 GB、約 540 GB に膨らむ。Props・Content・Actor と版の大半のフィールドはインデックス対象から外す。</li>
 </ul>
@@ -410,7 +416,7 @@ papers firestore setup --firestore-project-id=PROJECT --firestore-database-id=DB
 <li>意味検索を足すと、ブロック単位では埋め込みが 800 万件 × 768 次元で約 24 GB になり載らない。ペーパーの節単位（約 100 万件、約 3 GB）にまとめれば載る。</li>
 <li>単一ゾーンなので、メンテナンスやゾーン障害の間は編集が止まる。止めたくなければ高可用性構成で費用が倍になる。</li>
 <li>インスタンス間の配信は LISTEN/NOTIFY を使う。通知の中身は 8,000 バイトまでなので ID だけを送る。LISTEN はインスタンスあたり 1 本にまとめるので、上のハブはどちらの DB でも必要。</li>
-<li>ロックの延長は毎秒 10 件前後の UPDATE で不要な行が溜まる。ロックの表は UNLOGGED にするか、短い間隔で VACUUM させる。</li>
+<li>（ロックは廃止したので、延長による UPDATE の負荷は考えなくてよくなった。）</li>
 <li>結論: 2 vCPU / 16 GB で足りるのは「検索を DB の外に出す」か「検索対象を絞る」場合だけ。全社の検索まで同じ DB で受けるなら、4 vCPU / 32 GB か読み取りプールの追加が要る。</li>
 </ul>
 

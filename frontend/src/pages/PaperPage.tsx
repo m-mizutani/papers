@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError, api } from '../api/client'
 import { LiveConnection } from '../api/live'
-import { actorLabel, applyBlocks, applyLock, applyPaper, applyUnlock, initState, listNumbers, topLevel, type PaperState } from '../api/paperState'
-import type { Block, BlockLock, Op, Paper, PaperEvent } from '../api/types'
-import { BlockView, type BlockContext, type EditingState } from '../components/BlockView'
+import { applyBlocks, applyPaper, initState, listNumbers, topLevel, type PaperState } from '../api/paperState'
+import type { Block, Op, Paper, PaperEvent } from '../api/types'
+import { BlockView, ConflictBox, type BlockContext, type ConflictState, type EditingState } from '../components/BlockView'
 import { CONTINUING } from '../components/blockTypes'
 import { HistoryPanel } from '../components/HistoryPanel'
 import { SharePanel } from '../components/SharePanel'
@@ -27,7 +27,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
   const [fatal, setFatal] = useState<string>()
   const [editing, setEditing] = useState<EditingState | null>(null)
   const [recent, setRecent] = useState<Set<string>>(new Set())
-  const [now, setNow] = useState(() => Date.now())
+  const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [panel, setPanel] = useState<'history' | 'share' | null>(null)
   const [title, setTitle] = useState('')
 
@@ -35,13 +35,13 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
   stateRef.current = state
   const editingRef = useRef<EditingState | null>(null)
   editingRef.current = editing
-  const connRef = useRef<LiveConnection | undefined>(undefined)
-  const myKeyRef = useRef('')
+  const conflictRef = useRef<ConflictState | null>(null)
+  conflictRef.current = conflict
 
   const load = useCallback(async () => {
     try {
       const v = await api.getPaper(ws, paperId)
-      setState(initState(v.paper, v.blocks, v.locks))
+      setState(initState(v.paper, v.blocks))
       setRole(v.role)
       setTitle(v.paper.title)
     } catch (e) {
@@ -60,10 +60,23 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
   }, [])
 
   // Applies resulting block states (from our own commit or the change
-  // feed). Changes made by others are highlighted for a moment.
+  // feed). Changes made by others are highlighted for a moment. If someone
+  // deletes the block being edited, the draft is kept as a conflict so it
+  // can be restored instead of vanishing with the block.
   const receive = useCallback((put: Block[], deleted: string[], paper: Paper | undefined, own: boolean) => {
     const cur = stateRef.current
     if (!cur) return
+    const ed = editingRef.current
+    if (!own && ed && deleted.includes(ed.id)) {
+      const c: ConflictState = {
+        ops: [{ op: 'update', block_id: ed.id, content: ed.draft, type: ed.type, props: ed.props, base_version: ed.base }],
+        message: '', conflicts: [{ block_id: ed.id, base_version: ed.base, current: null }], draft: ed.draft,
+      }
+      conflictRef.current = c
+      setConflict(c)
+      editingRef.current = null
+      setEditing(null)
+    }
     let next = applyBlocks(cur, put, deleted)
     if (paper) next = applyPaper(next, paper)
     if (next === cur) return
@@ -79,12 +92,10 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     setFatal(undefined)
     setEditing(null)
     void load()
+    setConflict(null)
     const conn = new LiveConnection(api.liveURL(ws, paperId), {
-      onHello: (id) => {
-        myKeyRef.current = id
-        // Reload after (re)connecting: events may have been missed.
-        void load()
-      },
+      // Reload after (re)connecting: events may have been missed.
+      onHello: () => void load(),
       onStatus: setStatus,
       onEvent: (ev: PaperEvent) => {
         const cur = stateRef.current
@@ -99,43 +110,22 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
           case 'paper_updated':
             if (ev.paper) receive([], [], ev.paper, false)
             break
-          case 'lock':
-            if (ev.lock) setState((s) => (s ? applyLock(s, ev.lock as BlockLock) : s))
-            break
-          case 'unlock':
-            if (ev.block_id) setState((s) => (s ? applyUnlock(s, ev.block_id as string, ev.holder_key ?? '') : s))
-            break
         }
-      },
-      onLockResult: (blockId, ok, lock) => {
-        const ed = editingRef.current
-        if (ok || !ed || ed.id !== blockId || ed.forced) return
-        // Someone else got there first: stop editing, keep their lock visible.
-        setEditing(null)
-        if (lock) setState((s) => (s ? applyLock(s, lock) : s))
-      },
-      onLockLost: (blockId, lock) => {
-        if (lock) setState((s) => (s ? applyLock(s, lock) : s))
-        if (editingRef.current?.id === blockId) setNotice(t('lockLost'))
       },
       onClosing: (reason) => {
         if (reason === 'access revoked') setFatal(t('accessRevoked'))
         if (reason === 'paper deleted') setFatal(t('paperDeleted'))
       },
     })
-    connRef.current = conn
     return () => conn.close()
   }, [ws, paperId, load, receive, t])
 
-  // Re-evaluate lock expiry.
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 3000)
-    return () => window.clearInterval(id)
-  }, [])
-
+  // Commits ops. A conflict (someone changed a block since the version an
+  // op is based on) is not an error: it opens the conflict choice, with the
+  // current state of those blocks applied so the user sees what changed.
   const run = useCallback(async (ops: Op[], message = '', force = false): Promise<boolean> => {
     try {
-      const res = await api.commit(ws, paperId, ops, { message, force, connectionId: myKeyRef.current })
+      const res = await api.commit(ws, paperId, ops, { message, force })
       if (res.commit) {
         receive(res.blocks, res.deleted, res.paper, true)
         if (res.commit.changes.some((c) => (c.overwrote_version ?? 0) > 0)) setNotice(t('overwroteNotice'))
@@ -143,10 +133,18 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
       }
       return true
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'locked') {
-        const editingId = editingRef.current?.id
-        const lock = e.lock ?? (editingId ? stateRef.current?.locks.get(editingId) : undefined)
-        setNotice(t('lockedSaveFailed', { name: lock ? actorLabel(lock.holder) : '?' }))
+      if (e instanceof ApiError && e.code === 'conflict') {
+        const current = e.conflicts.flatMap((c) => (c.current ? [c.current] : []))
+        const gone = e.conflicts.filter((c) => !c.current).map((c) => c.block_id)
+        const ed = editingRef.current
+        const c: ConflictState = { ops, message, conflicts: e.conflicts, draft: ed?.draft }
+        conflictRef.current = c
+        setConflict(c)
+        if (ed && gone.includes(ed.id)) {
+          editingRef.current = null
+          setEditing(null)
+        }
+        receive(current, gone, undefined, false)
       } else {
         setNotice(t('saveFailed', { message: e instanceof Error ? e.message : String(e) }))
       }
@@ -154,48 +152,81 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     }
   }, [ws, paperId, receive, onChanged, t])
 
-  const startEdit = useCallback((b: Block, force = false) => {
-    const prev = editingRef.current
-    if (prev && prev.id !== b.id) connRef.current?.unlock(prev.id)
-    const next = { id: b.id, draft: b.content, type: b.type, props: b.props, forced: force }
+  const startEdit = useCallback((b: Block) => {
+    const next: EditingState = { id: b.id, draft: b.content, type: b.type, props: b.props, base: b.version, orig: { content: b.content, type: b.type, props: b.props } }
     editingRef.current = next
     setEditing(next)
-    connRef.current?.lock(b.id)
   }, [])
 
   // Saves the edit in progress. Returns false if the save failed (the
   // editor then stays open with the draft).
+  // Saves the edit in progress, based on the version the edit started
+  // from (not the latest one received since), so that someone else's change
+  // in between is caught as a conflict instead of silently overwritten.
   const saveEditing = useCallback(async (extra: Op[] = []): Promise<boolean> => {
     const ed = editingRef.current
     const cur = stateRef.current
     if (!ed || !cur) return true
+    if (conflictRef.current) return false // waiting for the user's choice
     const b = cur.blocks.get(ed.id)
     const ops: Op[] = []
-    if (b && (b.content !== ed.draft || b.type !== ed.type || JSON.stringify(b.props) !== JSON.stringify(ed.props))) {
-      ops.push({ op: 'update', block_id: b.id, content: ed.draft, type: ed.type === b.type ? undefined : ed.type, props: ed.props, base_version: b.version })
+    // Compare with the block as it was when the edit started: an untouched
+    // draft sends nothing, even if someone else changed the block meanwhile.
+    const changed = ed.orig.content !== ed.draft || ed.orig.type !== ed.type || JSON.stringify(ed.orig.props) !== JSON.stringify(ed.props)
+    if (b && changed) {
+      ops.push({ op: 'update', block_id: b.id, content: ed.draft, type: ed.type === b.type ? undefined : ed.type, props: ed.props, base_version: ed.base })
     }
     ops.push(...extra)
     if (ops.length === 0) return true
-    const ok = await run(ops, '', ed.forced)
-    if (!ok) editingRef.current = { ...ed, forced: true }
-    return ok
+    return run(ops, '')
   }, [run])
 
   const finishEdit = useCallback(() => {
     const ed = editingRef.current
-    if (!ed) return
+    if (!ed || conflictRef.current) return
     void saveEditing().then((ok) => {
-      if (!ok) {
-        setEditing(editingRef.current)
-        return
-      }
+      if (!ok) return
       if (editingRef.current?.id === ed.id) {
         editingRef.current = null
         setEditing(null)
       }
-      connRef.current?.unlock(ed.id)
     })
   }, [saveEditing])
+
+  // Resolves the open conflict. "mine" resends the rejected ops with force
+  // (restoring deleted blocks first); "theirs" drops the draft; "continue"
+  // keeps the draft and rebases the edit on the current version.
+  const resolveConflict = useCallback((choice: 'mine' | 'theirs' | 'continue') => {
+    const c = conflictRef.current
+    if (!c) return
+    const ed = editingRef.current
+    const editingHit = ed ? c.conflicts.find((x) => x.block_id === ed.id) : undefined
+    conflictRef.current = null
+    setConflict(null)
+    if (choice === 'continue') {
+      if (ed && editingHit?.current) {
+        const cur = editingHit.current
+        const next = { ...ed, base: cur.version, orig: { content: cur.content, type: cur.type, props: cur.props } }
+        editingRef.current = next
+        setEditing(next)
+      }
+      return
+    }
+    if (choice === 'theirs') {
+      if (editingHit) {
+        editingRef.current = null
+        setEditing(null)
+      }
+      return
+    }
+    const restores: Op[] = c.conflicts.filter((x) => !x.current).map((x) => ({ op: 'restore', block_id: x.block_id, version: x.base_version }))
+    void run([...restores, ...c.ops], c.message, true).then((ok) => {
+      if (ok && editingHit && editingRef.current?.id === editingHit.block_id) {
+        editingRef.current = null
+        setEditing(null)
+      }
+    })
+  }, [run])
 
   const ordered = useMemo(() => (state ? topLevel(state) : []), [state])
   const numbers = useMemo(() => listNumbers(ordered), [ordered])
@@ -215,7 +246,6 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     const props = continuing ? { indent: ed.props.indent } : {}
     void saveEditing([{ op: 'insert', block_id: id, type, content: '', props, after: ed.id }]).then((ok) => {
       if (!ok) return
-      connRef.current?.unlock(ed.id)
       const nb = stateRef.current?.blocks.get(id)
       if (nb) startEdit(nb)
     })
@@ -228,7 +258,7 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
     const prev = idx > 0 ? ordered[idx - 1] : undefined
     editingRef.current = null
     setEditing(null)
-    void run([{ op: 'delete', block_id: ed.id }]).then((ok) => {
+    void run([{ op: 'delete', block_id: ed.id, base_version: ed.base }]).then((ok) => {
       if (ok && prev && prev.type !== 'table' && prev.type !== 'divider') {
         const fresh = stateRef.current?.blocks.get(prev.id)
         if (fresh) startEdit(fresh)
@@ -299,9 +329,12 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
   if (!state) return null
 
   const ctx: BlockContext = {
-    state, myKey: myKeyRef.current, canEdit, now, editing, recent, numbers,
-    actions: { startEdit, setDraft, setDraftProps, finishEdit, splitAfter, removeEmpty, run, move },
+    state, canEdit, editing, conflict, recent, numbers,
+    actions: { startEdit, setDraft, setDraftProps, finishEdit, splitAfter, removeEmpty, run, move, resolveConflict },
   }
+  // A conflict shows inside the block being edited; any other conflict (a
+  // deleted block, a toolbar action) shows above the sheet.
+  const inlineConflict = conflict && editing && conflict.conflicts.some((c) => c.block_id === editing.id && c.current)
 
   return (
     <>
@@ -325,6 +358,8 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
         </div>
       )}
 
+      {conflict && !inlineConflict && <div className="conflict-banner"><ConflictBox conflict={conflict} ctx={ctx} /></div>}
+
       <article className="sheet">
         <input
           className="sheet-title"
@@ -347,7 +382,18 @@ export function PaperPage({ onChanged }: { onChanged: () => void }) {
         )}
       </article>
 
-      {panel === 'history' && <HistoryPanel ws={ws} paper={paperId} state={state} onClose={() => setPanel(null)} />}
+      {panel === 'history' && (
+        <HistoryPanel
+          ws={ws}
+          paper={paperId}
+          state={state}
+          onClose={() => setPanel(null)}
+          onRestore={canEdit ? (block, version) => {
+            const cur = state.blocks.get(block)
+            void run([{ op: 'restore', block_id: block, version, base_version: cur?.version }])
+          } : undefined}
+        />
+      )}
       {panel === 'share' && <SharePanel ws={ws} paper={state.paper} onClose={() => setPanel(null)} onSaved={() => void load()} />}
     </>
   )

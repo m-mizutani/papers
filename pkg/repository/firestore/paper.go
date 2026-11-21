@@ -26,10 +26,6 @@ func (r *Repository) commitsCol(ws model.WorkspaceID, paper model.PaperID) *fire
 	return r.paperDoc(ws, paper).Collection(colCommits)
 }
 
-func (r *Repository) locksCol(ws model.WorkspaceID, paper model.PaperID) *firestore.CollectionRef {
-	return r.paperDoc(ws, paper).Collection(colLocks)
-}
-
 func (r *Repository) CreatePaper(ctx context.Context, paper *model.Paper) error {
 	if err := paper.Validate(); err != nil {
 		return err
@@ -156,9 +152,6 @@ func (r *Repository) DeletePaper(ctx context.Context, ws model.WorkspaceID, id m
 	}
 	if err == nil {
 		err = sweep(doc.Collection(colCommits), nil)
-	}
-	if err == nil {
-		err = sweep(doc.Collection(colLocks), nil)
 	}
 	bw.End()
 	if err != nil {
@@ -296,6 +289,45 @@ func (t *fsTx) GetBlock(id model.BlockID) (*model.Block, error) {
 	}
 	t.cache[id] = &b
 	return b.Clone(), nil
+}
+
+func (t *fsTx) BlockVersion(id model.BlockID, version int64) (*model.Block, error) {
+	if b, ok := t.puts[id]; ok && b.Version == version {
+		return b.Clone(), nil
+	}
+	if validID(string(id)) != nil {
+		return nil, notFound("block version", version)
+	}
+	snap, err := t.tx.Get(t.r.versionDoc(t.ws, t.paperID, id, version))
+	if err != nil {
+		if isNotFound(err) {
+			return nil, notFound("block version", version)
+		}
+		return nil, goerr.Wrap(err, "failed to get block version", goerr.V("block_id", id), goerr.V("version", version))
+	}
+	var b model.Block
+	if err := snap.DataTo(&b); err != nil {
+		return nil, goerr.Wrap(err, "failed to decode block version")
+	}
+	return &b, nil
+}
+
+func (t *fsTx) LatestBlockVersion(id model.BlockID) (*model.Block, error) {
+	if b, ok := t.puts[id]; ok {
+		return b.Clone(), nil
+	}
+	if validID(string(id)) != nil {
+		return nil, notFound("block", id)
+	}
+	q := t.r.blocksCol(t.ws, t.paperID).Doc(string(id)).Collection(colVersions).OrderBy("Version", firestore.Desc).Limit(1)
+	got, err := all[model.Block](t.tx.Documents(q), "block versions")
+	if err != nil {
+		return nil, err
+	}
+	if len(got) == 0 {
+		return nil, notFound("block", id)
+	}
+	return got[0], nil
 }
 
 // query runs q in the transaction and merges staged writes for parent.

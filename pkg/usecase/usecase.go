@@ -26,7 +26,6 @@ const (
 // Config holds the knobs of the use cases. Defaults are owned by the CLI
 // layer, never by this package.
 type Config struct {
-	LockTTL           time.Duration
 	WorkspaceCreation WorkspaceCreation
 	// MaxOpsPerCommit bounds one commit request.
 	MaxOpsPerCommit int
@@ -37,9 +36,6 @@ type Config struct {
 }
 
 func (c Config) validate() error {
-	if c.LockTTL <= 0 {
-		return goerr.New("lock TTL must be positive")
-	}
 	switch c.WorkspaceCreation {
 	case WorkspaceCreationEveryone, WorkspaceCreationAdmin:
 	default:

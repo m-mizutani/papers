@@ -3,8 +3,8 @@ package model
 import "github.com/m-mizutani/goerr/v2"
 
 // ActorKind distinguishes a human acting through the Web UI from an AI agent
-// acting through the API / MCP on behalf of a user. Commit logs and lock
-// badges show the difference so humans can tell who (or what) wrote a block.
+// acting through the API / MCP on behalf of a user. Commit logs and block
+// bylines show the difference so humans can tell who (or what) wrote a block.
 type ActorKind string
 
 const (

@@ -1,23 +1,22 @@
-import type { Actor, Block, BlockLock, BlockProps, BlockType, Change, Commit, Op, Paper, PaperEvent, Role, RoleBinding, Workspace } from '../api/types'
+import type { Actor, Block, BlockProps, BlockType, Change, Commit, Conflict, Op, Paper, PaperEvent, Role, RoleBinding, Workspace } from '../api/types'
 import { keyBetween } from './order'
 import { ALICE, BOB, ME, claudeFor, human, seed } from './seed'
 
 // An in-browser stand-in for the Go server, used by the demo build. It keeps
-// the same commit / lock semantics (last writer wins, soft locks that reject
-// writes from other holders unless forced) and simulates two collaborators:
-// Alice (a person) and Claude (an AI agent).
-
-const LOCK_TTL = 30000
+// the same commit semantics (an op based on an older version of a block
+// whose contents changed since is a conflict unless forced; moves never
+// conflict) and simulates two collaborators: Alice (a person) and Claude
+// (an AI agent).
 
 class HttpError extends Error {
   status: number
   code: string
-  lock?: BlockLock
-  constructor(status: number, code: string, message: string, lock?: BlockLock) {
+  conflicts?: Conflict[]
+  constructor(status: number, code: string, message: string, conflicts?: Conflict[]) {
     super(message)
     this.status = status
     this.code = code
-    this.lock = lock
+    this.conflicts = conflicts
   }
 }
 
@@ -26,7 +25,6 @@ interface PaperData {
   blocks: Map<string, Block>
   versions: Map<string, Block[]>
   commits: Commit[]
-  locks: Map<string, BlockLock>
 }
 
 type Socket = { id: string; paperKey: string; deliver: (msg: object) => void }
@@ -40,7 +38,6 @@ for (const p of data.papers) {
     blocks: new Map(p.blocks.map((b) => [b.id, b])),
     versions: new Map(p.blocks.map((b) => [b.id, [b]])),
     commits: [{ id: `${p.paper.id}-c1`, actor: p.paper.created_by, message: 'Initial content', changes: p.blocks.map((b) => ({ kind: 'insert', block_id: b.id, to_version: 1 })), created_at: p.paper.created_at }],
-    locks: new Map(),
   })
 }
 const sockets = new Set<Socket>()
@@ -70,15 +67,6 @@ function getPaper(ws: string, id: string): PaperData {
 function publish(d: PaperData, ev: Omit<PaperEvent, 'workspace_id' | 'paper_id'>) {
   const full = { ...ev, workspace_id: d.paper.workspace_id, paper_id: d.paper.id }
   for (const s of sockets) if (s.paperKey === d.paper.id) s.deliver({ type: 'event', event: clone(full) })
-}
-
-function activeLock(d: PaperData, blockId: string): BlockLock | undefined {
-  const l = d.locks.get(blockId)
-  if (l && Date.parse(l.expires_at) <= Date.now()) {
-    d.locks.delete(blockId)
-    return undefined
-  }
-  return l
 }
 
 function children(d: PaperData, parent: string | undefined): Block[] {
@@ -115,16 +103,16 @@ interface CommitOutcome {
   deleted: string[]
 }
 
-export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: string; force?: boolean; holder: string }): CommitOutcome {
+const sameContents = (x: Block, y: Block) => x.type === y.type && x.content === y.content && JSON.stringify(x.props) === JSON.stringify(y.props)
+
+export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: string; force?: boolean }): CommitOutcome {
   const staged = new Map([...d.blocks].map(([k, v]) => [k, clone(v)]))
   const view: PaperData = { ...d, blocks: staged }
   const changes: Change[] = []
+  const conflicts: Conflict[] = []
+  const touched = new Set<string>()
   let title = d.paper.title
   const at = now()
-  const checkLock = (id: string) => {
-    const l = activeLock(d, id)
-    if (l && l.holder_key !== opts.holder && !opts.force) throw new HttpError(409, 'locked', `block is being edited by ${l.holder.agent_name || l.holder.name}`, l)
-  }
   const mk = (id: string, type: BlockType, content: string, props: BlockProps, order: string, parent?: string): Block => ({
     id, workspace_id: d.paper.workspace_id, paper_id: d.paper.id, parent_id: parent, order, type, content, props: normalize(type, props), version: 1,
     created_by: actor, created_at: at, updated_by: actor, updated_at: at,
@@ -135,7 +123,6 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
     const have = new Set<string>()
     for (const c of children(view, table.id)) {
       if ((c.props.row ?? 0) >= rows || (c.props.col ?? 0) >= cols) {
-        checkLock(c.id)
         staged.delete(c.id)
         changes.push({ kind: 'delete', block_id: c.id, from_version: c.version })
       } else have.add(`${c.props.row}:${c.props.col}`)
@@ -144,13 +131,36 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
       if (have.has(`${r}:${c}`)) continue
       const cell = mk(uid(), 'table_cell', cells?.[r]?.[c] ?? '', { row: r, col: c }, 'V', table.id)
       staged.set(cell.id, cell)
+      touched.add(cell.id)
       changes.push({ kind: 'insert', block_id: cell.id, to_version: 1 })
     }
   }
-  const get = (id: string) => {
+  const versionOf = (id: string, v: number) => (d.versions.get(id) ?? []).find((x) => x.version === v)
+  const latestOf = (id: string) => (d.versions.get(id) ?? []).at(-1)
+  // existing returns the block an op edits, or undefined after recording a
+  // conflict for a block someone else deleted.
+  const existing = (id: string, base: number | undefined): Block | undefined => {
     const b = staged.get(id)
-    if (!b) throw new HttpError(400, 'invalid_argument', 'block does not exist')
-    return b
+    if (b) return b
+    if (!touched.has(id) && latestOf(id)) {
+      conflicts.push({ block_id: id, base_version: base ?? 0, current: null })
+      return undefined
+    }
+    throw new HttpError(400, 'invalid_argument', 'block does not exist')
+  }
+  // checkBase returns the overwritten version and its writer, or 'skip'
+  // after recording a conflict.
+  const checkBase = (id: string, base: number | undefined): Pick<Change, 'overwrote_version' | 'overwrote_by'> | 'skip' => {
+    if (!base) throw new HttpError(400, 'invalid_argument', 'base_version is required')
+    const orig = d.blocks.get(id)
+    if (!orig || touched.has(id) && !d.blocks.has(id)) return {}
+    if (base > orig.version) throw new HttpError(400, 'invalid_argument', 'base_version is newer than the block')
+    if (base === orig.version) return {}
+    const snap = versionOf(id, base)
+    if (snap && sameContents(snap, orig)) return {}
+    if (opts.force) return { overwrote_version: orig.version, overwrote_by: orig.updated_by }
+    conflicts.push({ block_id: id, base_version: base, current: clone(orig) })
+    return 'skip'
   }
 
   for (const op of ops) {
@@ -163,13 +173,16 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         if (op.type === 'table' && !props.cols) props.cols = Math.max(2, ...(op.cells ?? []).map((r) => r.length))
         const b = mk(id, op.type, op.content ?? '', props, orderAfter(view, op.after))
         staged.set(id, b)
+        touched.add(id)
         changes.push({ kind: 'insert', block_id: id, to_version: 1 })
         if (b.type === 'table') syncCells(b, op.cells)
         break
       }
       case 'update': {
-        const before = get(op.block_id)
-        checkLock(before.id)
+        const before = existing(op.block_id, op.base_version)
+        if (!before) break
+        const ow = touched.has(before.id) && !d.blocks.has(before.id) ? {} : checkBase(before.id, op.base_version)
+        if (ow === 'skip') break
         const b = clone(before)
         if (op.type && op.type !== b.type) {
           if (b.type === 'table') for (const c of children(view, b.id)) { staged.delete(c.id); changes.push({ kind: 'delete', block_id: c.id, from_version: c.version }) }
@@ -179,29 +192,60 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         if (op.props) b.props = b.type === 'table_cell' ? { ...op.props, row: before.props.row, col: before.props.col } : op.props
         b.props = normalize(b.type, b.props)
         if (b.type === 'divider' || b.type === 'table') b.content = ''
-        if (b.type === before.type && b.content === before.content && JSON.stringify(b.props) === JSON.stringify(before.props)) break
+        if (sameContents(b, before)) break
         b.version = before.version + 1
         b.updated_by = actor
         b.updated_at = at
         staged.set(b.id, b)
-        const overwrote = op.base_version && op.base_version < before.version ? before.version : undefined
-        changes.push({ kind: 'update', block_id: b.id, from_version: before.version, to_version: b.version, overwrote_version: overwrote })
+        touched.add(b.id)
+        changes.push({ kind: 'update', block_id: b.id, from_version: before.version, to_version: b.version, ...ow })
         if (b.type === 'table') syncCells(b)
         break
       }
       case 'delete': {
-        const b = get(op.block_id)
-        checkLock(b.id)
+        const b = staged.get(op.block_id)
+        if (!b) {
+          if (touched.has(op.block_id) || !latestOf(op.block_id)) throw new HttpError(400, 'invalid_argument', 'block does not exist')
+          break // already deleted by someone else
+        }
+        const ow = checkBase(b.id, op.base_version)
+        if (ow === 'skip') break
         for (const c of children(view, b.id)) { staged.delete(c.id); changes.push({ kind: 'delete', block_id: c.id, from_version: c.version }) }
         staged.delete(b.id)
-        changes.push({ kind: 'delete', block_id: b.id, from_version: b.version })
+        touched.add(b.id)
+        changes.push({ kind: 'delete', block_id: b.id, from_version: b.version, ...ow })
         break
       }
       case 'move': {
-        const before = get(op.block_id)
-        const b = { ...clone(before), order: orderAfter(view, op.after, before.id), version: before.version + 1, updated_by: actor, updated_at: at }
+        const before = staged.get(op.block_id)
+        if (!before) break // moving a deleted block is a no-op
+        const order = orderAfter(view, op.after, before.id)
+        if (order === before.order) break
+        const b = { ...clone(before), order, version: before.version + 1, updated_by: actor, updated_at: at }
         staged.set(b.id, b)
+        touched.add(b.id)
         changes.push({ kind: 'move', block_id: b.id, from_version: before.version, to_version: b.version })
+        break
+      }
+      case 'restore': {
+        const snap = versionOf(op.block_id, op.version)
+        if (!snap) throw new HttpError(400, 'invalid_argument', 'block version does not exist')
+        const cur = staged.get(op.block_id)
+        if (cur) {
+          const ow = checkBase(cur.id, op.base_version)
+          if (ow === 'skip' || sameContents(snap, cur)) break
+          const b = { ...clone(cur), type: snap.type, content: snap.content, props: snap.props, version: cur.version + 1, updated_by: actor, updated_at: at }
+          staged.set(b.id, b)
+          touched.add(b.id)
+          changes.push({ kind: 'restore', block_id: b.id, from_version: cur.version, to_version: b.version, restored_version: op.version, ...ow })
+          break
+        }
+        const last = latestOf(op.block_id)
+        if (!last || last.parent_id || snap.type === 'table' || snap.type === 'table_cell') throw new HttpError(400, 'invalid_argument', 'deleted tables and table cells cannot be restored')
+        const b = { ...clone(snap), parent_id: undefined, order: last.order, version: last.version + 1, updated_by: actor, updated_at: at }
+        staged.set(b.id, b)
+        touched.add(b.id)
+        changes.push({ kind: 'restore', block_id: b.id, from_version: last.version, to_version: b.version, restored_version: op.version })
         break
       }
       case 'set_title':
@@ -214,6 +258,7 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
         throw new HttpError(400, 'invalid_argument', 'this op is not available in the demo')
     }
   }
+  if (conflicts.length > 0) throw new HttpError(409, 'conflict', `${conflicts.length} block(s) changed since the base version`, conflicts)
   if (changes.length === 0) return { commit: null, blocks: [], deleted: [] }
   const put: Block[] = []
   const deleted: string[] = []
@@ -232,26 +277,6 @@ export function commit(d: PaperData, actor: Actor, ops: Op[], opts: { message?: 
   for (const id of deleted) publish(d, { type: 'block_deleted', block_id: id })
   publish(d, { type: 'paper_updated', paper: clone(d.paper) })
   return { commit: c, blocks: put, deleted }
-}
-
-function lock(d: PaperData, blockId: string, holder: string, actor: Actor): { ok: boolean; lock?: BlockLock } {
-  const cur = activeLock(d, blockId)
-  if (cur && cur.holder_key !== holder) return { ok: false, lock: cur }
-  if (!d.blocks.has(blockId)) return { ok: false }
-  const l: BlockLock = {
-    workspace_id: d.paper.workspace_id, paper_id: d.paper.id, block_id: blockId, holder_key: holder, holder: actor,
-    acquired_at: now(), expires_at: new Date(Date.now() + LOCK_TTL).toISOString(),
-  }
-  d.locks.set(blockId, l)
-  publish(d, { type: 'lock', lock: l })
-  return { ok: true, lock: l }
-}
-
-function unlock(d: PaperData, blockId: string, holder: string) {
-  const cur = d.locks.get(blockId)
-  if (!cur || cur.holder_key !== holder) return
-  d.locks.delete(blockId)
-  publish(d, { type: 'unlock', block_id: blockId, holder_key: holder })
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -297,8 +322,8 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
         const id = `p-${uid()}`
         const a = human(ME)
         const paper: Paper = { id, workspace_id: ws, title: String(b.title ?? ''), access: { restricted: false, bindings: [] }, created_by: a, created_at: now(), updated_by: a, updated_at: now() }
-        papers.set(id, { paper, blocks: new Map(), versions: new Map(), commits: [], locks: new Map() })
-        return { status: 201, json: { paper, blocks: [], locks: [], role: 'owner', lock_ttl_ms: LOCK_TTL } }
+        papers.set(id, { paper, blocks: new Map(), versions: new Map(), commits: [] })
+        return { status: 201, json: { paper, blocks: [], role: 'owner' } }
       }
       const list = [...papers.values()].filter((d) => d.paper.workspace_id === ws).map((d) => ({ ...d.paper, role: paperRole(d.paper) }))
       list.sort((x, y) => (x.updated_at < y.updated_at ? 1 : -1))
@@ -308,8 +333,7 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
       const d = getPaper(m[1] ?? '', m[2] ?? '')
       const rest = m[3] ?? ''
       if (rest === '' && method === 'GET') {
-        const locks = [...d.locks.keys()].map((k) => activeLock(d, k)).filter(Boolean)
-        return { status: 200, json: { paper: d.paper, blocks: [...d.blocks.values()], locks, role: paperRole(d.paper), lock_ttl_ms: LOCK_TTL } }
+        return { status: 200, json: { paper: d.paper, blocks: [...d.blocks.values()], role: paperRole(d.paper) } }
       }
       if (rest === '' && method === 'DELETE') {
         papers.delete(d.paper.id)
@@ -328,7 +352,7 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
         return { status: 200, json: { commits: newest.slice(start, start + 50) } }
       }
       if (rest === '/commits' && method === 'POST') {
-        const r = commit(d, human(ME), (b.ops ?? []) as Op[], { message: String(b.message ?? ''), force: !!b.force, holder: String(b.connection_id ?? '') })
+        const r = commit(d, human(ME), (b.ops ?? []) as Op[], { message: String(b.message ?? ''), force: !!b.force })
         return { status: 200, json: { ...r, paper: d.paper } }
       }
       const vm = rest.match(/^\/blocks\/([^/]+)\/versions$/)
@@ -338,7 +362,7 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
     }
     throw new HttpError(404, 'not_found', `no demo route for ${method} ${p}`)
   } catch (e) {
-    if (e instanceof HttpError) return { status: e.status, json: { error: { code: e.code, message: e.message, lock: e.lock } } }
+    if (e instanceof HttpError) return { status: e.status, json: { error: { code: e.code, message: e.message, conflicts: e.conflicts } } }
     return { status: 500, json: { error: { code: 'internal', message: String(e) } } }
   }
 }
@@ -348,30 +372,13 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
 export function connect(paperId: string, deliver: (msg: object) => void): { send: (raw: string) => void; close: () => void } {
   const s: Socket = { id: `conn:${uid()}`, paperKey: paperId, deliver }
   sockets.add(s)
-  const held = new Set<string>()
-  deliver({ type: 'hello', connection_id: s.id, lock_ttl_ms: LOCK_TTL })
+  deliver({ type: 'hello' })
   const sim = startSimulation(paperId)
   return {
-    send: (raw) => {
-      const msg = JSON.parse(raw) as { type: string; block_id?: string }
-      const d = papers.get(paperId)
-      if (!d) return
-      if (msg.type === 'lock' && msg.block_id) {
-        const r = lock(d, msg.block_id, s.id, human(ME))
-        if (r.ok) held.add(msg.block_id)
-        deliver({ type: 'lock_result', block_id: msg.block_id, ok: r.ok, lock: r.lock })
-      } else if (msg.type === 'unlock' && msg.block_id) {
-        held.delete(msg.block_id)
-        unlock(d, msg.block_id, s.id)
-      } else if (msg.type === 'heartbeat') {
-        for (const id of held) lock(d, id, s.id, human(ME))
-      }
-    },
+    send: () => deliver({ type: 'error', error: 'the live feed takes no messages' }),
     close: () => {
       sim()
       sockets.delete(s)
-      const d = papers.get(paperId)
-      if (d) for (const id of held) unlock(d, id, s.id)
     },
   }
 }
@@ -399,46 +406,42 @@ function textBlocks(d: PaperData): Block[] {
   return children(d, '').filter((b) => ['paragraph', 'bulleted_list_item', 'numbered_list_item', 'todo'].includes(b.type))
 }
 
+// Alice types into a paragraph word by word. Each save is based on the
+// version she last saw; if someone else changed the block in between, the
+// save conflicts and she stops, as a person would after seeing the dialog.
 async function aliceEdits(d: PaperData) {
-  const free = textBlocks(d).filter((b) => b.type === 'paragraph' && !activeLock(d, b.id))
-  const target = free[Math.floor(Math.random() * free.length)]
+  const paragraphs = textBlocks(d).filter((b) => b.type === 'paragraph')
+  const target = paragraphs[Math.floor(Math.random() * paragraphs.length)]
   if (!target) return
-  const holder = 'conn:alice'
-  if (!lock(d, target.id, holder, human(ALICE)).ok) return
   await sleep(1500)
   const line = ALICE_LINES[Math.floor(Math.random() * ALICE_LINES.length)] ?? ''
-  const words = line.split(/(?= )/)
-  let text = d.blocks.get(target.id)?.content ?? ''
-  for (const w of words) {
+  let seen = d.blocks.get(target.id)
+  for (const w of line.split(/(?= )/)) {
     await sleep(700)
-    const cur = d.blocks.get(target.id)
-    if (!cur) break
-    text = cur.content + w
+    if (!seen) break
     try {
-      commit(d, human(ALICE), [{ op: 'update', block_id: target.id, content: text, base_version: cur.version }], { holder })
+      const r = commit(d, human(ALICE), [{ op: 'update', block_id: target.id, content: seen.content + w, base_version: seen.version }], {})
+      seen = r.blocks.find((b) => b.id === target.id) ?? seen
     } catch {
       break
     }
   }
-  await sleep(1200)
-  unlock(d, target.id, holder)
 }
 
 function claudeWrites(d: PaperData) {
   const agent = claudeFor(ALICE)
-  const holder = 'token:t-claude'
   const roll = Math.random()
   const todos = children(d, '').filter((b) => b.type === 'todo' && !b.props.checked)
   try {
     if (roll < 0.35 && todos[0]) {
-      commit(d, agent, [{ op: 'update', block_id: todos[0].id, props: { ...todos[0].props, checked: true }, base_version: todos[0].version }], { holder, message: 'Mark done after checking the audit log' })
+      commit(d, agent, [{ op: 'update', block_id: todos[0].id, props: { ...todos[0].props, checked: true }, base_version: todos[0].version }], { message: 'Mark done after checking the audit log' })
       return
     }
     const top = children(d, '')
     const note = CLAUDE_NOTES[Math.floor(Math.random() * CLAUDE_NOTES.length)] ?? ''
-    commit(d, agent, [{ op: 'insert', type: 'callout', content: note, props: { icon: '🤖' }, after: top[Math.min(2, top.length - 1)]?.id }], { holder, message: 'Add a note from review' })
+    commit(d, agent, [{ op: 'insert', type: 'callout', content: note, props: { icon: '🤖' }, after: top[Math.min(2, top.length - 1)]?.id }], { message: 'Add a note from review' })
   } catch {
-    // A person is editing the target block; Claude backs off, as it should.
+    // Someone changed the block first; Claude re-reads on its next turn.
   }
 }
 

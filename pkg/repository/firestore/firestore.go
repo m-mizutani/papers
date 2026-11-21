@@ -13,7 +13,6 @@
 //	  .../blocks/{blockID}
 //	  .../blocks/{blockID}/versions/{version}             immutable snapshots
 //	  .../commits/{commitID}
-//	  .../locks/{blockID}                                  TTL on ExpiresAt
 //	workspaces/{wsID}/search/{paperID}_{blockID|title}     search entries
 //
 // The database must be a Firestore Enterprise edition database in Native
@@ -54,7 +53,6 @@ const (
 	colBlocks     = "blocks"
 	colVersions   = "versions"
 	colCommits    = "commits"
-	colLocks      = "locks"
 )
 
 type Repository struct {

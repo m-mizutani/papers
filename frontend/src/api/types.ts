@@ -99,24 +99,17 @@ export interface Block {
   updated_at: string
 }
 
-export interface BlockLock {
-  workspace_id: string
-  paper_id: string
-  block_id: string
-  holder_key: string
-  holder: Actor
-  acquired_at: string
-  expires_at: string
-}
-
-export type ChangeKind = 'insert' | 'update' | 'delete' | 'move' | 'set_title'
+export type ChangeKind = 'insert' | 'update' | 'delete' | 'move' | 'restore' | 'set_title'
 
 export interface Change {
   kind: ChangeKind
   block_id?: string
   from_version?: number
   to_version?: number
+  /** Set when the writer forced its edit over someone else's newer contents. */
   overwrote_version?: number
+  overwrote_by?: Actor
+  restored_version?: number
   title_before?: string
   title_after?: string
 }
@@ -132,28 +125,33 @@ export interface Commit {
 export interface PaperView {
   paper: Paper
   blocks: Block[]
-  locks: BlockLock[]
   role: Role
-  lock_ttl_ms: number
 }
 
 export type Op =
   | { op: 'insert'; block_id?: string; type: BlockType; content?: string; props?: BlockProps; after?: string; cells?: string[][] }
-  | { op: 'update'; block_id: string; type?: BlockType; content?: string; props?: BlockProps; base_version?: number }
-  | { op: 'delete'; block_id: string }
+  | { op: 'update'; block_id: string; type?: BlockType; content?: string; props?: BlockProps; base_version: number }
+  | { op: 'delete'; block_id: string; base_version: number }
+  | { op: 'restore'; block_id: string; version: number; base_version?: number }
   | { op: 'move'; block_id: string; after?: string }
   | { op: 'set_title'; title: string }
   | { op: 'insert_markdown'; markdown: string; after?: string }
 
 export interface PaperEvent {
-  type: 'block_put' | 'block_deleted' | 'paper_updated' | 'paper_deleted' | 'lock' | 'unlock'
+  type: 'block_put' | 'block_deleted' | 'paper_updated' | 'paper_deleted'
   workspace_id: string
   paper_id: string
   block?: Block
   paper?: Paper
-  lock?: BlockLock
   block_id?: string
-  holder_key?: string
+}
+
+/** One op of a rejected commit: the block changed since its base version. */
+export interface Conflict {
+  block_id: string
+  base_version: number
+  /** The block as it is now; null when someone deleted it. */
+  current: Block | null
 }
 
 export interface CommitResult {

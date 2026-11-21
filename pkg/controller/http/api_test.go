@@ -19,11 +19,9 @@ type wsResp struct {
 }
 
 type paperViewResp struct {
-	Paper     model.Paper       `json:"paper"`
-	Blocks    []model.Block     `json:"blocks"`
-	Locks     []model.BlockLock `json:"locks"`
-	Role      model.Role        `json:"role"`
-	LockTTLMs int64             `json:"lock_ttl_ms"`
+	Paper  model.Paper   `json:"paper"`
+	Blocks []model.Block `json:"blocks"`
+	Role   model.Role    `json:"role"`
 }
 
 type commitResp struct {
@@ -53,7 +51,6 @@ func setupPaper(t *testing.T, ts *testServer) (*client, *client, model.Workspace
 	alice.expect("POST", "/api/v1/workspaces/"+string(ws.ID)+"/papers", map[string]any{"title": "Runbook", "markdown": "# Steps\n\n1. check\n2. fix"}, http.StatusCreated, &view)
 	gt.Equal(t, view.Paper.Title, "Runbook")
 	gt.A(t, view.Blocks).Length(3)
-	gt.Equal(t, view.LockTTLMs, int64(30000))
 	return alice, bob, ws.ID, view.Paper.ID
 }
 
@@ -141,33 +138,50 @@ func TestPaperAPI(t *testing.T) {
 	alice.expect("GET", base, nil, http.StatusNotFound, nil)
 }
 
-func TestLockAPIAndConflict(t *testing.T) {
+func TestCommitConflictAPI(t *testing.T) {
 	ts := newTestServer(t, false)
 	alice, bob, ws, paper := setupPaper(t, ts)
 	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
 	var view paperViewResp
 	alice.expect("GET", base, nil, http.StatusOK, &view)
 	block := view.Blocks[1]
+	update := func(content string, baseVersion int64) map[string]any {
+		return map[string]any{"op": "update", "block_id": block.ID, "content": content, "base_version": baseVersion}
+	}
 
-	var lock model.BlockLock
-	alice.expect("PUT", base+"/blocks/"+string(block.ID)+"/lock", map[string]string{"connection_id": "tab-a"}, http.StatusOK, &lock)
-	gt.Equal(t, lock.HolderKey, "tab-a")
+	// base_version is required
+	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "x"}}}, http.StatusBadRequest, nil)
 
+	// alice saves first; bob's save based on the same version conflicts
+	alice.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{update("alice", block.Version)}}, http.StatusOK, nil)
 	var conflict struct {
 		Error struct {
-			Code string           `json:"code"`
-			Lock *model.BlockLock `json:"lock"`
+			Code      string `json:"code"`
+			Conflicts []struct {
+				BlockID     model.BlockID `json:"block_id"`
+				BaseVersion int64         `json:"base_version"`
+				Current     *model.Block  `json:"current"`
+			} `json:"conflicts"`
 		} `json:"error"`
 	}
-	bob.expect("PUT", base+"/blocks/"+string(block.ID)+"/lock", map[string]string{"connection_id": "tab-b"}, http.StatusConflict, &conflict)
-	gt.Equal(t, conflict.Error.Code, "locked")
-	gt.Equal(t, conflict.Error.Lock.HolderKey, "tab-a")
+	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{update("bob", block.Version)}}, http.StatusConflict, &conflict)
+	gt.Equal(t, conflict.Error.Code, "conflict")
+	gt.A(t, conflict.Error.Conflicts).Length(1)
+	gt.Equal(t, conflict.Error.Conflicts[0].BlockID, block.ID)
+	gt.Equal(t, conflict.Error.Conflicts[0].Current.Content, "alice")
 
-	bob.expect("POST", base+"/commits", map[string]any{"connection_id": "tab-b", "ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "x"}}}, http.StatusConflict, nil)
-	bob.expect("POST", base+"/commits", map[string]any{"connection_id": "tab-b", "force": true, "ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "x"}}}, http.StatusOK, nil)
+	// forcing overwrites and records it
+	var res commitResp
+	bob.expect("POST", base+"/commits", map[string]any{"force": true, "ops": []map[string]any{update("bob", block.Version)}}, http.StatusOK, &res)
+	gt.Equal(t, res.Commit.Changes[0].OverwroteVersion, block.Version+1)
+	gt.Equal(t, res.Commit.Changes[0].OverwroteBy.Kind, model.ActorHuman)
 
-	alice.expect("DELETE", base+"/blocks/"+string(block.ID)+"/lock", map[string]string{"connection_id": "tab-a"}, http.StatusNoContent, nil)
-	bob.expect("PUT", base+"/blocks/"+string(block.ID)+"/lock", map[string]string{"connection_id": "tab-b"}, http.StatusOK, nil)
+	// restore brings alice's version back
+	bob.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "restore", "block_id": block.ID, "version": block.Version + 1, "base_version": block.Version + 2}}}, http.StatusOK, &res)
+	gt.Equal(t, res.Blocks[0].Content, "alice")
+
+	// the lock endpoints are gone
+	alice.expect("PUT", base+"/blocks/"+string(block.ID)+"/lock", nil, http.StatusNotFound, nil)
 }
 
 func TestTokenAPI(t *testing.T) {

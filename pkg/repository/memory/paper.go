@@ -27,7 +27,6 @@ func (r *Repository) CreatePaper(_ context.Context, paper *model.Paper) error {
 		paper:    clone(paper),
 		blocks:   map[model.BlockID]*model.Block{},
 		versions: map[model.BlockID][]*model.Block{},
-		locks:    map[model.BlockID]*model.BlockLock{},
 		search:   map[model.BlockID]*model.SearchEntry{},
 	}
 	r.papers[key].indexTitle()
@@ -232,6 +231,34 @@ func (t *paperTx) GetBlock(id model.BlockID) (*model.Block, error) {
 	return nil, notFound("block", id)
 }
 
+func (t *paperTx) BlockVersion(id model.BlockID, version int64) (*model.Block, error) {
+	if b, ok := t.puts[id]; ok && b.Version == version {
+		return clone(b), nil
+	}
+	for _, v := range t.data.versions[id] {
+		if v.Version == version {
+			return clone(v), nil
+		}
+	}
+	return nil, notFound("block version", version)
+}
+
+func (t *paperTx) LatestBlockVersion(id model.BlockID) (*model.Block, error) {
+	if b, ok := t.puts[id]; ok {
+		return clone(b), nil
+	}
+	var latest *model.Block
+	for _, v := range t.data.versions[id] {
+		if latest == nil || v.Version > latest.Version {
+			latest = v
+		}
+	}
+	if latest == nil {
+		return nil, notFound("block", id)
+	}
+	return clone(latest), nil
+}
+
 func (t *paperTx) Children(parent model.BlockID) ([]*model.Block, error) {
 	var out []*model.Block
 	for id, b := range t.data.blocks {
@@ -368,61 +395,6 @@ func (r *Repository) RunPaperTx(_ context.Context, ws model.WorkspaceID, paper m
 		r.emit(key, &model.Event{Type: model.EventPaperUpdated, Paper: clone(tx.paper)})
 	}
 	return nil
-}
-
-// --- locks -------------------------------------------------------------------
-
-func (r *Repository) AcquireLock(_ context.Context, lock *model.BlockLock, now time.Time) (*model.BlockLock, error) {
-	if err := lock.Validate(); err != nil {
-		return nil, err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, err := r.getPaperData(lock.WorkspaceID, lock.PaperID)
-	if err != nil {
-		return nil, err
-	}
-	if cur, ok := d.locks[lock.BlockID]; ok && cur.Active(now) && cur.HolderKey != lock.HolderKey {
-		return clone(cur), goerr.Wrap(model.ErrBlockLocked, "block is locked", goerr.V("block_id", lock.BlockID))
-	}
-	d.locks[lock.BlockID] = clone(lock)
-	r.emit(paperKey{lock.WorkspaceID, lock.PaperID}, &model.Event{Type: model.EventLock, Lock: clone(lock)})
-	return clone(lock), nil
-}
-
-func (r *Repository) ReleaseLock(_ context.Context, ws model.WorkspaceID, paper model.PaperID, block model.BlockID, holderKey string) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, err := r.getPaperData(ws, paper)
-	if err != nil {
-		return false, err
-	}
-	cur, ok := d.locks[block]
-	if !ok || cur.HolderKey != holderKey {
-		return false, nil
-	}
-	delete(d.locks, block)
-	r.emit(paperKey{ws, paper}, &model.Event{Type: model.EventUnlock, BlockID: block, HolderKey: holderKey})
-	return true, nil
-}
-
-func (r *Repository) ListLocks(_ context.Context, ws model.WorkspaceID, paper model.PaperID, now time.Time) ([]*model.BlockLock, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, err := r.getPaperData(ws, paper)
-	if err != nil {
-		return nil, err
-	}
-	var out []*model.BlockLock
-	for id, l := range d.locks {
-		if !l.Active(now) {
-			delete(d.locks, id)
-			continue
-		}
-		out = append(out, clone(l))
-	}
-	slices.SortFunc(out, func(a, b *model.BlockLock) int { return cmp.Compare(a.BlockID, b.BlockID) })
-	return out, nil
 }
 
 // --- watch -------------------------------------------------------------------

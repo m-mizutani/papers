@@ -30,7 +30,7 @@ func next(t *testing.T, ch <-chan *model.Event, want model.EventType) *model.Eve
 }
 
 func TestWatchPaper(t *testing.T) {
-	runRepositoryTest(t, "streams blocks, locks and paper changes", func(t *testing.T, repo interfaces.Repository) {
+	runRepositoryTest(t, "streams block and paper changes", func(t *testing.T, repo interfaces.Repository) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		p := newPaper(t, repo)
@@ -51,13 +51,6 @@ func TestWatchPaper(t *testing.T) {
 		gt.Equal(t, next(t, ch, model.EventBlockDeleted).BlockID, existing.ID)
 
 		now := time.Now().UTC()
-		lock := &model.BlockLock{WorkspaceID: p.WorkspaceID, PaperID: p.ID, BlockID: b.ID, HolderKey: "h", Holder: humanActor("u"), AcquiredAt: now, ExpiresAt: now.Add(time.Minute)}
-		gt.R1(repo.AcquireLock(ctx, lock, now)).NoError(t)
-		gt.Equal(t, next(t, ch, model.EventLock).Lock.HolderKey, "h")
-		gt.True(t, gt.R1(repo.ReleaseLock(ctx, p.WorkspaceID, p.ID, b.ID, "h")).NoError(t))
-		unlock := next(t, ch, model.EventUnlock)
-		gt.Equal(t, unlock.BlockID, b.ID)
-		gt.Equal(t, unlock.HolderKey, "h")
 
 		gt.R1(repo.UpdatePaperAccess(ctx, p.WorkspaceID, p.ID, model.PaperAccess{Restricted: false}, humanActor("u"), now)).NoError(t)
 		gt.Equal(t, next(t, ch, model.EventPaperUpdated).Paper.Access.Restricted, false)

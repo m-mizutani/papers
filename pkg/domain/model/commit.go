@@ -15,6 +15,9 @@ const (
 	ChangeDelete   ChangeKind = "delete"
 	ChangeMove     ChangeKind = "move"
 	ChangeSetTitle ChangeKind = "set_title"
+	// ChangeRestore makes an earlier version current again, as a new
+	// version (history is never rewritten).
+	ChangeRestore ChangeKind = "restore"
 )
 
 // Change records the effect of one operation on one block. The block
@@ -26,11 +29,15 @@ type Change struct {
 	BlockID     BlockID    `json:"block_id,omitempty"`
 	FromVersion int64      `json:"from_version,omitempty"`
 	ToVersion   int64      `json:"to_version,omitempty"`
-	// OverwroteVersion is set when the writer based its edit on a version
-	// older than the one it replaced (last-writer-wins overwrite).
+	// OverwroteVersion and OverwroteBy are set when the writer forced its
+	// edit over contents someone else had changed since the writer's base
+	// version: the version that was replaced and who wrote it.
 	OverwroteVersion int64  `json:"overwrote_version,omitempty"`
-	TitleBefore      string `json:"title_before,omitempty"`
-	TitleAfter       string `json:"title_after,omitempty"`
+	OverwroteBy      *Actor `json:"overwrote_by,omitempty"`
+	// RestoredVersion is the version a restore copied its contents from.
+	RestoredVersion int64  `json:"restored_version,omitempty"`
+	TitleBefore     string `json:"title_before,omitempty"`
+	TitleAfter      string `json:"title_after,omitempty"`
 }
 
 // Commit is one atomic set of changes to a paper. Commits of a paper are

@@ -12,8 +12,6 @@ type Principal struct {
 	// Token is set when the request was authenticated by an API token; it
 	// caps the user's roles by its scope and workspace list.
 	Token *APIToken
-	// HolderKey identifies the caller's live connection for soft locks.
-	HolderKey string
 	// AgentName marks requests made by an AI client (e.g. through MCP) even
 	// when they are not authenticated by an agent token.
 	AgentName string

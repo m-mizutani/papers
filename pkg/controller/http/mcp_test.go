@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/m-mizutani/gt"
@@ -83,8 +84,9 @@ func TestMCP(t *testing.T) {
 	gt.A(t, rp.Blocks).Length(3)
 
 	type commitOut struct {
-		Inserted []model.BlockID         `json:"inserted"`
-		Versions map[model.BlockID]int64 `json:"versions"`
+		Inserted    []model.BlockID         `json:"inserted"`
+		Versions    map[model.BlockID]int64 `json:"versions"`
+		Overwritten []model.BlockID         `json:"overwritten"`
 	}
 	co, ok := callTool[commitOut](t, session, "papers_commit", map[string]any{
 		"workspace_id": ws, "paper_id": paper, "message": "add diagram",
@@ -105,13 +107,27 @@ func TestMCP(t *testing.T) {
 	gt.A(t, bh.Versions).Length(1)
 	gt.Equal(t, bh.Versions[0].By, "t (for alice)")
 
-	// a human-held lock makes the agent's write fail with a readable error
-	alice.expect("PUT", "/api/v1/workspaces/"+string(ws)+"/papers/"+string(paper)+"/blocks/"+string(co.Inserted[0])+"/lock", map[string]string{"connection_id": "tab"}, http.StatusOK, nil)
-	_, ok = callTool[commitOut](t, session, "papers_commit", map[string]any{
+	// a human saves first; the agent's write based on v1 fails with the
+	// current contents, and succeeds when forced
+	blockID := co.Inserted[0]
+	alice.expect("POST", "/api/v1/workspaces/"+string(ws)+"/papers/"+string(paper)+"/commits", map[string]any{
+		"ops": []map[string]any{{"op": "update", "block_id": blockID, "content": "human edit", "base_version": 1}},
+	}, http.StatusOK, nil)
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "papers_commit", Arguments: map[string]any{
 		"workspace_id": ws, "paper_id": paper, "message": "x",
-		"ops": []map[string]any{{"op": "delete", "block_id": co.Inserted[0]}},
+		"ops": []map[string]any{{"op": "update", "block_id": blockID, "content": "agent edit", "base_version": 1}},
+	}})
+	gt.NoError(t, err)
+	gt.True(t, res.IsError)
+	text := res.Content[0].(*mcp.TextContent).Text
+	gt.True(t, strings.Contains(text, "conflict"))
+	gt.True(t, strings.Contains(text, "human edit"))
+	forced, ok := callTool[commitOut](t, session, "papers_commit", map[string]any{
+		"workspace_id": ws, "paper_id": paper, "message": "x", "force": true,
+		"ops": []map[string]any{{"op": "update", "block_id": blockID, "content": "agent edit", "base_version": 1}},
 	})
-	gt.False(t, ok)
+	gt.True(t, ok)
+	gt.A(t, forced.Overwritten).Length(1)
 
 	type histOut struct {
 		Commits []struct {
@@ -121,9 +137,10 @@ func TestMCP(t *testing.T) {
 	}
 	h, ok := callTool[histOut](t, session, "papers_history", map[string]any{"workspace_id": ws, "paper_id": paper})
 	gt.True(t, ok)
-	gt.A(t, h.Commits).Length(2)
+	gt.A(t, h.Commits).Length(4)
 	gt.Equal(t, h.Commits[0].Kind, model.ActorAgent)
 	gt.Equal(t, h.Commits[1].Kind, model.ActorHuman)
+	gt.Equal(t, h.Commits[3].Kind, model.ActorHuman)
 
 	type created struct {
 		ID model.PaperID `json:"id"`

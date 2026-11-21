@@ -21,7 +21,6 @@ type Repository interface {
 	GroupRepository
 	WorkspaceRepository
 	PaperRepository
-	LockRepository
 	SearchRepository
 	Close() error
 }
@@ -72,7 +71,7 @@ type PaperRepository interface {
 	// UpdatePaperAccess replaces the access settings of an existing paper.
 	UpdatePaperAccess(ctx context.Context, ws model.WorkspaceID, id model.PaperID, access model.PaperAccess, updatedBy model.Actor, updatedAt time.Time) (*model.Paper, error)
 	// DeletePaper removes the paper with its blocks, block versions, commits
-	// and locks.
+	// and search entries.
 	DeletePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error
 
 	GetBlock(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, id model.BlockID) (*model.Block, error)
@@ -93,9 +92,9 @@ type PaperRepository interface {
 	// must not have side effects outside tx.
 	RunPaperTx(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, fn func(tx PaperTx) error) error
 
-	// WatchPaper streams the paper's changes (blocks, locks, the paper
-	// record) from the moment it returns until ctx is done. The channel is
-	// closed when the watch ends; it is also closed early if the watcher
+	// WatchPaper streams the paper's changes (blocks and the paper record)
+	// from the moment it returns until ctx is done. The channel is closed
+	// when the watch ends; it is also closed early if the watcher
 	// falls behind, in which case the caller must reload the paper.
 	WatchPaper(ctx context.Context, ws model.WorkspaceID, paper model.PaperID) (<-chan *model.Event, error)
 }
@@ -114,23 +113,19 @@ type PaperTx interface {
 	// Children returns all children of parent ordered by Order. Use it only
 	// for containers with bounded children (table cells).
 	Children(parent model.BlockID) ([]*model.Block, error)
-	// PutBlock stores the block and a snapshot of it under its Version.
+	// BlockVersion returns the snapshot of a block at a version, including
+	// versions written earlier in this transaction. Snapshots outlive the
+	// block, so deleted blocks have them too.
+	BlockVersion(id model.BlockID, version int64) (*model.Block, error)
+	// LatestBlockVersion returns the newest snapshot of a block, live or
+	// deleted; ErrNotFound if the block never existed.
+	LatestBlockVersion(id model.BlockID) (*model.Block, error)
+	// PutBlock stores the block and a snapshot of it under its Version. The
+	// version must not exist yet.
 	PutBlock(block *model.Block) error
 	DeleteBlock(id model.BlockID) error
 	PutPaper(paper *model.Paper) error
 	AddCommit(commit *model.Commit) error
-}
-
-type LockRepository interface {
-	// AcquireLock stores lock unless another holder has an active lock on
-	// the same block, in which case it returns that lock with an error
-	// wrapping model.ErrBlockLocked. Re-acquiring one's own lock renews it.
-	AcquireLock(ctx context.Context, lock *model.BlockLock, now time.Time) (*model.BlockLock, error)
-	// ReleaseLock removes the lock if holderKey holds it and reports whether
-	// a lock was removed.
-	ReleaseLock(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, block model.BlockID, holderKey string) (bool, error)
-	// ListLocks returns the active locks of a paper.
-	ListLocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, now time.Time) ([]*model.BlockLock, error)
 }
 
 // SearchRepository finds paper titles and blocks by text. Implementations

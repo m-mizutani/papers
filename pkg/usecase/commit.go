@@ -25,6 +25,9 @@ const (
 	OpMove           OpKind = "move"
 	OpSetTitle       OpKind = "set_title"
 	OpInsertMarkdown OpKind = "insert_markdown"
+	// OpRestore makes an earlier version of a block current again, as a
+	// new version. It also brings back a deleted block.
+	OpRestore OpKind = "restore"
 )
 
 // Op is one requested operation. Positioning (insert, move,
@@ -33,15 +36,19 @@ const (
 // Only top-level blocks are positioned; table cells are managed through
 // their table's Rows / Cols.
 type Op struct {
-	Kind        OpKind            `json:"op"`
-	BlockID     model.BlockID     `json:"block_id,omitempty"`
-	Type        *model.BlockType  `json:"type,omitempty"`
-	Content     *string           `json:"content,omitempty"`
-	Props       *model.BlockProps `json:"props,omitempty"`
-	After       *model.BlockID    `json:"after,omitempty"`
-	BaseVersion int64             `json:"base_version,omitempty"`
-	Title       *string           `json:"title,omitempty"`
-	Markdown    *string           `json:"markdown,omitempty"`
+	Kind    OpKind            `json:"op"`
+	BlockID model.BlockID     `json:"block_id,omitempty"`
+	Type    *model.BlockType  `json:"type,omitempty"`
+	Content *string           `json:"content,omitempty"`
+	Props   *model.BlockProps `json:"props,omitempty"`
+	After   *model.BlockID    `json:"after,omitempty"`
+	// BaseVersion is the version of the block the writer based the op on.
+	// Required for update, delete and restore of an existing block.
+	BaseVersion int64 `json:"base_version,omitempty"`
+	// Version is the version restore copies the contents from.
+	Version  int64   `json:"version,omitempty"`
+	Title    *string `json:"title,omitempty"`
+	Markdown *string `json:"markdown,omitempty"`
 	// Cells fills a new table (insert of type table), row by row.
 	Cells [][]string `json:"cells,omitempty"`
 }
@@ -49,12 +56,38 @@ type Op struct {
 type CommitInput struct {
 	Ops     []Op
 	Message string
-	// Force writes even to blocks another holder has soft-locked.
+	// Force writes over contents someone else changed since the op's base
+	// version, instead of failing with a ConflictError. Every forced
+	// overwrite is recorded in the commit.
 	Force bool
-	// HolderKey identifies the writer's live connection; it overrides the
-	// principal's own key so a browser tab can edit the blocks it locked.
-	HolderKey string
 }
+
+// Conflict is one op that was based on an older version of a block whose
+// contents someone else has changed since.
+type Conflict struct {
+	BlockID     model.BlockID `json:"block_id"`
+	BaseVersion int64         `json:"base_version"`
+	// Current is the block as it is now; nil when it has been deleted.
+	Current *model.Block `json:"current"`
+}
+
+// ConflictError reports every conflicting op of a commit; nothing was
+// written. It matches model.ErrConflict with errors.Is. Retrying with Force
+// overwrites the current contents, except for deleted blocks, which have
+// to be restored first.
+type ConflictError struct {
+	Conflicts []Conflict
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("%d block(s) changed since the base version", len(e.Conflicts))
+}
+
+func (e *ConflictError) Is(target error) bool { return target == model.ErrConflict }
+
+// errConflictRecorded marks an op skipped because its conflict was recorded
+// in the applier; the commit fails with a ConflictError after all ops ran.
+var errConflictRecorded = errors.New("conflict recorded")
 
 type CommitResult struct {
 	// Commit is nil when the operations changed nothing.
@@ -72,10 +105,12 @@ type applier struct {
 	paper   *model.Paper
 	actor   model.Actor
 	now     time.Time
-	locks   map[model.BlockID]*model.BlockLock
-	holder  string
 	force   bool
 	changes []model.Change
+	// orig holds each existing block as it was before this commit, so that
+	// several ops on one block are all checked against the same base.
+	orig      map[model.BlockID]*model.Block
+	conflicts []Conflict
 	// touched tracks the final state per block for the result: nil means
 	// deleted.
 	touched map[model.BlockID]*model.Block
@@ -100,18 +135,6 @@ func (a *applier) record(ch model.Change, after *model.Block) error {
 		a.touched[ch.BlockID] = after
 	}
 	return nil
-}
-
-func (a *applier) checkLock(id model.BlockID) error {
-	if a.force {
-		return nil
-	}
-	l, ok := a.locks[id]
-	if !ok || l.HolderKey == a.holder {
-		return nil
-	}
-	return goerr.Wrap(model.ErrBlockLocked, "block is being edited",
-		goerr.V("block_id", id), goerr.V("holder", l.Holder.Name), goerr.V("expires_at", l.ExpiresAt))
 }
 
 // orderAfter computes the order key for a top-level block placed per
@@ -221,9 +244,6 @@ func (a *applier) syncCells(table *model.Block, contents [][]string) error {
 	for _, c := range cells {
 		p := pos{c.Props.Row, c.Props.Col}
 		if c.Props.Row >= table.Props.Rows || c.Props.Col >= table.Props.Cols || existing[p] {
-			if err := a.checkLock(c.ID); err != nil {
-				return err
-			}
 			if err := a.tx.DeleteBlock(c.ID); err != nil {
 				return goerr.Wrap(err, "failed to delete table cell")
 			}
@@ -261,9 +281,6 @@ func (a *applier) deleteChildren(parent *model.Block) error {
 		return goerr.Wrap(err, "failed to list children")
 	}
 	for _, c := range children {
-		if err := a.checkLock(c.ID); err != nil {
-			return err
-		}
 		if err := a.tx.DeleteBlock(c.ID); err != nil {
 			return goerr.Wrap(err, "failed to delete child block")
 		}
@@ -345,15 +362,101 @@ func (a *applier) get(id model.BlockID) (*model.Block, error) {
 		}
 		return nil, goerr.Wrap(err, "failed to get block", goerr.V("block_id", id))
 	}
+	a.remember(b)
 	return b, nil
 }
 
+// remember keeps the pre-commit state of a block read for the first time.
+// Blocks inserted or already changed in this commit are not remembered.
+func (a *applier) remember(b *model.Block) {
+	if _, mine := a.touched[b.ID]; mine {
+		return
+	}
+	if _, ok := a.orig[b.ID]; !ok {
+		a.orig[b.ID] = b.Clone()
+	}
+}
+
+func sameContents(x, y *model.Block) bool {
+	return x.Type == y.Type && x.Content == y.Content && x.Props == y.Props
+}
+
+type overwrite struct {
+	version int64
+	by      model.Actor
+}
+
+func (o *overwrite) apply(ch *model.Change) {
+	if o != nil {
+		by := o.by
+		ch.OverwroteVersion, ch.OverwroteBy = o.version, &by
+	}
+}
+
+// checkBase decides whether an op based on version base of block id may
+// replace the block's contents. Someone else's change since base is a
+// conflict only if it changed the contents (type, content, props); moves
+// never conflict. With force the conflict becomes a recorded overwrite;
+// without it the conflict is recorded and errConflictRecorded returned.
+func (a *applier) checkBase(id model.BlockID, base int64) (*overwrite, error) {
+	if base <= 0 {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "base_version is required", goerr.V("block_id", id))
+	}
+	orig, ok := a.orig[id]
+	if !ok {
+		return nil, nil // created in this commit
+	}
+	if base > orig.Version {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "base_version is newer than the block", goerr.V("block_id", id), goerr.V("base_version", base), goerr.V("version", orig.Version))
+	}
+	if base == orig.Version {
+		return nil, nil
+	}
+	snap, err := a.tx.BlockVersion(id, base)
+	if err != nil && !errors.Is(err, model.ErrNotFound) {
+		return nil, goerr.Wrap(err, "failed to read base version", goerr.V("block_id", id))
+	}
+	if snap != nil && sameContents(snap, orig) {
+		return nil, nil
+	}
+	if a.force {
+		return &overwrite{version: orig.Version, by: orig.UpdatedBy}, nil
+	}
+	a.conflicts = append(a.conflicts, Conflict{BlockID: id, BaseVersion: base, Current: orig.Clone()})
+	return nil, errConflictRecorded
+}
+
+// existing loads the block an op edits. A block that someone else deleted
+// is a conflict (even with force: restore it first); a block deleted earlier
+// in this commit or one that never existed is an invalid argument.
+func (a *applier) existing(id model.BlockID, base int64) (*model.Block, error) {
+	b, err := a.get(id)
+	if err == nil {
+		return b, nil
+	}
+	if !errors.Is(err, model.ErrInvalidArgument) || id == "" {
+		return nil, err
+	}
+	if _, mine := a.touched[id]; mine {
+		return nil, err
+	}
+	if _, verr := a.tx.LatestBlockVersion(id); verr != nil {
+		if errors.Is(verr, model.ErrNotFound) {
+			return nil, err
+		}
+		return nil, goerr.Wrap(verr, "failed to read block history", goerr.V("block_id", id))
+	}
+	a.conflicts = append(a.conflicts, Conflict{BlockID: id, BaseVersion: base})
+	return nil, errConflictRecorded
+}
+
 func (a *applier) update(op Op) error {
-	before, err := a.get(op.BlockID)
+	before, err := a.existing(op.BlockID, op.BaseVersion)
 	if err != nil {
 		return err
 	}
-	if err := a.checkLock(before.ID); err != nil {
+	ow, err := a.checkBase(before.ID, op.BaseVersion)
+	if err != nil {
 		return err
 	}
 	b := before.Clone()
@@ -397,9 +500,7 @@ func (a *applier) update(op Op) error {
 		return err
 	}
 	ch := model.Change{Kind: model.ChangeUpdate, BlockID: b.ID, FromVersion: before.Version, ToVersion: b.Version}
-	if op.BaseVersion > 0 && op.BaseVersion < before.Version {
-		ch.OverwroteVersion = before.Version
-	}
+	ow.apply(&ch)
 	if err := a.record(ch, b.Clone()); err != nil {
 		return err
 	}
@@ -413,14 +514,20 @@ func (a *applier) update(op Op) error {
 }
 
 func (a *applier) delete(op Op) error {
-	b, err := a.get(op.BlockID)
+	b, err := a.existing(op.BlockID, op.BaseVersion)
+	if errors.Is(err, errConflictRecorded) {
+		// Someone else already deleted it: the delete is done.
+		a.conflicts = a.conflicts[:len(a.conflicts)-1]
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	if b.Type == model.BlockTableCell {
 		return goerr.Wrap(model.ErrInvalidArgument, "table cells are removed by resizing their table", goerr.V("block_id", b.ID))
 	}
-	if err := a.checkLock(b.ID); err != nil {
+	ow, err := a.checkBase(b.ID, op.BaseVersion)
+	if err != nil {
 		return err
 	}
 	if b.Type.IsContainer() {
@@ -431,11 +538,19 @@ func (a *applier) delete(op Op) error {
 	if err := a.tx.DeleteBlock(b.ID); err != nil {
 		return goerr.Wrap(err, "failed to delete block")
 	}
-	return a.record(model.Change{Kind: model.ChangeDelete, BlockID: b.ID, FromVersion: b.Version}, nil)
+	ch := model.Change{Kind: model.ChangeDelete, BlockID: b.ID, FromVersion: b.Version}
+	ow.apply(&ch)
+	return a.record(ch, nil)
 }
 
+// move changes only the position, so it never conflicts: the last writer
+// wins on order. Moving a block someone else deleted is a no-op.
 func (a *applier) move(op Op) error {
-	before, err := a.get(op.BlockID)
+	before, err := a.existing(op.BlockID, op.BaseVersion)
+	if errors.Is(err, errConflictRecorded) {
+		a.conflicts = a.conflicts[:len(a.conflicts)-1]
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -501,6 +616,89 @@ func (a *applier) insertMarkdown(op Op) error {
 	return nil
 }
 
+func (a *applier) restore(op Op) error {
+	if op.Version <= 0 {
+		return goerr.Wrap(model.ErrInvalidArgument, "restore requires version", goerr.V("block_id", op.BlockID))
+	}
+	if op.BlockID == "" {
+		return goerr.Wrap(model.ErrInvalidArgument, "block_id is required")
+	}
+	snap, err := a.tx.BlockVersion(op.BlockID, op.Version)
+	if errors.Is(err, model.ErrNotFound) {
+		return goerr.Wrap(model.ErrInvalidArgument, "block version does not exist", goerr.V("block_id", op.BlockID), goerr.V("version", op.Version))
+	}
+	if err != nil {
+		return goerr.Wrap(err, "failed to read block version")
+	}
+
+	cur, err := a.tx.GetBlock(op.BlockID)
+	if errors.Is(err, model.ErrNotFound) {
+		return a.restoreDeleted(op, snap)
+	}
+	if err != nil {
+		return goerr.Wrap(err, "failed to get block", goerr.V("block_id", op.BlockID))
+	}
+	a.remember(cur)
+	ow, err := a.checkBase(cur.ID, op.BaseVersion)
+	if err != nil {
+		return err
+	}
+	if sameContents(snap, cur) {
+		return nil
+	}
+	if (cur.Type == model.BlockTableCell) != (snap.Type == model.BlockTableCell) {
+		return goerr.Wrap(model.ErrInvalidArgument, "a table cell can only be restored to a cell version", goerr.V("block_id", cur.ID))
+	}
+	b := cur.Clone()
+	if cur.Type.IsContainer() && snap.Type != cur.Type {
+		if err := a.deleteChildren(cur); err != nil {
+			return err
+		}
+	}
+	b.Type, b.Content, b.Props = snap.Type, snap.Content, snap.Props
+	if b.Type == model.BlockTableCell {
+		b.Props.Row, b.Props.Col = cur.Props.Row, cur.Props.Col
+	}
+	b.Version = cur.Version + 1
+	b.UpdatedBy, b.UpdatedAt = a.actor, a.now
+	if err := a.put(b); err != nil {
+		return err
+	}
+	ch := model.Change{Kind: model.ChangeRestore, BlockID: b.ID, FromVersion: cur.Version, ToVersion: b.Version, RestoredVersion: op.Version}
+	ow.apply(&ch)
+	if err := a.record(ch, b.Clone()); err != nil {
+		return err
+	}
+	if b.Type == model.BlockTable {
+		return a.syncCells(b, nil)
+	}
+	return nil
+}
+
+// restoreDeleted brings a deleted top-level block back at its last position
+// with the contents of snap. Tables and cells are not restored this way:
+// their cells are separate blocks with their own histories.
+func (a *applier) restoreDeleted(op Op, snap *model.Block) error {
+	if _, mine := a.touched[op.BlockID]; mine {
+		return goerr.Wrap(model.ErrInvalidArgument, "block was deleted in this commit", goerr.V("block_id", op.BlockID))
+	}
+	last, err := a.tx.LatestBlockVersion(op.BlockID)
+	if err != nil {
+		return goerr.Wrap(err, "failed to read block history", goerr.V("block_id", op.BlockID))
+	}
+	if last.ParentID != "" || snap.Type.IsContainer() || snap.Type == model.BlockTableCell {
+		return goerr.Wrap(model.ErrInvalidArgument, "deleted tables and table cells cannot be restored", goerr.V("block_id", op.BlockID))
+	}
+	b := snap.Clone()
+	b.ParentID, b.Order = "", last.Order
+	b.Version = last.Version + 1
+	b.UpdatedBy, b.UpdatedAt = a.actor, a.now
+	if err := a.put(b); err != nil {
+		return err
+	}
+	return a.record(model.Change{Kind: model.ChangeRestore, BlockID: b.ID, FromVersion: last.Version, ToVersion: b.Version, RestoredVersion: op.Version}, b.Clone())
+}
+
 func (a *applier) apply(op Op) error {
 	switch op.Kind {
 	case OpInsert:
@@ -516,16 +714,20 @@ func (a *applier) apply(op Op) error {
 		return a.setTitle(op)
 	case OpInsertMarkdown:
 		return a.insertMarkdown(op)
+	case OpRestore:
+		return a.restore(op)
 	default:
 		return goerr.Wrap(model.ErrInvalidArgument, "unknown op", goerr.V("op", op.Kind))
 	}
 }
 
 // Commit applies operations to a paper atomically and records them as one
-// commit. Each changed block gets a new version (with a stored snapshot);
-// the last writer wins on a block, and an overwrite of a newer version than
-// the writer based its edit on is recorded in the change. Watchers learn
-// about the result from the repository's change feed.
+// commit. Each changed block gets a new version (with a stored snapshot).
+// An op based on an older version of a block whose contents someone else
+// has changed since fails the whole commit with a *ConflictError listing
+// every such op, unless in.Force is set: then the last writer wins and the
+// overwrite is recorded in the change. Watchers learn about the result from
+// the repository's change feed.
 func (u *UseCases) Commit(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, paperID model.PaperID, in CommitInput) (*CommitResult, error) {
 	if _, _, _, err := u.paperFor(ctx, p, wsID, paperID, model.RoleEditor); err != nil {
 		return nil, err
@@ -541,26 +743,19 @@ func (u *UseCases) Commit(ctx context.Context, p *model.Principal, wsID model.Wo
 	}
 
 	now := u.now()
-	active, err := u.repo.ListLocks(ctx, wsID, paperID, now)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to list locks")
-	}
-	locks := make(map[model.BlockID]*model.BlockLock, len(active))
-	for _, l := range active {
-		locks[l.BlockID] = l
-	}
-	holder := in.HolderKey
-	if holder == "" {
-		holder = p.HolderKey
-	}
-
 	var result CommitResult
-	err = u.repo.RunPaperTx(ctx, wsID, paperID, func(tx interfaces.PaperTx) error {
-		a := &applier{tx: tx, paper: tx.Paper(), actor: p.Actor(), now: now, locks: locks, holder: holder, force: in.Force, touched: map[model.BlockID]*model.Block{}}
+	err := u.repo.RunPaperTx(ctx, wsID, paperID, func(tx interfaces.PaperTx) error {
+		a := &applier{tx: tx, paper: tx.Paper(), actor: p.Actor(), now: now, force: in.Force,
+			touched: map[model.BlockID]*model.Block{}, orig: map[model.BlockID]*model.Block{}}
 		for i, op := range in.Ops {
-			if err := a.apply(op); err != nil {
+			if err := a.apply(op); errors.Is(err, errConflictRecorded) {
+				continue
+			} else if err != nil {
 				return goerr.Wrap(err, fmt.Sprintf("op #%d (%s) failed", i, op.Kind), goerr.V("index", i))
 			}
+		}
+		if len(a.conflicts) > 0 {
+			return &ConflictError{Conflicts: a.conflicts}
 		}
 		result = CommitResult{Paper: a.paper}
 		if len(a.changes) == 0 {

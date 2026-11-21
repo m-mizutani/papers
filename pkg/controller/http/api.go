@@ -1,7 +1,6 @@
 package http
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -45,8 +44,6 @@ func (s *Server) routeAPI(r chi.Router) {
 			r.Post("/commits", s.handleCommit)
 			r.Get("/markdown", s.handleMarkdown)
 			r.Get("/blocks/{block}/versions", s.handleBlockVersions)
-			r.Put("/blocks/{block}/lock", s.handleLock)
-			r.Delete("/blocks/{block}/lock", s.handleUnlock)
 			r.Get("/live", s.handleLive)
 		})
 	})
@@ -309,28 +306,21 @@ func (s *Server) handleListPapers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createPaperRequest struct {
-	Title        string `json:"title"`
-	Markdown     string `json:"markdown"`
-	Restricted   bool   `json:"restricted"`
-	ConnectionID string `json:"connection_id"`
+	Title      string `json:"title"`
+	Markdown   string `json:"markdown"`
+	Restricted bool   `json:"restricted"`
 }
 
 type paperViewJSON struct {
-	Paper  *model.Paper       `json:"paper"`
-	Blocks []*model.Block     `json:"blocks"`
-	Locks  []*model.BlockLock `json:"locks"`
-	Role   model.Role         `json:"role"`
-	// LockTTLMillis tells clients how often to renew their locks.
-	LockTTLMillis int64 `json:"lock_ttl_ms"`
+	Paper  *model.Paper   `json:"paper"`
+	Blocks []*model.Block `json:"blocks"`
+	Role   model.Role     `json:"role"`
 }
 
 func (s *Server) toPaperView(v *usecase.PaperView) paperViewJSON {
-	out := paperViewJSON{Paper: v.Paper, Blocks: v.Blocks, Locks: v.Locks, Role: v.Role, LockTTLMillis: s.uc.LockTTL()}
+	out := paperViewJSON{Paper: v.Paper, Blocks: v.Blocks, Role: v.Role}
 	if out.Blocks == nil {
 		out.Blocks = []*model.Block{}
-	}
-	if out.Locks == nil {
-		out.Locks = []*model.BlockLock{}
 	}
 	return out
 }
@@ -342,7 +332,7 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.uc.CreatePaper(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.CreatePaperInput{
-		Title: req.Title, Markdown: req.Markdown, Restricted: req.Restricted, HolderKey: req.ConnectionID,
+		Title: req.Title, Markdown: req.Markdown, Restricted: req.Restricted,
 	})
 	if err != nil {
 		writeError(r.Context(), w, err)
@@ -432,10 +422,9 @@ func (s *Server) handleBlockVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 type commitRequest struct {
-	Ops          []usecase.Op `json:"ops"`
-	Message      string       `json:"message"`
-	Force        bool         `json:"force"`
-	ConnectionID string       `json:"connection_id"`
+	Ops     []usecase.Op `json:"ops"`
+	Message string       `json:"message"`
+	Force   bool         `json:"force"`
 }
 
 type commitResponse struct {
@@ -452,7 +441,7 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.uc.Commit(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.CommitInput{
-		Ops: req.Ops, Message: req.Message, Force: req.Force, HolderKey: req.ConnectionID,
+		Ops: req.Ops, Message: req.Message, Force: req.Force,
 	})
 	if err != nil {
 		writeError(r.Context(), w, err)
@@ -479,52 +468,6 @@ func (s *Server) handleMarkdown(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write([]byte(md)); err != nil {
 		writeError(r.Context(), w, goerr.Wrap(err, "failed to write markdown"))
 	}
-}
-
-type lockRequest struct {
-	ConnectionID string `json:"connection_id"`
-}
-
-func (s *Server) holderKey(r *http.Request, connectionID string) string {
-	if connectionID != "" {
-		return connectionID
-	}
-	return principalFrom(r.Context()).HolderKey
-}
-
-func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
-	var req lockRequest
-	if r.ContentLength != 0 {
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(r.Context(), w, err)
-			return
-		}
-	}
-	lock, err := s.uc.AcquireLock(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), model.BlockID(chi.URLParam(r, "block")), s.holderKey(r, req.ConnectionID))
-	if err != nil {
-		if errors.Is(err, model.ErrBlockLocked) {
-			writeErrorWithLock(r.Context(), w, err, lock)
-			return
-		}
-		writeError(r.Context(), w, err)
-		return
-	}
-	writeJSON(r.Context(), w, http.StatusOK, lock)
-}
-
-func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
-	var req lockRequest
-	if r.ContentLength != 0 {
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(r.Context(), w, err)
-			return
-		}
-	}
-	if err := s.uc.ReleaseLock(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), model.BlockID(chi.URLParam(r, "block")), s.holderKey(r, req.ConnectionID)); err != nil {
-		writeError(r.Context(), w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 type searchHitJSON struct {

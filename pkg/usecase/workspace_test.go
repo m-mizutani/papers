@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/m-mizutani/gt"
 
@@ -51,7 +50,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 
 func TestWorkspaceCreationPolicy(t *testing.T) {
 	repo := memory.New()
-	uc := gt.R1(usecase.New(repo, usecase.Config{LockTTL: time.Second, WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 10})).NoError(t)
+	uc := gt.R1(usecase.New(repo, usecase.Config{WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 10})).NoError(t)
 	ctx := context.Background()
 	u := &model.User{ID: model.NewUserID(), Email: "u@example.com"}
 	gt.NoError(t, repo.PutUser(ctx, u))

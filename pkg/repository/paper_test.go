@@ -290,62 +290,46 @@ func TestPaperRepository(t *testing.T) {
 		gt.True(t, errors.Is(err, model.ErrNotFound))
 		gt.True(t, errors.Is(repo.DeletePaper(ctx, p.WorkspaceID, p.ID), model.ErrNotFound))
 	})
-}
 
-func TestLockRepository(t *testing.T) {
-	runRepositoryTest(t, "acquire, conflict, renew, release", func(t *testing.T, repo interfaces.Repository) {
+	runRepositoryTest(t, "versions are readable inside a transaction", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()
 		p := newPaper(t, repo)
-		now := time.Now().UTC()
-		blockID := model.NewBlockID()
-		lock := func(holder string, at time.Time) *model.BlockLock {
-			return &model.BlockLock{
-				WorkspaceID: p.WorkspaceID, PaperID: p.ID, BlockID: blockID,
-				HolderKey: holder, Holder: humanActor(model.UserID(holder)),
-				AcquiredAt: at, ExpiresAt: at.Add(30 * time.Second),
-			}
-		}
+		b := newBlock(p, "V", "v1")
+		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b) }))
+		b2 := b.Clone()
+		b2.Content, b2.Version = "v2", 2
+		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.PutBlock(b2) }))
 
-		gt.R1(repo.AcquireLock(ctx, lock("alice", now), now)).NoError(t)
+		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
+			v1, err := tx.BlockVersion(b.ID, 1)
+			gt.NoError(t, err)
+			gt.Equal(t, v1.Content, "v1")
+			latest, err := tx.LatestBlockVersion(b.ID)
+			gt.NoError(t, err)
+			gt.Equal(t, latest.Version, int64(2))
+			_, err = tx.BlockVersion(b.ID, 7)
+			gt.True(t, errors.Is(err, model.ErrNotFound))
+			_, err = tx.LatestBlockVersion(model.NewBlockID())
+			gt.True(t, errors.Is(err, model.ErrNotFound))
 
-		cur, err := repo.AcquireLock(ctx, lock("bob", now), now)
-		gt.True(t, errors.Is(err, model.ErrBlockLocked))
-		gt.Equal(t, cur.HolderKey, "alice")
-
-		// renewing one's own lock succeeds
-		gt.R1(repo.AcquireLock(ctx, lock("alice", now.Add(10*time.Second)), now.Add(10*time.Second))).NoError(t)
-
-		locks := gt.R1(repo.ListLocks(ctx, p.WorkspaceID, p.ID, now)).NoError(t)
-		gt.A(t, locks).Length(1)
-		gt.Equal(t, locks[0].Holder, humanActor("alice"))
-
-		released := gt.R1(repo.ReleaseLock(ctx, p.WorkspaceID, p.ID, blockID, "bob")).NoError(t)
-		gt.False(t, released)
-		released = gt.R1(repo.ReleaseLock(ctx, p.WorkspaceID, p.ID, blockID, "alice")).NoError(t)
-		gt.True(t, released)
-
-		gt.R1(repo.AcquireLock(ctx, lock("bob", now), now)).NoError(t)
-	})
-
-	runRepositoryTest(t, "expired lock can be taken over", func(t *testing.T, repo interfaces.Repository) {
-		ctx := context.Background()
-		p := newPaper(t, repo)
-		now := time.Now().UTC()
-		blockID := model.NewBlockID()
-		old := &model.BlockLock{WorkspaceID: p.WorkspaceID, PaperID: p.ID, BlockID: blockID, HolderKey: "a", Holder: humanActor("a"), AcquiredAt: now, ExpiresAt: now.Add(time.Second)}
-		gt.R1(repo.AcquireLock(ctx, old, now)).NoError(t)
-
-		later := now.Add(2 * time.Second)
-		gt.A(t, gt.R1(repo.ListLocks(ctx, p.WorkspaceID, p.ID, later)).NoError(t)).Length(0)
-
-		newer := &model.BlockLock{WorkspaceID: p.WorkspaceID, PaperID: p.ID, BlockID: blockID, HolderKey: "b", Holder: humanActor("b"), AcquiredAt: later, ExpiresAt: later.Add(time.Second)}
-		gt.R1(repo.AcquireLock(ctx, newer, later)).NoError(t)
-	})
-
-	runRepositoryTest(t, "lock on missing paper", func(t *testing.T, repo interfaces.Repository) {
-		now := time.Now()
-		l := &model.BlockLock{WorkspaceID: "w", PaperID: model.NewPaperID(), BlockID: "b", HolderKey: "a", Holder: humanActor("a"), AcquiredAt: now, ExpiresAt: now.Add(time.Second)}
-		_, err := repo.AcquireLock(context.Background(), l, now)
-		gt.True(t, errors.Is(err, model.ErrNotFound))
+			// staged writes are visible, and history outlives a delete
+			b3 := b2.Clone()
+			b3.Content, b3.Version = "v3", 3
+			gt.NoError(t, tx.PutBlock(b3))
+			staged, err := tx.BlockVersion(b.ID, 3)
+			gt.NoError(t, err)
+			gt.Equal(t, staged.Content, "v3")
+			latest, err = tx.LatestBlockVersion(b.ID)
+			gt.NoError(t, err)
+			gt.Equal(t, latest.Version, int64(3))
+			return nil
+		}))
+		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error { return tx.DeleteBlock(b.ID) }))
+		gt.NoError(t, repo.RunPaperTx(ctx, p.WorkspaceID, p.ID, func(tx interfaces.PaperTx) error {
+			latest, err := tx.LatestBlockVersion(b.ID)
+			gt.NoError(t, err)
+			gt.Equal(t, latest.Content, "v3")
+			return nil
+		}))
 	})
 }

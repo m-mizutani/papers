@@ -162,7 +162,6 @@ func TestTokens(t *testing.T) {
 	p := gt.R1(a.AuthenticateToken(ctx, raw)).NoError(t)
 	gt.Equal(t, p.User.ID, session.User.ID)
 	gt.Equal(t, p.Actor().Kind, model.ActorAgent)
-	gt.Equal(t, p.HolderKey, "token:"+string(tok.ID))
 	stored := gt.R1(repo.GetToken(ctx, tok.ID)).NoError(t)
 	gt.NotNil(t, stored.LastUsedAt)
 

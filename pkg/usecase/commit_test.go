@@ -29,9 +29,35 @@ func newPaperEnv(t *testing.T) *paperEnv {
 	return &paperEnv{env: e, owner: owner, editor: editor, viewer: viewer, ws: ws, paper: view.Paper.ID}
 }
 
+// commit applies ops, basing every update, delete and restore that names
+// no base_version on the block's current version (tests of other behaviour
+// should not have to track versions).
 func (pe *paperEnv) commit(t *testing.T, p *model.Principal, ops ...usecase.Op) *usecase.CommitResult {
 	t.Helper()
+	for i, op := range ops {
+		if op.BaseVersion != 0 || op.BlockID == "" {
+			continue
+		}
+		switch op.Kind {
+		case usecase.OpUpdate, usecase.OpDelete, usecase.OpRestore:
+			if b, err := pe.repo.GetBlock(context.Background(), pe.ws, pe.paper, op.BlockID); err == nil {
+				ops[i].BaseVersion = b.Version
+			}
+		}
+	}
 	return gt.R1(pe.uc.Commit(context.Background(), p, pe.ws, pe.paper, usecase.CommitInput{Ops: ops, Message: "test"})).NoError(t)
+}
+
+func (pe *paperEnv) try(p *model.Principal, force bool, ops ...usecase.Op) (*usecase.CommitResult, error) {
+	return pe.uc.Commit(context.Background(), p, pe.ws, pe.paper, usecase.CommitInput{Ops: ops, Force: force})
+}
+
+func conflictsOf(t *testing.T, err error) []usecase.Conflict {
+	t.Helper()
+	gt.True(t, errors.Is(err, model.ErrConflict)).Required()
+	var ce *usecase.ConflictError
+	gt.True(t, errors.As(err, &ce)).Required()
+	return ce.Conflicts
 }
 
 func (pe *paperEnv) blocks(t *testing.T) []*model.Block {
@@ -93,37 +119,164 @@ func TestCommitClientChosenID(t *testing.T) {
 	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 }
 
-func TestCommitUpdateAndLastWriterWins(t *testing.T) {
+func TestCommitUpdateKeepsHistory(t *testing.T) {
 	pe := newPaperEnv(t)
 	r := pe.commit(t, pe.editor, insertOp("v1", nil))
 	id := r.Commit.Changes[0].BlockID
 
-	// owner edits based on version 1
 	r = pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("owner"), BaseVersion: 1})
 	gt.Equal(t, r.Blocks[0].Version, int64(2))
 	gt.Equal(t, r.Commit.Changes[0].FromVersion, int64(1))
 	gt.Equal(t, r.Commit.Changes[0].ToVersion, int64(2))
 	gt.Equal(t, r.Commit.Changes[0].OverwroteVersion, int64(0))
-
-	// editor also edits based on version 1: last writer wins, overwrite recorded
-	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("editor"), BaseVersion: 1})
-	gt.Equal(t, r.Commit.Changes[0].OverwroteVersion, int64(2))
-	prev := gt.R1(pe.repo.GetBlockVersion(context.Background(), pe.ws, pe.paper, id, r.Commit.Changes[0].FromVersion)).NoError(t)
-	gt.Equal(t, prev.Content, "owner")
-	gt.Equal(t, pe.blocks(t)[0].Content, "editor")
-	gt.Equal(t, pe.blocks(t)[0].Version, int64(3))
-	gt.Equal(t, pe.blocks(t)[0].UpdatedBy.UserID, pe.editor.User.ID)
+	gt.Equal(t, pe.blocks(t)[0].UpdatedBy.UserID, pe.owner.User.ID)
 	gt.Equal(t, pe.blocks(t)[0].CreatedBy.UserID, pe.editor.User.ID)
 
 	// a no-op update produces no commit
-	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("editor")})
+	r = pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("owner")})
 	gt.Nil(t, r.Commit)
 
-	// the whole history is kept per block
 	versions := gt.R1(pe.uc.ListBlockVersions(context.Background(), pe.viewer, pe.ws, pe.paper, id, 0)).NoError(t)
-	gt.Equal(t, len(versions), 3)
-	gt.Equal(t, versions[0].Content, "editor")
-	gt.Equal(t, versions[2].Content, "v1")
+	gt.Equal(t, len(versions), 2)
+	gt.Equal(t, versions[0].Content, "owner")
+	gt.Equal(t, versions[1].Content, "v1")
+}
+
+func TestCommitRequiresBaseVersion(t *testing.T) {
+	pe := newPaperEnv(t)
+	id := pe.commit(t, pe.editor, insertOp("x", nil)).Blocks[0].ID
+	for _, op := range []usecase.Op{
+		{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("y")},
+		{Kind: usecase.OpDelete, BlockID: id},
+		{Kind: usecase.OpRestore, BlockID: id, Version: 1},
+	} {
+		_, err := pe.try(pe.editor, false, op)
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument)).Describef("op %s", op.Kind)
+	}
+	// a base newer than the block is a client bug
+	_, err := pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("y"), BaseVersion: 9})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	// moves need no base
+	pe.commit(t, pe.editor, insertOp("z", nil))
+	gt.R1(pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpMove, BlockID: id})).NoError(t)
+}
+
+func TestCommitConflicts(t *testing.T) {
+	pe := newPaperEnv(t)
+	r := pe.commit(t, pe.editor, insertOp("v1", nil), insertOp("other", nil))
+	id, other := r.Blocks[0].ID, r.Blocks[1].ID
+
+	// owner and editor both read v1; owner saves first
+	pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("owner"), BaseVersion: 1})
+
+	// the editor's save based on v1 is rejected as a whole, listing the
+	// current state; nothing is written
+	_, err := pe.try(pe.editor, false,
+		usecase.Op{Kind: usecase.OpUpdate, BlockID: other, Content: ptr("fine"), BaseVersion: 1},
+		usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("editor"), BaseVersion: 1},
+	)
+	cs := conflictsOf(t, err)
+	gt.A(t, cs).Length(1)
+	gt.Equal(t, cs[0].BlockID, id)
+	gt.Equal(t, cs[0].BaseVersion, int64(1))
+	gt.Equal(t, cs[0].Current.Content, "owner")
+	gt.Equal(t, cs[0].Current.Version, int64(2))
+	gt.Equal(t, contents(pe.blocks(t)), []string{"owner", "other"})
+
+	// forcing wins and records whose version was replaced
+	r = gt.R1(pe.try(pe.editor, true, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("editor"), BaseVersion: 1})).NoError(t)
+	ch := r.Commit.Changes[0]
+	gt.Equal(t, ch.OverwroteVersion, int64(2))
+	gt.Equal(t, ch.OverwroteBy.UserID, pe.owner.User.ID)
+	gt.Equal(t, pe.blocks(t)[0].Content, "editor")
+	// the replaced contents stay in the history
+	prev := gt.R1(pe.repo.GetBlockVersion(context.Background(), pe.ws, pe.paper, id, 2)).NoError(t)
+	gt.Equal(t, prev.Content, "owner")
+
+	// a delete based on an old version conflicts too
+	_, err = pe.try(pe.owner, false, usecase.Op{Kind: usecase.OpDelete, BlockID: id, BaseVersion: 2})
+	gt.A(t, conflictsOf(t, err)).Length(1)
+}
+
+func TestCommitMovesDoNotConflict(t *testing.T) {
+	pe := newPaperEnv(t)
+	r := pe.commit(t, pe.editor, insertOp("a", nil), insertOp("b", nil))
+	a := r.Blocks[0].ID
+
+	// someone moves a (v2) while the editor edits it based on v1
+	pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpMove, BlockID: a})
+	r = gt.R1(pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpUpdate, BlockID: a, Content: ptr("a2"), BaseVersion: 1})).NoError(t)
+	gt.Equal(t, r.Commit.Changes[0].OverwroteVersion, int64(0))
+	gt.Equal(t, contents(pe.blocks(t)), []string{"b", "a2"}) // content mine, position theirs
+
+	// several ops on one block in one commit share the same base
+	r = gt.R1(pe.try(pe.editor, false,
+		usecase.Op{Kind: usecase.OpUpdate, BlockID: a, Content: ptr("a3"), BaseVersion: 3},
+		usecase.Op{Kind: usecase.OpUpdate, BlockID: a, Content: ptr("a4"), BaseVersion: 3},
+	)).NoError(t)
+	gt.Equal(t, r.Blocks[0].Content, "a4")
+}
+
+func TestCommitOnDeletedBlocks(t *testing.T) {
+	pe := newPaperEnv(t)
+	id := pe.commit(t, pe.editor, insertOp("x", nil)).Blocks[0].ID
+	pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpDelete, BlockID: id})
+
+	// editing a block someone deleted is a conflict without current state,
+	// even with force
+	for _, force := range []bool{false, true} {
+		_, err := pe.try(pe.editor, force, usecase.Op{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("y"), BaseVersion: 1})
+		cs := conflictsOf(t, err)
+		gt.Nil(t, cs[0].Current)
+	}
+	// deleting or moving it again is a no-op
+	r := gt.R1(pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpDelete, BlockID: id, BaseVersion: 1})).NoError(t)
+	gt.Nil(t, r.Commit)
+	r = gt.R1(pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpMove, BlockID: id})).NoError(t)
+	gt.Nil(t, r.Commit)
+	// a block that never existed is a plain invalid argument
+	_, err := pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpUpdate, BlockID: model.NewBlockID(), Content: ptr("y"), BaseVersion: 1})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+}
+
+func TestCommitRestore(t *testing.T) {
+	pe := newPaperEnv(t)
+	r := pe.commit(t, pe.editor, insertOp("a", nil), insertOp("b", nil))
+	a, b := r.Blocks[0].ID, r.Blocks[1].ID
+	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: a, Content: ptr("a2")})
+	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpUpdate, BlockID: a, Type: ptr(model.BlockHeading), Content: ptr("a3")})
+
+	// restoring v1 creates v4 with v1's contents
+	r = pe.commit(t, pe.owner, usecase.Op{Kind: usecase.OpRestore, BlockID: a, Version: 1})
+	ch := r.Commit.Changes[0]
+	gt.Equal(t, ch.Kind, model.ChangeRestore)
+	gt.Equal(t, ch.FromVersion, int64(3))
+	gt.Equal(t, ch.ToVersion, int64(4))
+	gt.Equal(t, ch.RestoredVersion, int64(1))
+	got := r.Blocks[0]
+	gt.Equal(t, got.Type, model.BlockParagraph)
+	gt.Equal(t, got.Content, "a")
+
+	// restore checks the base like an update
+	_, err := pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpRestore, BlockID: a, Version: 2, BaseVersion: 3})
+	gt.A(t, conflictsOf(t, err)).Length(1)
+	_, err = pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpRestore, BlockID: a, Version: 9, BaseVersion: 4})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+
+	// a deleted block comes back at its last position with a new version
+	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpDelete, BlockID: b})
+	gt.Equal(t, contents(pe.blocks(t)), []string{"a"})
+	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpRestore, BlockID: b, Version: 1})
+	gt.Equal(t, r.Blocks[0].Version, int64(2))
+	gt.Equal(t, contents(pe.blocks(t)), []string{"a", "b"})
+	versions := gt.R1(pe.uc.ListBlockVersions(context.Background(), pe.viewer, pe.ws, pe.paper, b, 0)).NoError(t)
+	gt.A(t, versions).Length(2)
+
+	// deleted tables cannot be restored (their cells are separate blocks)
+	tbl := pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockTable), Props: &model.BlockProps{Rows: 1, Cols: 1}}).Blocks[0].ID
+	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpDelete, BlockID: tbl})
+	_, err = pe.try(pe.editor, false, usecase.Op{Kind: usecase.OpRestore, BlockID: tbl, Version: 1})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 }
 
 func TestCommitTypeChangeNormalizesProps(t *testing.T) {
@@ -155,9 +308,6 @@ func TestCommitDeleteAndMove(t *testing.T) {
 
 	pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpDelete, BlockID: a})
 	gt.Equal(t, contents(pe.blocks(t)), []string{"b", "c"})
-
-	_, err = pe.uc.Commit(context.Background(), pe.editor, pe.ws, pe.paper, usecase.CommitInput{Ops: []usecase.Op{{Kind: usecase.OpDelete, BlockID: a}}})
-	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 }
 
 func TestCommitIsAtomic(t *testing.T) {
@@ -261,7 +411,7 @@ func TestCommitPermissions(t *testing.T) {
 
 func TestCommitAgentActor(t *testing.T) {
 	pe := newPaperEnv(t)
-	agent := &model.Principal{User: pe.editor.User, Token: &model.APIToken{ID: "tok", Kind: model.TokenAgent, AgentName: "Claude", Scope: model.ScopeWrite}, HolderKey: "token:tok"}
+	agent := &model.Principal{User: pe.editor.User, Token: &model.APIToken{ID: "tok", Kind: model.TokenAgent, AgentName: "Claude", Scope: model.ScopeWrite}}
 	r := pe.commit(t, agent, insertOp("from ai", nil))
 	gt.Equal(t, r.Commit.Actor.Kind, model.ActorAgent)
 	gt.Equal(t, r.Commit.Actor.AgentName, "Claude")
@@ -332,30 +482,6 @@ func TestCommitMoveToEnd(t *testing.T) {
 	r = pe.commit(t, pe.editor, usecase.Op{Kind: usecase.OpMove, BlockID: a})
 	gt.Nil(t, r.Commit)
 	_ = b
-}
-
-func TestCommitRespectsSoftLocks(t *testing.T) {
-	pe := newPaperEnv(t)
-	ctx := context.Background()
-	r := pe.commit(t, pe.editor, insertOp("x", nil))
-	id := r.Commit.Changes[0].BlockID
-
-	gt.R1(pe.uc.AcquireLock(ctx, pe.editor, pe.ws, pe.paper, id, "tab-1")).NoError(t)
-
-	// another holder is rejected...
-	_, err := pe.uc.Commit(ctx, pe.owner, pe.ws, pe.paper, usecase.CommitInput{Ops: []usecase.Op{{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("y")}}})
-	gt.True(t, errors.Is(err, model.ErrBlockLocked))
-	// ...unless forced
-	gt.R1(pe.uc.Commit(ctx, pe.owner, pe.ws, pe.paper, usecase.CommitInput{Force: true, Ops: []usecase.Op{{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("y")}}})).NoError(t)
-	// the lock holder writes freely
-	gt.R1(pe.uc.Commit(ctx, pe.editor, pe.ws, pe.paper, usecase.CommitInput{HolderKey: "tab-1", Ops: []usecase.Op{{Kind: usecase.OpUpdate, BlockID: id, Content: ptr("z")}}})).NoError(t)
-	// same user in another tab is another holder
-	_, err = pe.uc.Commit(ctx, pe.editor, pe.ws, pe.paper, usecase.CommitInput{HolderKey: "tab-2", Ops: []usecase.Op{{Kind: usecase.OpDelete, BlockID: id}}})
-	gt.True(t, errors.Is(err, model.ErrBlockLocked))
-
-	// expired locks no longer block
-	pe.clock.Advance(31 * time.Second)
-	gt.R1(pe.uc.Commit(ctx, pe.owner, pe.ws, pe.paper, usecase.CommitInput{Ops: []usecase.Op{{Kind: usecase.OpDelete, BlockID: id}}})).NoError(t)
 }
 
 func TestCommitContentBudget(t *testing.T) {

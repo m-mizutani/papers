@@ -32,7 +32,6 @@ type paperData struct {
 	blocks   map[model.BlockID]*model.Block
 	versions map[model.BlockID][]*model.Block
 	commits  []*model.Commit
-	locks    map[model.BlockID]*model.BlockLock
 	// search holds the search entries of the paper keyed by block ID; the
 	// title entry is under the empty block ID.
 	search map[model.BlockID]*model.SearchEntry

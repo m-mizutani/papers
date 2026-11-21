@@ -3,7 +3,7 @@ package config
 import "time"
 
 func NewServerForTest(baseURL string) *Server {
-	return &Server{baseURL: baseURL, lockTTL: time.Second, workspaceCreation: "everyone", maxOpsPerCommit: 1, paperTouch: time.Minute}
+	return &Server{baseURL: baseURL, workspaceCreation: "everyone", maxOpsPerCommit: 1, paperTouch: time.Minute}
 }
 
 func NewAuthForTest(clientID, secret string, noAuthn bool, domains []string) *Auth {

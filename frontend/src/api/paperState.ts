@@ -1,4 +1,4 @@
-import type { Block, BlockLock, Paper } from './types'
+import type { Block, Paper } from './types'
 
 // Client-side model of an open paper. Changes arrive as resulting states
 // (from a commit response or the change feed) and are applied
@@ -7,15 +7,10 @@ import type { Block, BlockLock, Paper } from './types'
 export interface PaperState {
   paper: Paper
   blocks: Map<string, Block>
-  locks: Map<string, BlockLock>
 }
 
-export function initState(paper: Paper, blocks: Block[], locks: BlockLock[]): PaperState {
-  return {
-    paper,
-    blocks: new Map(blocks.map((b) => [b.id, b])),
-    locks: new Map(locks.map((l) => [l.block_id, l])),
-  }
+export function initState(paper: Paper, blocks: Block[]): PaperState {
+  return { paper, blocks: new Map(blocks.map((b) => [b.id, b])) }
 }
 
 /** Applies block states and deletions. Returns the same object if nothing changed. */
@@ -37,20 +32,6 @@ export function applyPaper(state: PaperState, paper: Paper): PaperState {
   return { ...state, paper }
 }
 
-export function applyLock(state: PaperState, lock: BlockLock): PaperState {
-  const locks = new Map(state.locks)
-  locks.set(lock.block_id, lock)
-  return { ...state, locks }
-}
-
-export function applyUnlock(state: PaperState, blockId: string, holderKey: string): PaperState {
-  const cur = state.locks.get(blockId)
-  if (!cur || cur.holder_key !== holderKey) return state
-  const locks = new Map(state.locks)
-  locks.delete(blockId)
-  return { ...state, locks }
-}
-
 function byOrder(a: Block, b: Block): number {
   if (a.order !== b.order) return a.order < b.order ? -1 : 1
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
@@ -66,13 +47,6 @@ export function cellsOf(state: PaperState, tableId: string): Map<string, Block> 
     if (b.parent_id === tableId) out.set(`${b.props.row ?? 0}:${b.props.col ?? 0}`, b)
   }
   return out
-}
-
-/** Returns the lock on a block if it is active and held by someone else. */
-export function foreignLock(state: PaperState, blockId: string, myKey: string, now: number): BlockLock | undefined {
-  const l = state.locks.get(blockId)
-  if (!l || l.holder_key === myKey) return undefined
-  return Date.parse(l.expires_at) > now ? l : undefined
 }
 
 /** Numbering for consecutive numbered list items at the same indent. */

@@ -41,7 +41,7 @@ func newEnv(t *testing.T) *env {
 	repo := memory.New(memory.WithEventBuffer(64))
 	c := &clock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	uc, err := usecase.New(repo, usecase.Config{
-		LockTTL: 30 * time.Second, WorkspaceCreation: usecase.WorkspaceCreationEveryone, MaxOpsPerCommit: 200, PaperTouchInterval: time.Minute,
+		WorkspaceCreation: usecase.WorkspaceCreationEveryone, MaxOpsPerCommit: 200, PaperTouchInterval: time.Minute,
 	}, usecase.WithClock(c.Now))
 	gt.NoError(t, err)
 	return &env{repo: repo, uc: uc, clock: c}
@@ -51,7 +51,7 @@ func (e *env) user(t *testing.T, name string) *model.Principal {
 	t.Helper()
 	u := &model.User{ID: model.NewUserID(), Email: name + "@example.com", Name: name}
 	gt.NoError(t, e.repo.PutUser(context.Background(), u))
-	return &model.Principal{User: u, HolderKey: "conn-" + name}
+	return &model.Principal{User: u}
 }
 
 func (e *env) workspace(t *testing.T, owner *model.Principal, bindings ...model.RoleBinding) model.WorkspaceID {
@@ -73,14 +73,12 @@ func ptr[T any](v T) *T { return &v }
 
 func TestNewValidatesConfig(t *testing.T) {
 	repo := memory.New()
-	_, err := usecase.New(repo, usecase.Config{LockTTL: 0, WorkspaceCreation: usecase.WorkspaceCreationEveryone, MaxOpsPerCommit: 1})
+	_, err := usecase.New(repo, usecase.Config{WorkspaceCreation: "x", MaxOpsPerCommit: 1})
 	gt.Error(t, err)
-	_, err = usecase.New(repo, usecase.Config{LockTTL: time.Second, WorkspaceCreation: "x", MaxOpsPerCommit: 1})
+	_, err = usecase.New(repo, usecase.Config{WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 0})
 	gt.Error(t, err)
-	_, err = usecase.New(repo, usecase.Config{LockTTL: time.Second, WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 0})
+	_, err = usecase.New(repo, usecase.Config{WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 1, PaperTouchInterval: -1})
 	gt.Error(t, err)
-	_, err = usecase.New(repo, usecase.Config{LockTTL: time.Second, WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 1, PaperTouchInterval: -1})
-	gt.Error(t, err)
-	_, err = usecase.New(nil, usecase.Config{LockTTL: time.Second, WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 1})
+	_, err = usecase.New(nil, usecase.Config{WorkspaceCreation: usecase.WorkspaceCreationAdmin, MaxOpsPerCommit: 1})
 	gt.Error(t, err)
 }

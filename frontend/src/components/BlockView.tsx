@@ -1,6 +1,5 @@
-import type { ReactNode } from 'react'
-import type { Block, BlockProps, BlockType, Op } from '../api/types'
-import { actorLabel, cellsOf, foreignLock, type PaperState } from '../api/paperState'
+import type { Block, BlockProps, BlockType, Conflict, Op } from '../api/types'
+import { actorLabel, cellsOf, type PaperState } from '../api/paperState'
 import { useTranslation } from '../i18n'
 import { renderLines, safeHref } from '../utils/inline'
 import { Editor } from './Editor'
@@ -13,11 +12,23 @@ export interface EditingState {
   draft: string
   type: BlockType
   props: BlockProps
-  forced: boolean
+  /** The block version the edit is based on; sent as base_version. */
+  base: number
+  /** The block's contents at that version, to tell whether the draft changed. */
+  orig: { content: string; type: BlockType; props: BlockProps }
+}
+
+/** A commit the server rejected because blocks changed since their base. */
+export interface ConflictState {
+  ops: Op[]
+  message: string
+  conflicts: Conflict[]
+  /** The draft of the block being edited when the conflict happened. */
+  draft?: string
 }
 
 export interface BlockActions {
-  startEdit: (b: Block, force?: boolean) => void
+  startEdit: (b: Block) => void
   setDraft: (text: string) => void
   setDraftProps: (props: BlockProps) => void
   finishEdit: () => void
@@ -25,14 +36,14 @@ export interface BlockActions {
   removeEmpty: () => void
   run: (ops: Op[], message?: string) => Promise<boolean>
   move: (b: Block, dir: -1 | 1) => void
+  resolveConflict: (choice: 'mine' | 'theirs' | 'continue') => void
 }
 
 export interface BlockContext {
   state: PaperState
-  myKey: string
   canEdit: boolean
-  now: number
   editing: EditingState | null
+  conflict: ConflictState | null
   recent: Set<string>
   numbers: Map<string, number>
   actions: BlockActions
@@ -220,11 +231,9 @@ function TableBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
                 const cell = cells.get(`${r}:${c}`)
                 if (!cell) return <td key={c} />
                 const editing = ctx.editing?.id === cell.id
-                const held = foreignLock(ctx.state, cell.id, ctx.myKey, ctx.now)
                 return (
-                  <td key={c} onClick={() => !editing && ctx.canEdit && ctx.actions.startEdit(cell, false)}>
-                    {held && <span className="held-badge">{t('editedBy', { name: actorLabel(held.holder) })}</span>}
-                    {editing ? <EditBody block={cell} ctx={ctx} /> : <div className={`cell${held ? ' held' : ''}`}>{renderLines(cell.content)}</div>}
+                  <td key={c} onClick={() => !editing && ctx.canEdit && ctx.actions.startEdit(cell)}>
+                    {editing ? <EditState block={cell} ctx={ctx} /> : <div className="cell">{renderLines(cell.content)}</div>}
                   </td>
                 )
               })}
@@ -264,54 +273,108 @@ function Tools({ block, ctx }: { block: Block; ctx: BlockContext }) {
       )}
       <button type="button" className="tool" title={t('moveUp')} aria-label={t('moveUp')} onClick={() => ctx.actions.move(block, -1)}>↑</button>
       <button type="button" className="tool" title={t('moveDown')} aria-label={t('moveDown')} onClick={() => ctx.actions.move(block, 1)}>↓</button>
-      <button type="button" className="tool" title={t('deleteBlock')} aria-label={t('deleteBlock')} onClick={() => void ctx.actions.run([{ op: 'delete', block_id: block.id }])}>×</button>
+      <button type="button" className="tool" title={t('deleteBlock')} aria-label={t('deleteBlock')} onClick={() => void ctx.actions.run([{ op: 'delete', block_id: block.id, base_version: block.version }])}>×</button>
     </div>
+  )
+}
+
+/**
+ * The choice offered when a save was rejected because someone changed the
+ * block first: their version next to mine, and what to keep.
+ */
+export function ConflictBox({ conflict, ctx }: { conflict: ConflictState; ctx: BlockContext }) {
+  const { t } = useTranslation()
+  const editingId = ctx.editing?.id
+  const hit = conflict.conflicts.find((c) => c.block_id === editingId) ?? conflict.conflicts[0]
+  if (!hit) return null
+  const theirs = hit.current
+  const mine = hit.block_id === editingId ? ctx.editing?.draft : conflict.draft
+  const deleted = !theirs
+  const title = deleted
+    ? t('conflictDeleted')
+    : mine === undefined
+      ? t('conflictOther')
+      : t('conflictTitle', { name: actorLabel(theirs.updated_by) })
+  // Keep focus in the editor: a blur would try to save again.
+  const keepFocus = (e: { preventDefault: () => void; stopPropagation: () => void }) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  return (
+    <div className="conflict" role="alert" onMouseDown={keepFocus} onClick={(e) => e.stopPropagation()}>
+      <p className="conflict-title">{title}</p>
+      {(theirs || mine !== undefined) && (
+        <div className="conflict-compare">
+          {theirs && (
+            <div>
+              <div className="conflict-label">{t('conflictTheirs')} · v{theirs.version}</div>
+              <div className="conflict-text">{theirs.content || '—'}</div>
+            </div>
+          )}
+          {mine !== undefined && (
+            <div>
+              <div className="conflict-label">{t('conflictMine')}</div>
+              <div className="conflict-text">{mine || '—'}</div>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="conflict-actions">
+        <button type="button" className="btn btn-primary" onClick={() => ctx.actions.resolveConflict('mine')}>
+          {deleted ? t('conflictRestore') : t('conflictOverwrite')}
+        </button>
+        <button type="button" className="btn" onClick={() => ctx.actions.resolveConflict('theirs')}>
+          {deleted || mine === undefined ? t('conflictDiscard') : t('conflictKeepTheirs')}
+        </button>
+        {!deleted && hit.block_id === editingId && (
+          <button type="button" className="btn btn-quiet" onClick={() => ctx.actions.resolveConflict('continue')}>{t('conflictContinue')}</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The editor of a block plus what happened to the block meanwhile. */
+function EditState({ block, ctx }: { block: Block; ctx: BlockContext }) {
+  const { t } = useTranslation()
+  const ed = ctx.editing as EditingState
+  const conflict = ctx.conflict?.conflicts.some((c) => c.block_id === block.id) ? ctx.conflict : null
+  return (
+    <>
+      {!conflict && block.version > ed.base && (
+        <div className="updated-note" role="status">{t('updatedWhileEditing', { name: actorLabel(block.updated_by) })}</div>
+      )}
+      <EditBody block={block} ctx={ctx} />
+      {conflict && <ConflictBox conflict={conflict} ctx={ctx} />}
+    </>
   )
 }
 
 export function BlockView({ block, ctx }: { block: Block; ctx: BlockContext }) {
   const { t } = useTranslation()
   const editing = ctx.editing?.id === block.id
-  const held = foreignLock(ctx.state, block.id, ctx.myKey, ctx.now)
   const human = HUMAN_EDITABLE.has(block.type)
   const byAgent = block.updated_by.kind === 'agent'
 
   const classes = ['block']
   if (byAgent) classes.push('by-agent')
   if (editing) classes.push('editing')
-  else if (held) classes.push('held')
   if (ctx.recent.has(block.id)) classes.push('recent')
 
   // Tables edit per cell; dividers and rich blocks have no text editor.
   const textEditable = ctx.canEdit && human && block.type !== 'table' && block.type !== 'divider'
-
-  let badge: ReactNode = null
-  if (held && !editing) {
-    badge = (
-      <span className={`held-badge${held.holder.kind === 'agent' ? ' agent' : ''}`}>
-        {t('editedBy', { name: actorLabel(held.holder) })}
-      </span>
-    )
-  }
 
   return (
     <div
       className={classes.join(' ')}
       data-block-id={block.id}
       onClick={() => {
-        if (!editing && textEditable && !held) ctx.actions.startEdit(block, false)
+        if (!editing && textEditable) ctx.actions.startEdit(block)
       }}
     >
-      {badge}
-      {editing ? <EditBody block={block} ctx={ctx} /> : <Body block={block} ctx={ctx} />}
-      {held && !editing && textEditable && (
-        <button type="button" className="btn btn-quiet" onClick={(e) => { e.stopPropagation(); ctx.actions.startEdit(block, true) }}>
-          {t('editAnyway')}
-        </button>
-      )}
+      {editing ? <EditState block={block} ctx={ctx} /> : <Body block={block} ctx={ctx} />}
       {!human && <div className="ai-note">{t('aiOnlyBlock')}</div>}
-      {ctx.canEdit && !editing && !held && <Tools block={block} ctx={ctx} />}
+      {ctx.canEdit && !editing && <Tools block={block} ctx={ctx} />}
     </div>
   )
 }
-

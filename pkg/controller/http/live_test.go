@@ -16,14 +16,10 @@ import (
 )
 
 type liveMsg struct {
-	Type         string           `json:"type"`
-	ConnectionID string           `json:"connection_id"`
-	LockTTLMs    int64            `json:"lock_ttl_ms"`
-	BlockID      model.BlockID    `json:"block_id"`
-	OK           *bool            `json:"ok"`
-	Lock         *model.BlockLock `json:"lock"`
-	Event        *model.Event     `json:"event"`
-	Reason       string           `json:"reason"`
+	Type   string       `json:"type"`
+	Event  *model.Event `json:"event"`
+	Error  string       `json:"error"`
+	Reason string       `json:"reason"`
 }
 
 func dial(t *testing.T, ts *testServer, c *client, path string) *websocket.Conn {
@@ -76,42 +72,24 @@ func TestLiveConnection(t *testing.T) {
 	base := "/api/v1/workspaces/" + string(ws) + "/papers/" + string(paper)
 	var view paperViewResp
 	alice.expect("GET", base, nil, http.StatusOK, &view)
-	block := view.Blocks[0].ID
+	block := view.Blocks[0]
 
 	ac := dial(t, ts, alice, base+"/live")
-	hello := read(t, ac, "hello")
-	gt.True(t, strings.HasPrefix(hello.ConnectionID, "conn:"))
-	gt.Equal(t, hello.LockTTLMs, int64(30000))
-
+	read(t, ac, "hello")
 	bc := dial(t, ts, bob, base+"/live")
-	bobHello := read(t, bc, "hello")
-	gt.NotEqual(t, bobHello.ConnectionID, hello.ConnectionID)
+	read(t, bc, "hello")
 
-	// alice locks; bob sees the lock and cannot take it
-	write(t, ac, map[string]any{"type": "lock", "block_id": block})
-	res := read(t, ac, "lock_result")
-	gt.True(t, *res.OK)
-	ev := readEvent(t, bc, model.EventLock)
-	gt.Equal(t, ev.Lock.BlockID, block)
-	gt.Equal(t, ev.Lock.Holder.Name, "alice")
-
-	write(t, bc, map[string]any{"type": "lock", "block_id": block})
-	res = read(t, bc, "lock_result")
-	gt.False(t, *res.OK)
-	gt.Equal(t, res.Lock.HolderKey, hello.ConnectionID)
-
-	// alice commits with her connection id; bob receives the commit
-	alice.expect("POST", base+"/commits", map[string]any{"connection_id": hello.ConnectionID, "ops": []map[string]any{{"op": "update", "block_id": block, "content": "live!"}}}, http.StatusOK, nil)
-	ev = readEvent(t, bc, model.EventBlockPut)
-	gt.Equal(t, ev.Block.ID, block)
+	// alice commits; bob receives the resulting block
+	alice.expect("POST", base+"/commits", map[string]any{"ops": []map[string]any{{"op": "update", "block_id": block.ID, "content": "live!", "base_version": block.Version}}}, http.StatusOK, nil)
+	ev := readEvent(t, bc, model.EventBlockPut)
+	gt.Equal(t, ev.Block.ID, block.ID)
 	gt.Equal(t, ev.Block.Content, "live!")
+	gt.Equal(t, ev.Block.Version, block.Version+1)
 
-	write(t, ac, map[string]any{"type": "heartbeat"})
-
-	// disconnecting releases alice's locks
+	// the feed takes no messages from clients
+	write(t, ac, map[string]any{"type": "lock", "block_id": block.ID})
+	gt.NotEqual(t, read(t, ac, "error").Error, "")
 	gt.NoError(t, ac.Close(websocket.StatusNormalClosure, "bye"))
-	ev = readEvent(t, bc, model.EventUnlock)
-	gt.Equal(t, ev.BlockID, block)
 
 	// revoking access closes bob's connection
 	alice.expect("PUT", base+"/access", map[string]any{"restricted": true}, http.StatusOK, nil)

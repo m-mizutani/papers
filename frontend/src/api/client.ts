@@ -1,15 +1,16 @@
-import type { ApiToken, Block, BlockLock, Commit, CommitResult, Group, Me, Op, Paper, PaperAccess, PaperView, RoleBinding, User, Workspace } from './types'
+import type { ApiToken, Block, Commit, CommitResult, Conflict, Group, Me, Op, Paper, PaperAccess, PaperView, RoleBinding, User, Workspace } from './types'
 
 export class ApiError extends Error {
   status: number
   code: string
-  lock?: BlockLock
+  /** Set for 409 "conflict": the ops based on outdated versions. */
+  conflicts: Conflict[]
 
-  constructor(status: number, code: string, message: string, lock?: BlockLock) {
+  constructor(status: number, code: string, message: string, conflicts: Conflict[] = []) {
     super(message)
     this.status = status
     this.code = code
-    this.lock = lock
+    this.conflicts = conflicts
   }
 }
 
@@ -27,18 +28,18 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok) {
     let code = 'error'
     let message = text
-    let lock: BlockLock | undefined
+    let conflicts: Conflict[] = []
     try {
-      const parsed = JSON.parse(text) as { error?: { code: string; message: string; lock?: BlockLock } }
+      const parsed = JSON.parse(text) as { error?: { code: string; message: string; conflicts?: Conflict[] } }
       if (parsed.error) {
         code = parsed.error.code
         message = parsed.error.message
-        lock = parsed.error.lock
+        conflicts = parsed.error.conflicts ?? []
       }
     } catch {
       // keep the raw body as the message
     }
-    throw new ApiError(res.status, code, message, lock)
+    throw new ApiError(res.status, code, message, conflicts)
   }
   const type = res.headers.get('Content-Type') ?? ''
   return (type.includes('application/json') ? JSON.parse(text) : text) as T
@@ -60,7 +61,7 @@ export const api = {
     request<Workspace>('PATCH', wsPath(ws), patch),
 
   listPapers: (ws: string) => request<{ papers: Paper[] }>('GET', `${wsPath(ws)}/papers`).then((r) => r.papers),
-  createPaper: (ws: string, title: string) => request<PaperView>('POST', `${wsPath(ws)}/papers`, { title, markdown: '', restricted: false, connection_id: '' }),
+  createPaper: (ws: string, title: string) => request<PaperView>('POST', `${wsPath(ws)}/papers`, { title, markdown: '', restricted: false }),
   search: (ws: string, q: string) =>
     request<{ hits: { paper: Paper; block_id?: string; snippet: string }[] }>('GET', `${wsPath(ws)}/search?q=${encodeURIComponent(q)}`).then((r) => r.hits),
 
@@ -71,12 +72,11 @@ export const api = {
     request<{ commits: Commit[] }>('GET', `${paperPath(ws, paper)}/commits?limit=50${before ? `&before=${encodeURIComponent(before)}` : ''}`).then((r) => r.commits),
   blockVersions: (ws: string, paper: string, block: string) =>
     request<{ versions: Block[] }>('GET', `${paperPath(ws, paper)}/blocks/${encodeURIComponent(block)}/versions?limit=50`).then((r) => r.versions),
-  commit: (ws: string, paper: string, ops: Op[], opts: { message?: string; force?: boolean; connectionId?: string } = {}) =>
+  commit: (ws: string, paper: string, ops: Op[], opts: { message?: string; force?: boolean } = {}) =>
     request<CommitResult>('POST', `${paperPath(ws, paper)}/commits`, {
       ops,
       message: opts.message ?? '',
       force: opts.force ?? false,
-      connection_id: opts.connectionId ?? '',
     }),
   markdownURL: (ws: string, paper: string) => `${paperPath(ws, paper)}/markdown`,
   liveURL: (ws: string, paper: string) => {
