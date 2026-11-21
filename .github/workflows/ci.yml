@@ -26,17 +26,13 @@ jobs:
           go mod tidy
           if ! git diff --quiet -- go.mod go.sum; then
             git diff -- go.mod go.sum
-            mkdir -p tidy && cp go.mod go.sum tidy/
-            echo "::error::go.mod or go.sum is not tidy; run go mod tidy (the tidy files are in the tidy-go-files artifact)"
+            # the tidy files, for copying from the log
+            for f in go.mod go.sum; do
+              echo "----- BEGIN $f -----"; cat "$f"; echo "----- END $f -----"
+            done
+            echo "::error::go.mod or go.sum is not tidy; run go mod tidy"
             exit 1
           fi
-      - name: Upload tidy go.mod and go.sum
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tidy-go-files
-          path: tidy/
-          if-no-files-found: ignore
       - run: go vet ./...
       - run: go test -race ./...
 
