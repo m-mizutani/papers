@@ -13,48 +13,6 @@ import (
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
-// subtree returns root and every paper under it, read in tx. Children are
-// found with the parent index and re-read in the transaction; a paper whose
-// ParentID changed meanwhile is not followed.
-func (u *UseCases) subtree(ctx context.Context, tx interfaces.Tx, root *model.Paper) ([]*model.Paper, error) {
-	out := []*model.Paper{root.Clone()}
-	level := []*model.Paper{root}
-	for depth := 0; len(level) > 0; depth++ {
-		if depth >= model.MaxTreeDepth {
-			return nil, goerr.Wrap(model.ErrInvalidArgument, "the tree is deeper than the safety limit", goerr.V("max", model.MaxTreeDepth))
-		}
-		var next []*model.Paper
-		for _, parent := range level {
-			kids, err := u.repo.ListChildren(ctx, root.WorkspaceID, parent.ID)
-			if err != nil {
-				return nil, goerr.Wrap(err, "failed to list children", goerr.V("paper_id", parent.ID))
-			}
-			if len(kids) == 0 {
-				continue
-			}
-			ids := make([]model.PaperID, len(kids))
-			for i, k := range kids {
-				ids[i] = k.ID
-			}
-			fresh, err := tx.GetPapers(ids)
-			if err != nil {
-				return nil, goerr.Wrap(err, "failed to read children")
-			}
-			for _, k := range fresh {
-				if k.ParentID == parent.ID {
-					next = append(next, k)
-				}
-			}
-		}
-		out = append(out, next...)
-		if len(out) > MaxSubtree {
-			return nil, goerr.Wrap(model.ErrInvalidArgument, "too many papers under this one for one operation; work on smaller parts", goerr.V("max", MaxSubtree))
-		}
-		level = next
-	}
-	return out, nil
-}
-
 // paperBlockOf finds the paper block of child in parent's body.
 func paperBlockOf(tx interfaces.Tx, parent, child model.PaperID) (*model.Block, error) {
 	blocks, err := tx.Children(parent, "")
@@ -229,6 +187,9 @@ func (u *UseCases) parentFor(ctx context.Context, p *model.Principal, ws model.W
 	if parent.IsPrivate() || parent.IsTrashed() {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "the new parent must be a public paper that is not in the trash")
 	}
+	if parent.IsBusy() {
+		return nil, busy(parent)
+	}
 	return parent, nil
 }
 
@@ -273,6 +234,11 @@ func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.W
 		np, err := tx.GetPaper(parent.ID)
 		if err != nil {
 			return goerr.Wrap(err, "failed to get new parent")
+		}
+		for _, q := range []*model.Paper{cur, np} {
+			if q.IsBusy() {
+				return busy(q)
+			}
 		}
 		// cycle check: the new parent must not be the paper or under it
 		at := np
@@ -386,6 +352,9 @@ func (u *UseCases) SetVisibility(ctx context.Context, p *model.Principal, ws mod
 		}
 		w.result.Paper = cur
 		result = w.result
+		if cur.IsBusy() {
+			return busy(cur)
+		}
 		if cur.Visibility == in.Visibility {
 			return nil
 		}
@@ -436,6 +405,13 @@ func (u *UseCases) setArchived(ctx context.Context, p *model.Principal, ws model
 	if err := u.checkNotHome(ctx, paper, "archived"); err != nil {
 		return nil, err
 	}
+	if subtree {
+		kind := model.JobArchive
+		if !archived {
+			kind = model.JobUnarchive
+		}
+		return u.treeJob(ctx, p, u.newJob(p, ws, kind, id, u.now()))
+	}
 	var result *BatchResult
 	err = u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
 		w := u.newTreeWriter(ctx, tx, p, u.now())
@@ -443,27 +419,18 @@ func (u *UseCases) setArchived(ctx context.Context, p *model.Principal, ws model
 		if err != nil {
 			return goerr.Wrap(err, "failed to get paper")
 		}
-		targets := []*model.Paper{cur}
-		if subtree {
-			if targets, err = u.subtree(ctx, tx, cur); err != nil {
-				return err
-			}
+		if cur.IsBusy() {
+			return busy(cur)
 		}
-		for _, q := range targets {
-			if q.IsTrashed() || !p.SeesPaper(q) || q.IsArchived() == archived {
-				continue
-			}
+		if cur.IsArchived() != archived {
 			if archived {
-				q.ArchivedAt = ptr(w.now)
+				cur.ArchivedAt = ptr(w.now)
 			} else {
-				q.ArchivedAt = nil
+				cur.ArchivedAt = nil
 			}
-			if err := w.putPaper(q); err != nil {
+			if err := w.putPaper(cur); err != nil {
 				return err
 			}
-		}
-		if q, ok := w.papers[id]; ok {
-			cur = q
 		}
 		w.result.Paper = cur
 		result = w.result
@@ -475,8 +442,41 @@ func (u *UseCases) setArchived(ctx context.Context, p *model.Principal, ws model
 	return result, nil
 }
 
+// treeJob runs a job over a paper's subtree and turns it into the result
+// of the request: the paper as it is now and the job. A job that failed
+// inline is the request's error.
+func (u *UseCases) treeJob(ctx context.Context, p *model.Principal, j *model.Job) (*BatchResult, error) {
+	j, err := u.startJob(ctx, j)
+	if err != nil {
+		return nil, err
+	}
+	if j.State == model.JobFailed {
+		return nil, JobError(j)
+	}
+	return u.jobResult(ctx, j)
+}
+
+// jobResult reads the job's paper for a response.
+func (u *UseCases) jobResult(ctx context.Context, j *model.Job) (*BatchResult, error) {
+	res := &BatchResult{Refs: map[string]string{}, Jobs: []*model.Job{j}}
+	ws, id := j.WorkspaceID, j.PaperID
+	if j.Kind == model.JobMove && j.State == model.JobDone && j.Result != nil {
+		ws, id, res.Forward = j.Target.WorkspaceID, j.Result.CopyID, j.Result.Forward
+	}
+	paper, err := u.repo.GetPaper(ctx, ws, id)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to read the job's paper", goerr.V("paper_id", id))
+	}
+	res.Paper = paper
+	if j.State == model.JobDone && j.Result != nil && j.Result.Trashed {
+		res.Trashed = []model.PaperID{j.PaperID}
+	}
+	return res, nil
+}
+
 // Trash sends a paper and everything under it to the trash. Only the
-// creator may, and only if every paper under it is theirs too (D18).
+// creator may, and only if every paper under it is theirs too (D18). It
+// runs as a background job.
 func (u *UseCases) Trash(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) (*BatchResult, error) {
 	_, paper, err := u.writablePaper(ctx, p, ws, id)
 	if err != nil {
@@ -488,46 +488,13 @@ func (u *UseCases) Trash(ctx context.Context, p *model.Principal, ws model.Works
 	if !p.Owns(paper) {
 		return nil, goerr.Wrap(model.ErrPermissionDenied, "only the creator can delete the paper; archive it instead")
 	}
-	var result *BatchResult
-	err = u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
-		w := u.newTreeWriter(ctx, tx, p, u.now())
-		cur, err := tx.GetPaper(id)
-		if err != nil {
-			return goerr.Wrap(err, "failed to get paper")
-		}
-		tree, err := u.subtree(ctx, tx, cur)
-		if err != nil {
-			return err
-		}
-		if !ownsAll(p, tree) {
-			return goerr.Wrap(model.ErrPermissionDenied, "some papers under this one belong to others; archive it instead")
-		}
-		for _, q := range tree {
-			if q.IsTrashed() {
-				continue
-			}
-			q.DeletedAt, q.DeletedWith = ptr(w.now), cur.ID
-			if err := w.putPaper(q); err != nil {
-				return err
-			}
-		}
-		if err := w.removeBlockOf(ws, cur.ParentID, cur.ID); err != nil {
-			return err
-		}
-		w.result.Paper = w.papers[cur.ID]
-		w.result.Trashed = []model.PaperID{cur.ID}
-		result = w.result
-		return w.flush()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return u.treeJob(ctx, p, u.newJob(p, ws, model.JobTrash, id, u.now()))
 }
 
 // RestoreFromTrash brings a paper back with everything that was trashed
 // together with it. It goes back under its parent, or under the nearest
-// ancestor that is not in the trash (the home if none).
+// ancestor that is not in the trash (the home if none). It runs as a
+// background job.
 func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) (*BatchResult, error) {
 	_, paper, err := u.paperFor(ctx, p, ws, id)
 	if err != nil {
@@ -536,58 +503,21 @@ func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws 
 	if !p.CanWrite() {
 		return nil, readOnly()
 	}
-	if !paper.IsTrashed() {
-		return nil, goerr.Wrap(model.ErrInvalidArgument, "the paper is not in the trash")
+	if !paper.IsTrashed() || !p.Owns(paper) {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "the paper is not in your trash")
 	}
-	home, err := u.homeID(ctx, ws)
-	if err != nil {
-		return nil, err
-	}
-	var result *BatchResult
-	err = u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
-		w := u.newTreeWriter(ctx, tx, p, u.now())
-		cur, err := tx.GetPaper(id)
-		if err != nil {
-			return goerr.Wrap(err, "failed to get paper")
-		}
-		if !cur.IsTrashed() || !p.Owns(cur) {
-			return goerr.Wrap(model.ErrInvalidArgument, "the paper is not in your trash")
-		}
-		if err := u.restoreTrashed(ctx, w, cur, home); err != nil {
-			return err
-		}
-		w.result.Paper = w.papers[cur.ID]
-		result = w.result
-		return w.flush()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	j := u.newJob(p, ws, model.JobRestore, id, u.now())
+	j.With = paper.DeletedWith
+	return u.treeJob(ctx, p, j)
 }
 
-// restoreTrashed restores root and the papers trashed with it, placing root
-// in the tree.
-func (u *UseCases) restoreTrashed(ctx context.Context, w *treeWriter, root *model.Paper, home model.PaperID) error {
-	tree, err := u.subtree(ctx, w.tx, root)
-	if err != nil {
-		return err
-	}
-	with := root.DeletedWith
-	for _, q := range tree {
-		if q.DeletedWith != with || !w.p.Owns(q) {
-			continue
-		}
-		q.DeletedAt, q.DeletedWith = nil, ""
-		if err := w.putPaper(q); err != nil {
-			return err
-		}
-	}
-	r := w.papers[root.ID]
+// placeRestored puts a restored paper back in the tree: under its parent,
+// or the nearest ancestor that is public and not in the trash (the home if
+// none).
+func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.PaperID) error {
 	if r.IsPrivate() {
 		return nil
 	}
-	// find the nearest ancestor that is usable
 	target := r.ParentID
 	for depth := 0; target != ""; depth++ {
 		anc, err := w.tx.GetPaper(target)
@@ -595,7 +525,7 @@ func (u *UseCases) restoreTrashed(ctx context.Context, w *treeWriter, root *mode
 			target = ""
 			break
 		}
-		if !anc.IsTrashed() && !anc.IsPrivate() {
+		if !anc.IsTrashed() && !anc.IsPrivate() && !anc.IsBusy() {
 			break
 		}
 		target = anc.ParentID

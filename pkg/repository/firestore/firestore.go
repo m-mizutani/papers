@@ -66,6 +66,8 @@ const (
 	colEvents      = "events"
 	colAttachments = "attachments"
 	colForwards    = "forwards"
+	colJobs        = "jobs"
+	colJobItems    = "items"
 )
 
 type Repository struct {

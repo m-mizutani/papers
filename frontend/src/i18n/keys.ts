@@ -180,6 +180,14 @@ export const keys = {
   versionsLead: 'versionsLead',
   viaApi: 'viaApi',
   workspaceNotFound: 'workspaceNotFound',
+  jobStarting: 'jobStarting',
+  jobRunning: 'jobRunning',
+  jobContinues: 'jobContinues',
+  jobFailed: 'jobFailed',
+  busy: 'busy',
+  moveDone: 'moveDone',
+  trashDone: 'trashDone',
+  restoredFromTrash: 'restoredFromTrash',
 } as const
 
 export type MsgKey = keyof typeof keys

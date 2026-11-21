@@ -19,6 +19,7 @@ type Repository interface {
 	SearchRepository
 	PinRepository
 	AttachmentRepository
+	JobRepository
 	Close() error
 }
 
@@ -68,6 +69,8 @@ type PaperRepository interface {
 	GetPapers(ctx context.Context, ws model.WorkspaceID, ids []model.PaperID) ([]*model.Paper, error)
 	// ListChildren lists the papers whose ParentID is parent.
 	ListChildren(ctx context.Context, ws model.WorkspaceID, parent model.PaperID) ([]*model.Paper, error)
+	// ListChildrenOf lists the papers whose ParentID is any of parents.
+	ListChildrenOf(ctx context.Context, ws model.WorkspaceID, parents []model.PaperID) ([]*model.Paper, error)
 	ListPrivatePapers(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error)
 	// ListTrash lists the owner's papers that are in the trash.
 	ListTrash(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error)
@@ -126,6 +129,24 @@ type Tx interface {
 
 	PutForward(f *model.Forward) error
 	AddEvent(ev *model.Event) error
+
+	GetJob(id model.JobID) (*model.Job, error)
+	PutJob(j *model.Job) error
+	GetJobItems(job model.JobID, ids []model.PaperID) ([]*model.JobItem, error)
+	PutJobItem(it *model.JobItem) error
+}
+
+// JobRepository stores background jobs and the papers each works on.
+type JobRepository interface {
+	GetJob(ctx context.Context, ws model.WorkspaceID, id model.JobID) (*model.Job, error)
+	// ListRunnableJobs lists unfinished jobs whose lease ended before t.
+	ListRunnableJobs(ctx context.Context, ws model.WorkspaceID, t time.Time, limit int) ([]*model.Job, error)
+	// ListUnexpandedJobItems lists items whose children are not collected
+	// yet, shallowest first.
+	ListUnexpandedJobItems(ctx context.Context, ws model.WorkspaceID, job model.JobID, limit int) ([]*model.JobItem, error)
+	// ListJobItemsAt lists items at the stage, shallowest first.
+	ListJobItemsAt(ctx context.Context, ws model.WorkspaceID, job model.JobID, stage, limit int) ([]*model.JobItem, error)
+	GetJobItems(ctx context.Context, ws model.WorkspaceID, job model.JobID, ids []model.PaperID) ([]*model.JobItem, error)
 }
 
 type SearchRepository interface {

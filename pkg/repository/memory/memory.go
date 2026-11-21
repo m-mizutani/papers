@@ -64,6 +64,8 @@ type Repository struct {
 	papers     map[paperKey]*paperData
 	pins       map[pinKey]map[model.PaperID]*model.Pin
 	recents    map[pinKey]*model.Recent
+	jobs       map[jobKey]*model.Job
+	jobItems   map[jobKey]map[model.PaperID]*model.JobItem
 
 	watchers    map[paperKey]map[int]chan *model.Event
 	nextWatcher int
@@ -88,6 +90,8 @@ func New(opts ...Option) *Repository {
 		papers:      map[paperKey]*paperData{},
 		pins:        map[pinKey]map[model.PaperID]*model.Pin{},
 		recents:     map[pinKey]*model.Recent{},
+		jobs:        map[jobKey]*model.Job{},
+		jobItems:    map[jobKey]map[model.PaperID]*model.JobItem{},
 		watchers:    map[paperKey]map[int]chan *model.Event{},
 		eventBuffer: 256,
 	}

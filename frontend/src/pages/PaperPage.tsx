@@ -14,6 +14,7 @@ import { detectShortcut } from '../components/shortcuts'
 import { useTranslation } from '../i18n'
 import { plainText } from '../markup/markup'
 import { isDemo } from '../utils/demo'
+import { errorMessage, followJobs } from '../utils/jobs'
 import { isEnter } from '../utils/keyboard'
 
 const RECENT_MS = 4000
@@ -254,6 +255,19 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
       }
       showResult(res)
       refreshStatus()
+      if (res.jobs?.length && (res.jobs ?? []).some((j) => j.state === 'queued' || j.state === 'running')) {
+        // Deleting a big child runs in the background; reread when it ends.
+        void followJobs(ws, res, setNotice, t).then((jobs) => {
+          showResult({
+            ...res,
+            trashed: jobs.filter((j) => j.kind === 'drop' && j.result?.trashed).map((j) => j.paper_id),
+            archived: jobs.filter((j) => j.kind === 'drop' && j.result?.archived).map((j) => j.paper_id),
+            editing: [], not_restored: [],
+          })
+          onChanged()
+          void load()
+        }, (e: unknown) => setNotice(errorMessage(e, t)))
+      }
       return res
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') {
@@ -268,12 +282,14 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
           setEditing(null)
         }
         receive(current, gone, undefined, false)
+      } else if (e instanceof ApiError && e.code === 'busy') {
+        setNotice(t('busy'))
       } else {
         setNotice(t('saveFailed', { message: e instanceof Error ? e.message : String(e) }))
       }
       return null
     }
-  }, [ws, paperId, receive, commit, onChanged, showResult, refreshStatus, t])
+  }, [ws, paperId, receive, commit, onChanged, showResult, refreshStatus, load, t])
 
   const runOk = useCallback(async (ops: Op[]) => (await run(ops)) !== null, [run])
 
@@ -602,10 +618,24 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
     try {
       const res = await api.restoreVersion(ws, paperId, n)
       showResult(res)
+      await followJobs(ws, res, setNotice, t)
+      onChanged()
       await load()
       navigate(`/ws/${ws}/p/${paperId}`)
     } catch (e) {
       setNotice(t('error', { message: e instanceof Error ? e.message : String(e) }))
+    }
+  }
+
+  const restoreFromTrash = async () => {
+    try {
+      const res = await api.restorePaper(ws, paperId)
+      await followJobs(ws, res, setNotice, t)
+      setNotice(t('restoredFromTrash'))
+      onChanged()
+      await load()
+    } catch (e) {
+      setNotice(errorMessage(e, t))
     }
   }
 
@@ -673,7 +703,7 @@ export function PaperPage({ ws, paperId, version, me, onChanged }: {
       {paper.deleted_at && (
         <div className="notice" role="status">
           <span>{t('inTrash')}</span>
-          {owner && <button type="button" className="btn" onClick={() => void api.restorePaper(ws, paperId).then(() => { onChanged(); void load() })}>{t('restoreFromTrash')}</button>}
+          {owner && <button type="button" className="btn" onClick={() => void restoreFromTrash()}>{t('restoreFromTrash')}</button>}
         </div>
       )}
       {isDemo && canEdit && <div className="notice demo-hint">{t('demoHint')}</div>}

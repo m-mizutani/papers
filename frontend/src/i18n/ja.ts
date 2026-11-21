@@ -182,4 +182,12 @@ export const ja: Record<MsgKey, string> = {
   versionsLead: '版は人か AI が明示的に保存したものです。自動では保存されません。',
   viaApi: 'API 経由',
   workspaceNotFound: 'このワークスペースは存在しないか、利用できません。',
+  jobStarting: '配下のペーパーを集めています…',
+  jobRunning: '配下のペーパーを処理しています（{done} / {total}）…',
+  jobContinues: '時間がかかっています。このページを離れても処理は続きます。',
+  jobFailed: '裏の処理が失敗しました: {message}',
+  busy: 'このペーパーは別のワークスペースへ移動中です。移動が終わってからもう一度試してください。',
+  moveDone: '別のワークスペースへ移しました。',
+  trashDone: 'ゴミ箱に移しました。',
+  restoredFromTrash: 'ゴミ箱から戻しました。',
 }

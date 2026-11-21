@@ -55,6 +55,9 @@ type Paper struct {
 	// deletion took this one along (itself when deleted directly).
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 	DeletedWith PaperID    `json:"deleted_with,omitempty"`
+	// JobID is the move job working on the paper. While it is set only that
+	// job writes the paper and its blocks, and search leaves the paper out.
+	JobID JobID `json:"job_id,omitempty"`
 
 	CreatedBy Actor     `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
@@ -136,6 +139,7 @@ func (p *Paper) Status() PaperStatus {
 func (p *Paper) IsTrashed() bool  { return p.DeletedAt != nil }
 func (p *Paper) IsArchived() bool { return p.ArchivedAt != nil }
 func (p *Paper) IsPrivate() bool  { return p.Visibility == VisibilityPrivate }
+func (p *Paper) IsBusy() bool     { return p.JobID != "" }
 
 // Owner is the user the paper belongs to: the creator, or the user an agent
 // acted for.

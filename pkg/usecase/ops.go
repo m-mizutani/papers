@@ -159,6 +159,19 @@ type BatchResult struct {
 	Version     *model.Version `json:"version,omitempty"`
 	NotRestored []NotRestored  `json:"not_restored,omitempty"`
 	Forward     *model.Forward `json:"forward,omitempty"`
+	// Jobs are the background jobs the request started. A job that has not
+	// finished goes on after the response.
+	Jobs []*model.Job `json:"jobs,omitempty"`
+}
+
+// Pending reports whether a job of the result is still running.
+func (r *BatchResult) Pending() bool {
+	for _, j := range r.Jobs {
+		if !j.State.Finished() {
+			return true
+		}
+	}
+	return false
 }
 
 type applier struct {
@@ -187,6 +200,8 @@ type applier struct {
 	titleChanged bool
 	// others are other papers this batch writes (children).
 	others map[model.PaperID]*model.Paper
+	// jobs are background jobs the batch stores; they run after it.
+	jobs []*model.Job
 
 	bytes      map[model.BlockID]int
 	totalBytes int
@@ -675,58 +690,42 @@ func (a *applier) delete(op Op) error {
 		}
 	}
 	if b.Type == model.BlockPaper {
-		trashed, err := a.dropChild(b.Props.PaperID)
+		gone, err := a.dropChild(b)
 		if err != nil {
 			return err
 		}
-		if !trashed {
-			return nil // archived instead; the block stays
+		if !gone {
+			return nil // a drop job removes the block or archives the child
 		}
 	}
 	return a.remove(b)
 }
 
-// dropChild handles deleting the paper block of a child: the child's
-// creator sends it to the trash with everything under it; anyone else
-// archives it instead (D18). It reports whether the block may go.
-func (a *applier) dropChild(id model.PaperID) (bool, error) {
-	child, err := a.tx.GetPaper(id)
+// dropChild handles deleting the paper block of a child. A block whose
+// child is gone or lives elsewhere is simply removed (true). Otherwise a
+// drop job takes over (false): it sends the child to the trash with
+// everything under it and removes the block when all of it is the caller's,
+// and archives the child with everything under it otherwise.
+func (a *applier) dropChild(b *model.Block) (bool, error) {
+	child, err := a.tx.GetPaper(b.Props.PaperID)
 	if errors.Is(err, model.ErrNotFound) {
 		return true, nil // a dangling block
 	}
 	if err != nil {
-		return false, goerr.Wrap(err, "failed to get child paper", goerr.V("paper_id", id))
+		return false, goerr.Wrap(err, "failed to get child paper", goerr.V("paper_id", b.Props.PaperID))
 	}
-	if child.ParentID != a.paper.ID {
+	if child.ParentID != a.paper.ID || child.IsTrashed() {
 		return true, nil // it lives elsewhere now
 	}
-	tree, err := a.u.subtree(a.ctx, a.tx, child)
-	if err != nil {
-		return false, err
+	if child.IsBusy() {
+		return false, busy(child)
 	}
-	if ownsAll(a.p, tree) {
-		for _, q := range tree {
-			if q.IsTrashed() {
-				continue
-			}
-			q.DeletedAt, q.DeletedWith = ptr(a.now), child.ID
-			if err := a.putOther(q); err != nil {
-				return false, err
-			}
-		}
-		a.result.Trashed = append(a.result.Trashed, child.ID)
-		return true, nil
+	j := a.u.newJob(a.p, a.paper.WorkspaceID, model.JobDrop, child.ID, a.now)
+	j.BlockID = b.ID
+	if err := a.tx.PutJob(j); err != nil {
+		return false, goerr.Wrap(err, "failed to store job")
 	}
-	for _, q := range tree {
-		if q.IsTrashed() || q.IsArchived() {
-			continue
-		}
-		q.ArchivedAt = ptr(a.now)
-		if err := a.putOther(q); err != nil {
-			return false, err
-		}
-	}
-	a.result.Archived = append(a.result.Archived, child.ID)
+	a.jobs = append(a.jobs, j)
 	return false, nil
 }
 
@@ -736,15 +735,6 @@ func (a *applier) putOther(q *model.Paper) error {
 	}
 	a.others[q.ID] = q
 	return nil
-}
-
-func ownsAll(p *model.Principal, papers []*model.Paper) bool {
-	for _, q := range papers {
-		if !q.IsTrashed() && !p.Owns(q) {
-			return false
-		}
-	}
-	return true
 }
 
 // move changes only the position, so it never conflicts: the last writer
@@ -1171,6 +1161,9 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 		if err != nil {
 			return goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", paperID))
 		}
+		if paper.IsBusy() {
+			return busy(paper)
+		}
 		a := &applier{
 			u: u, ctx: ctx, tx: tx, p: p, paper: paper, actor: p.Actor(), now: now, force: in.Force,
 			orig: map[model.BlockID]*model.Block{}, created: map[model.BlockID]bool{},
@@ -1192,12 +1185,35 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 			return err
 		}
 		result = a.result
+		result.Jobs = a.jobs
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	u.runBatchJobs(ctx, result)
 	return result, nil
+}
+
+// runBatchJobs runs the jobs a batch stored and reports the finished ones
+// in the result as the batch itself would have.
+func (u *UseCases) runBatchJobs(ctx context.Context, result *BatchResult) {
+	if len(result.Jobs) == 0 {
+		return
+	}
+	result.Jobs = u.runInline(ctx, result.Jobs)
+	for _, j := range result.Jobs {
+		if j.State != model.JobDone || j.Result == nil {
+			continue
+		}
+		switch {
+		case j.Kind == model.JobDrop && j.Result.Trashed:
+			result.Trashed = append(result.Trashed, j.PaperID)
+			result.Deleted = append(result.Deleted, j.BlockID)
+		case j.Kind == model.JobDrop && j.Result.Archived:
+			result.Archived = append(result.Archived, j.PaperID)
+		}
+	}
 }
 
 func (u *UseCases) applyPaperOp(ctx context.Context, p *model.Principal, ws model.WorkspaceID, paper model.PaperID, op Op) (*BatchResult, error) {

@@ -313,6 +313,8 @@ type fsTx struct {
 	snapshots map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot
 	forwards  []*model.Forward
 	events    []*model.Event
+	jobs      map[model.JobID]*model.Job
+	items     map[model.JobID]map[model.PaperID]*model.JobItem
 }
 
 func (t *fsTx) GetPaper(id model.PaperID) (*model.Paper, error) {
@@ -702,7 +704,7 @@ func (t *fsTx) flush() error {
 			return goerr.Wrap(err, "failed to stage event")
 		}
 	}
-	return nil
+	return t.flushJobs()
 }
 
 func (r *Repository) RunTx(ctx context.Context, ws model.WorkspaceID, fn func(tx interfaces.Tx) error) error {
@@ -715,6 +717,8 @@ func (r *Repository) RunTx(ctx context.Context, ws model.WorkspaceID, fn func(tx
 			papers: map[model.PaperID]*model.Paper{}, paperRead: map[model.PaperID]*model.Paper{},
 			puts: map[blockKey]*model.Block{}, deletes: map[blockKey]bool{},
 			snapshots: map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot{},
+			jobs:      map[model.JobID]*model.Job{},
+			items:     map[model.JobID]map[model.PaperID]*model.JobItem{},
 		}
 		if err := fn(t); err != nil {
 			return err

@@ -56,7 +56,7 @@ func (s IndexSpec) String() string {
 // or that range over document IDs need no index.
 var RequiredIndexes = []IndexSpec{
 	{CollectionGroup: colTokens, Fields: []IndexField{{"UserID", IndexAsc}}, Query: "ListTokens"},
-	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListChildren"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListChildren, ListChildrenOf"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"Visibility", IndexAsc}, {"CreatedBy.UserID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListPrivatePapers"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"CreatedBy.UserID", IndexAsc}, {"DeletedAt", IndexAsc}}, Query: "ListTrash"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"DeletedAt", IndexAsc}}, Query: "ListTrashedBefore"},
@@ -66,6 +66,9 @@ var RequiredIndexes = []IndexSpec{
 	{CollectionGroup: colVersions, Fields: []IndexField{{"Number", IndexDesc}}, Query: "ListVersions"},
 	{CollectionGroup: colEvents, Fields: []IndexField{{"Event.At", IndexAsc}}, Query: "ListEvents, Watch"},
 	{CollectionGroup: colAttachments, Fields: []IndexField{{"SHA256", IndexAsc}}, Query: "FindAttachmentByHash"},
+	{CollectionGroup: colJobs, Fields: []IndexField{{"State", IndexAsc}, {"LeaseUntil", IndexAsc}}, Query: "ListRunnableJobs"},
+	{CollectionGroup: colJobItems, Fields: []IndexField{{"Expanded", IndexAsc}, {"Depth", IndexAsc}}, Query: "ListUnexpandedJobItems"},
+	{CollectionGroup: colJobItems, Fields: []IndexField{{"Stage", IndexAsc}, {"Depth", IndexAsc}}, Query: "ListJobItemsAt"},
 	{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexText}}, Query: "Search"},
 }
 
@@ -73,6 +76,8 @@ var RequiredIndexes = []IndexSpec{
 var TTLFields = []struct{ CollectionGroup, Field string }{
 	{colSessions, "ExpiresAt"},
 	{colEvents, "ExpireAt"},
+	{colJobs, "ExpireAt"},
+	{colJobItems, "ExpireAt"},
 }
 
 func (s IndexSpec) proto() *adminpb.Index {

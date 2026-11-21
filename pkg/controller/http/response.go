@@ -46,6 +46,8 @@ func statusOf(err error) (int, string) {
 		return http.StatusConflict, "conflict"
 	case errors.Is(err, model.ErrAlreadyExists):
 		return http.StatusConflict, "already_exists"
+	case errors.Is(err, model.ErrBusy):
+		return http.StatusConflict, "busy"
 	case errors.Is(err, model.ErrInvalidArgument):
 		return http.StatusBadRequest, "invalid_argument"
 	default:

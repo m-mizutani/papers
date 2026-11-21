@@ -457,7 +457,7 @@ func (u *UseCases) RestoreVersion(ctx context.Context, p *model.Principal, ws mo
 				continue
 			}
 			if b.Type == model.BlockPaper {
-				gone, err := a.dropChild(b.Props.PaperID)
+				gone, err := a.dropChild(b)
 				if err != nil {
 					return err
 				}
@@ -518,11 +518,13 @@ func (u *UseCases) RestoreVersion(ctx context.Context, p *model.Principal, ws mo
 		}
 		a.result.NotRestored = append(a.result.NotRestored, w.result.NotRestored...)
 		result = a.result
+		result.Jobs = a.jobs
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	u.runBatchJobs(ctx, result)
 	return result, nil
 }
 
@@ -546,17 +548,17 @@ func (a *applier) childBack(w *treeWriter, child model.PaperID) (bool, error) {
 		w.result.NotRestored = append(w.result.NotRestored, NotRestored{PaperID: child, Reason: "trashed"})
 		return false, nil
 	}
-	tree, err := a.u.subtree(a.ctx, a.tx, q)
-	if err != nil {
+	// The child comes back here; what was trashed with it comes back in a
+	// restore job.
+	j := a.u.newJob(a.p, a.paper.WorkspaceID, model.JobRestore, q.ID, a.now)
+	j.RootDone, j.With = true, q.DeletedWith
+	q.DeletedAt, q.DeletedWith = nil, ""
+	if err := w.putPaper(q); err != nil {
 		return false, err
 	}
-	for _, d := range tree {
-		if d.DeletedWith == q.DeletedWith && a.p.Owns(d) {
-			d.DeletedAt, d.DeletedWith = nil, ""
-			if err := w.putPaper(d); err != nil {
-				return false, err
-			}
-		}
+	if err := a.tx.PutJob(j); err != nil {
+		return false, goerr.Wrap(err, "failed to store job")
 	}
+	a.jobs = append(a.jobs, j)
 	return true, nil
 }

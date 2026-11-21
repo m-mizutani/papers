@@ -348,7 +348,7 @@ func (u *UseCases) Search(ctx context.Context, p *model.Principal, ws model.Work
 	}
 	byID := map[model.PaperID]*model.Paper{}
 	for _, x := range papers {
-		if p.SeesPaper(x) && !x.IsTrashed() && (in.IncludeArchived || !x.IsArchived()) {
+		if p.SeesPaper(x) && !x.IsTrashed() && !x.IsBusy() && (in.IncludeArchived || !x.IsArchived()) {
 			byID[x.ID] = x
 		}
 	}

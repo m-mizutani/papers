@@ -71,6 +71,16 @@ func (r *Repository) ListChildren(_ context.Context, ws model.WorkspaceID, paren
 	return r.listPapers(ws, func(p *model.Paper) bool { return p.ParentID == parent && parent != "" }), nil
 }
 
+func (r *Repository) ListChildrenOf(_ context.Context, ws model.WorkspaceID, parents []model.PaperID) ([]*model.Paper, error) {
+	want := map[model.PaperID]bool{}
+	for _, id := range parents {
+		if id != "" {
+			want[id] = true
+		}
+	}
+	return r.listPapers(ws, func(p *model.Paper) bool { return want[p.ParentID] }), nil
+}
+
 func (r *Repository) ListPrivatePapers(_ context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
 	return r.listPapers(ws, func(p *model.Paper) bool {
 		return p.Visibility == model.VisibilityPrivate && p.Owner() == owner && p.DeletedAt == nil
@@ -257,6 +267,8 @@ type memTx struct {
 	snapshots []stagedSnapshot
 	forwards  []*model.Forward
 	events    []*model.Event
+	jobs      map[model.JobID]*model.Job
+	items     map[model.JobID]map[model.PaperID]*model.JobItem
 }
 
 func (t *memTx) paperExists(id model.PaperID) bool {
@@ -505,6 +517,8 @@ func (r *Repository) RunTx(_ context.Context, ws model.WorkspaceID, fn func(tx i
 		papers:  map[model.PaperID]*model.Paper{},
 		blocks:  map[model.PaperID]map[model.BlockID]*model.Block{},
 		deleted: map[model.PaperID]map[model.BlockID]bool{},
+		jobs:    map[model.JobID]*model.Job{},
+		items:   map[model.JobID]map[model.PaperID]*model.JobItem{},
 	}
 	if err := fn(t); err != nil {
 		return err
@@ -554,6 +568,18 @@ func (r *Repository) RunTx(_ context.Context, ws model.WorkspaceID, fn func(tx i
 	}
 	for _, f := range t.forwards {
 		r.forwards[paperKey{f.WorkspaceID, f.PaperID}] = clone(f)
+	}
+	for id, j := range t.jobs {
+		r.jobs[jobKey{ws, id}] = j.Clone()
+	}
+	for job, items := range t.items {
+		key := jobKey{ws, job}
+		if r.jobItems[key] == nil {
+			r.jobItems[key] = map[model.PaperID]*model.JobItem{}
+		}
+		for id, it := range items {
+			r.jobItems[key][id] = it.Clone()
+		}
 	}
 	for _, ev := range t.events {
 		key := paperKey{ws, ev.PaperID}

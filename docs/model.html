@@ -76,10 +76,10 @@ dl.fields dd{margin:0}
 <article class="sheet">
 <h1>papers モデルと概念</h1>
 <p class="lede">papers が扱うものを、言葉の意味・持つ値・守る約束・一生の流れまで一つずつ定める。コードを読まなくても、何を保存し、何が起きたら何が変わるかが分かることを目指す。</p>
-<p class="meta">2026-11-21 起草。同日、D10・D11（テキストの装飾とリッチ編集）を追加し、ワークスペースを設定ファイルで定義することを決定（hecatoncheires と同じ方式）。<a href="https://claude.ai/artifact/QQBcNy25EuKL2HprUn5mhC">コードベースの地図</a>を出発点にした設計の詳細化。同日、D1〜D18 の大半を決定し、版を「明示的に保存された写し」だけにまとめ（D15）、モデルを図（実体と関係、ペーパーの状態、保存先の配置）で表した。<a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">ペーパーの整理</a>での決定（ペーパーの入れ子・ホーム・版・移動）を反映。まだ実装は変えない（決めることが決まってから着手する）。</p>
+<p class="meta">2026-11-21 起草。同日、D10・D11（テキストの装飾とリッチ編集）を追加し、ワークスペースを設定ファイルで定義することを決定（hecatoncheires と同じ方式）。<a href="https://claude.ai/artifact/QQBcNy25EuKL2HprUn5mhC">コードベースの地図</a>を出発点にした設計の詳細化。同日、D1〜D18 の大半を決定し、版を「明示的に保存された写し」だけにまとめ（D15）、モデルを図（実体と関係、ペーパーの状態、保存先の配置）で表した。<a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">ペーパーの整理</a>での決定（ペーパーの入れ子・ホーム・版・移動）を反映。まだ実装は変えない（決めることが決まってから着手する）。2026-11-22、配下すべてに及ぶ処理とワークスペースをまたぐ移動を<a href="#job">裏の処理</a>で進めることを決定（<a href="#d-job">D19</a>）。</p>
 <p class="callout"><b>この文書を papers のモデルと概念の正本とする（2026-11-22 決定）</b>。用語・実体と関係・値・不変条件・アクセス・保存先の配置・操作・衝突の規則・版について、他の文書（<code>docs/design.html</code>、<code>docs/concurrency.html</code>、<code>docs/codebase.html</code>、<code>docs/organize.html</code>）と食い違うときは、この文書に従う。今のコードもこの文書とは違う（実装はまだ追いついていない）。</p>
 <ul class="legend ui"><li class="block human">決定済み・実装済み</li><li class="block held">決めること（選択肢と推奨つき）</li><li class="block agent">AI に関わること</li></ul>
-<nav aria-label="目次"><a href="#terms">用語</a><a href="#map">全体の関係</a><a href="#ids">ID</a><a href="#workspace">ワークスペース</a><a href="#paper">ペーパー</a><a href="#tree">木</a><a href="#block">ブロック</a><a href="#version">今の状態と版</a><a href="#commit">操作</a><a href="#conflict">衝突</a><a href="#actor">書き手と主体</a><a href="#access">アクセス</a><a href="#storage">保存先</a><a href="#derived">派生データ</a><a href="#invariants">不変条件</a><a href="#decide">決めること</a></nav>
+<nav aria-label="目次"><a href="#terms">用語</a><a href="#map">全体の関係</a><a href="#ids">ID</a><a href="#workspace">ワークスペース</a><a href="#paper">ペーパー</a><a href="#tree">木</a><a href="#job">裏の処理</a><a href="#block">ブロック</a><a href="#version">今の状態と版</a><a href="#commit">操作</a><a href="#conflict">衝突</a><a href="#actor">書き手と主体</a><a href="#access">アクセス</a><a href="#storage">保存先</a><a href="#derived">派生データ</a><a href="#invariants">不変条件</a><a href="#decide">決めること</a></nav>
 
 <section id="terms">
 <h2>用語</h2>
@@ -278,6 +278,7 @@ policy = ["policies/security.rego"]</code></pre>
 <dt>VersionNumber</dt><dd>最新の版の番号。0 なら下書き、1 以上なら正本。</dd>
 <dt>ArchivedAt</dt><dd>アーカイブした時刻。空でなければアーカイブ（版の有無によらない）。一覧・検索は既定でアーカイブを除く。</dd>
 <dt>DeletedAt / DeletedWith</dt><dd>ゴミ箱に入れた時刻と、配下ごとの削除を始めたペーパーの ID（<a href="#d-delete">D4</a>）。30 日後に本当に消す。</dd>
+<dt>JobID</dt><dd>このペーパーをワークスペースをまたいで移している<a href="#job">裏の処理</a>。空でなければ、その裏の処理だけが書ける（他の書き込みは「処理中」で断る）。移動の間は検索にも出ない（写しを途中で見せないため。元もその間だけ出ない）。</dd>
 <dt>CreatedBy</dt><dd>作成した書き手。private のペーパーを読み書きできるのは、このユーザー（AI が作ったなら代理元のユーザー）だけ。</dd>
 <dt>UpdatedAt / UpdatedBy</dt><dd><b>おおよその</b>最終更新。ペーパー本体への書き込みを減らすため、タイトル変更か、前回から 1 分以上たった書き込みのときだけ更新する。最大 1 分遅れる（<a href="#d-touch">D6</a>）。</dd>
 </dl>
@@ -309,21 +310,62 @@ policy = ["policies/security.rego"]</code></pre>
 <thead><tr><th>操作</th><th>起きること</th></tr></thead>
 <tbody>
 <tr><td>子を作る</td><td>親の本文に <code>paper</code> ブロックを挿入し、同じ操作のまとまりで子のペーパーを作る。</td></tr>
-<tr><td>ペーパーブロックを消す</td><td>子の作成者本人なら、子を<b>配下ごとゴミ箱</b>に入れる。本人でなければブロックは消さず、子を配下ごとアーカイブする（<a href="#d-visibility">D18</a>）。ゴミ箱へは（配下に <code>DeletedAt</code> と <code>DeletedWith</code>）。画面は消す前に件数を見せて確かめる。親を版に戻してブロックが戻れば、同じ <code>DeletedWith</code> の配下も戻る（作成者本人のとき）。</td></tr>
+<tr><td>ペーパーブロックを消す</td><td><a href="#job">裏の処理</a>（<code>drop</code>）で行う。配下がすべて消す人のものなら、子を<b>配下ごとゴミ箱</b>に入れ、ブロックを消す。他の人のペーパーが含まれていれば、ブロックは消さず、子を配下ごとアーカイブする（<a href="#d-visibility">D18</a>）。ゴミ箱へは（配下に <code>DeletedAt</code> と <code>DeletedWith</code>）。画面は消す前に件数を見せて確かめる。親を版に戻してブロックが戻れば、同じ <code>DeletedWith</code> の配下も戻る（作成者本人のとき）。</td></tr>
 <tr><td>移動（同じワークスペース）</td><td>元の親の本文からペーパーブロックを消し、新しい親の本文に新しいペーパーブロックを足し、子の <code>ParentID</code> を書き換える。この 3 件だけを 1 つのトランザクションで書く。<b>配下には何も書かない</b>（配下は親を指しているだけなので付いていく）。移動は後勝ちで、衝突の対象にしない。移動そのものの記録は残さない。親の本文の変化は、次にその親の版を保存したときに版に表れる。</td></tr>
-<tr><td>移動（ワークスペースをまたぐ）</td><td>新しい ID で配下ごと写し、元を配下ごとゴミ箱へ入れ、元の ID から新しい場所への転送の記録を残す。今の状態と最新の版（写しの v1 になる）を写し、古い版は写さない。</td></tr>
-<tr><td>親を版に戻す</td><td>よそへ移った子のペーパーブロックは戻さない（移動した時点で元の親の管理から外れている）。結果に「戻さなかった子」を添える。ゴミ箱にある子は、戻す人がその子の作成者本人なら戻る（本人でなければ戻さず、結果に添える）。</td></tr>
+<tr><td>移動（ワークスペースをまたぐ）</td><td><a href="#job">裏の処理</a>（<code>move</code>）で行う。新しい ID で配下ごと写し、元を配下ごとゴミ箱へ入れ、元の ID から新しい場所への転送の記録を残す。今の状態と最新の版（写しの v1 になる）を写し、古い版は写さない。</td></tr>
+<tr><td>親を版に戻す</td><td>よそへ移った子のペーパーブロックは戻さない（移動した時点で元の親の管理から外れている）。結果に「戻さなかった子」を添える。ゴミ箱にある子は、戻す人がその子の作成者本人なら戻る（本人でなければ戻さず、結果に添える）。子そのものは操作のまとまりの中で戻し、一緒にゴミ箱に入った配下は<a href="#job">裏の処理</a>（<code>restore</code>）で戻す。</td></tr>
 </tbody></table></div>
 <h3>読み方</h3>
 <ul>
 <li>ペーパーは親だけを持ち、祖先の列は持たない。移動で数千〜数万のペーパーが動いても、書くのは 3 件で済むため。</li>
 <li>パンくず・パス（<code>security / 手順 / DB 切り替え</code>）と循環の検査は親を辿る。サーバーは「ペーパー → 親」の対応を手元に覚え、変更フィードで更新する。トランザクションの中では読み直して確かめる。</li>
 <li>子の一覧は親の本文から分かる。子のタイトル・状態は一括取得で 1 回読む。</li>
-<li>「この配下で探す」は、検索の当たりそれぞれの親を辿って絞る。「配下をまとめてアーカイブ・書き出す」は子の索引で 1 段ずつ降りる裏の処理。</li>
+<li>「この配下で探す」は、検索の当たりそれぞれの親を辿って絞る。「配下をまとめてアーカイブ・書き出す」は子の索引で 1 段ずつ降りる<a href="#job">裏の処理</a>。</li>
 <li>AI はパスで親を指定できる（同じタイトルが複数あれば候補を返す）。URL は ID のまま。</li>
 </ul>
 <h3>サイドバー</h3>
 <p>木全体は出さない。ホーム、ユーザーごとのお気に入り（<code>Pin</code>: ユーザー・ワークスペース・ペーパー・並び順キー）とその配下（開いた段だけ読む）、最近開いたペーパー数件、自分の private の一覧を出す。</p>
+</section>
+
+<section id="job" class="concept">
+<h2 style="margin-top:8px">裏の処理（Job）</h2>
+<p>配下のペーパーすべてに及ぶ操作と、ワークスペースをまたぐ移動は、1 つのトランザクションに収まるとは限らない。Firestore の 1 回の書き込みは 10 MiB まで、トランザクションは 270 秒まで。配下の数は制限しないので、大きな木は必ずどこかでこれを超える。これらは<b>裏の処理</b>として、小さなトランザクションの列に分けて進める（<a href="#d-job">D19</a>）。同じワークスペースの中の移動と公開範囲の変更は、書くのが 3 件以下なので裏の処理にしない。</p>
+<dl class="fields">
+<dt>ID / WorkspaceID</dt><dd>サーバーが発行。始めたワークスペース（移動なら元のワークスペース）に置く。</dd>
+<dt>Kind</dt><dd><code>trash</code>（ゴミ箱へ）・<code>drop</code>（本文でペーパーブロックを消した）・<code>restore</code>（ゴミ箱から戻す）・<code>archive</code> / <code>unarchive</code>（配下ごと）・<code>move</code>（ワークスペースをまたぐ移動）。</dd>
+<dt>PaperID / BlockID</dt><dd>根のペーパー。<code>drop</code> なら、親の本文で消されたペーパーブロックも。</dd>
+<dt>Target</dt><dd><code>move</code> の移動先（ワークスペース・親・位置）。</dd>
+<dt>CreatedBy</dt><dd>始めた書き手。裏の処理はこの書き手の権限で進め、書いたものの書き手もこの書き手になる。</dd>
+<dt>State</dt><dd><code>queued</code> → <code>running</code> → <code>done</code> か <code>failed</code>。</dd>
+<dt>Phase / Done / Total</dt><dd>今の段と、処理した数・対象の数（進み具合）。</dd>
+<dt>Result / Error</dt><dd>結果（ゴミ箱に入れたか、アーカイブしたか、戻さなかったペーパー、写しの ID と転送）と、<code>failed</code> の理由。</dd>
+<dt>LeaseUntil</dt><dd>今進めているインスタンスの期限。過ぎたら他のインスタンスが引き継ぐ。</dd>
+<dt>ExpireAt</dt><dd>終わってから 7 日で消える。</dd>
+</dl>
+<p>対象のペーパー 1 件ごとに <b>JobItem</b>（ペーパー・親・深さ・子を集めたか・済んだか、移動なら写しの ID と写した位置）を、裏の処理の下に置く。対象の一覧を裏の処理の本体に持たないのは、文書の大きさ（1 MiB）を超えないため。</p>
+<h3>進み方</h3>
+<ol>
+<li>リクエストは裏の処理を作り、そのまま<b>数秒まで自分で進める</b>。終われば、結果を普通の応答で返す（小さな木では、これまでどおりすぐに結果が見える。規則による失敗もその場のエラーになる）。終わらなければ <code>202</code> と裏の処理を返し、同じインスタンスが続ける。</li>
+<li>各段は 1 つのトランザクションで、対象 200 件までを扱う。進み具合は同じトランザクションで書く。どの段も、やり直して同じ結果になる（冪等）。写しの ID は裏の処理と元の ID から決まるので、写しを書き直しても重ならない。</li>
+<li>インスタンスが止まっても、期限が過ぎた裏の処理を他のインスタンスが拾って続ける。</li>
+<li>一時的な失敗は間隔を空けて再試行する。規則による失敗（権限がない、移動先がゴミ箱に入った、など）は <code>failed</code> にし、戻せる段ならそれまでの変更を戻す。</li>
+</ol>
+<h3>種類ごとの段</h3>
+<div class="scroll"><table>
+<thead><tr><th>種類</th><th>段</th><th>failed のとき</th></tr></thead>
+<tbody>
+<tr><td><code>trash</code></td><td><b>集める</b>: 配下を子の索引で 1 段ずつ集め、すべて始めた人のものか確かめる。→ <b>当てる</b>: まず根をゴミ箱に入れ、親の本文からペーパーブロックを消す（1 つのトランザクション）。続けて配下に <code>DeletedAt</code>・<code>DeletedWith</code> を付ける。</td><td>集める段で他の人のペーパーが見つかれば、何も変えずに failed（「アーカイブしてください」）。</td></tr>
+<tr><td><code>drop</code></td><td><code>trash</code> と同じ。ただし他の人のペーパーが見つかれば、ブロックは消さずに配下ごとアーカイブする（失敗にしない）。</td><td>—</td></tr>
+<tr><td><code>restore</code></td><td>根を戻し、ゴミ箱にない一番近い祖先の下に置く。続けて、同じ <code>DeletedWith</code> で始めた人の配下を戻す。版に戻して子が戻るときは、子は操作のまとまりの中で戻し、配下だけをこの裏の処理で戻す。</td><td>—</td></tr>
+<tr><td><code>archive</code> / <code>unarchive</code></td><td>配下を集め、印を付ける・外す。</td><td>—</td></tr>
+<tr><td><code>move</code></td><td><b>集める</b>: 配下を集め、元の各ペーパーに <code>JobID</code> を付ける（書き込みを止める）。→ <b>写す</b>: 新しい ID で、今の状態・最新の版（写しの v1）・添付を写す。写しにも <code>JobID</code> を付け、木にはつながない。→ <b>つなぐ</b>: 写しの印を外し、写しの根を移動先の親の本文に置く。ここから先は戻さない。→ <b>片付ける</b>: 元を配下ごとゴミ箱に入れ、転送の記録を残し、印を外す。</td><td>つなぐ前なら、写しを消し、元の印を外す（元はそのまま）。</td></tr>
+</tbody></table></div>
+<h3>見えるもの</h3>
+<ul>
+<li>裏の処理を見られるのは始めた人だけ（他の人には 404）。</li>
+<li>画面は進み具合を出し、終わったら木を読み直す。AI には裏の処理の ID と状態を返し、状態を確かめる道具を用意する。</li>
+<li>途中の状態は見えることがある（配下の一部だけがゴミ箱にある、など）。検索と一覧はペーパーごとの印で判断するので、終われば揃う。移動だけは、元を書けなくして写しを隠すので、途中の状態で書き込みが失われることも、半分の写しが見えることもない。</li>
+</ul>
 </section>
 
 <section id="block" class="concept">
@@ -448,7 +490,7 @@ policy = ["policies/security.rego"]</code></pre>
 <tbody>
 <tr><td><code>insert</code></td><td>種類（位置は <code>after</code>、仮の名前 <code>ref</code> は任意）。<code>paper</code> なら子のタイトル</td><td>不要</td><td>ブロックの追加（表ならセルも、<code>paper</code> なら子のペーパーも）</td><td>—</td></tr>
 <tr><td><code>update</code></td><td>ブロック</td><td><b>必須</b></td><td>内容の更新（<code>Rev</code> +1。表の形が変わればセルの追加・削除も）</td><td>内容が変わらない</td></tr>
-<tr><td><code>delete</code></td><td>ブロック</td><td><b>必須</b></td><td>削除（表ならセルも、<code>paper</code> なら子を配下ごとゴミ箱へ）</td><td>他の人がすでに削除していた</td></tr>
+<tr><td><code>delete</code></td><td>ブロック</td><td><b>必須</b></td><td>削除（表ならセルも、<code>paper</code> なら<a href="#job">裏の処理</a>で子を配下ごとゴミ箱へ）</td><td>他の人がすでに削除していた</td></tr>
 <tr><td><code>move</code></td><td>ブロック（位置は <code>after</code>）</td><td>不要</td><td>位置の変更</td><td>位置が変わらない、または削除済み</td></tr>
 <tr><td><code>set_title</code></td><td>タイトル</td><td>なし（後勝ち、<a href="#d-title">D1</a>）</td><td>タイトルの変更</td><td>タイトルが同じ</td></tr>
 <tr><td><code>insert_markdown</code></td><td>Markdown</td><td>不要</td><td>ブロックの追加の列</td><td>—</td></tr>
@@ -456,13 +498,13 @@ policy = ["policies/security.rego"]</code></pre>
 <tr><td><code>set_visibility</code></td><td>public / private（public にするなら親と位置）</td><td>不要</td><td>本人と親を書き換え</td><td>同じ公開範囲</td></tr>
 <tr><td><code>save_version</code></td><td>メモ（任意）</td><td>不要</td><td>版の作成</td><td>前の版から変更がない</td></tr>
 <tr><td><code>restore_version</code></td><td>戻す版の番号</td><td>不要（ペーパー単位）</td><td>今の状態をその版に合わせる追加・更新・削除</td><td>今の状態と同じ</td></tr>
-<tr><td><code>archive</code> / <code>unarchive</code></td><td>配下も含めるか</td><td>不要</td><td>アーカイブの印</td><td>すでにその状態</td></tr>
+<tr><td><code>archive</code> / <code>unarchive</code></td><td>配下も含めるか</td><td>不要</td><td>アーカイブの印（配下も含めるなら<a href="#job">裏の処理</a>）</td><td>すでにその状態</td></tr>
 </tbody></table></div>
 <h3>操作のまとまりの約束</h3>
 <ul>
 <li>応答は結果と、<code>insert</code> の仮の名前と発行した ID の対応を返す。</li>
 <li>1 回で変えられるブロックは 240 まで、書く本文の合計は 3 MiB まで。超えたら分けてもらう。</li>
-<li>複数のペーパーにまたがる操作（移動・公開範囲の変更）も 1 つのトランザクションで書く。</li>
+<li>同じワークスペースの中の移動と公開範囲の変更は、複数のペーパーにまたがっても 1 つのトランザクションで書く。配下すべてに及ぶ処理と、ワークスペースをまたぐ移動は<a href="#job">裏の処理</a>になり、応答に裏の処理を添える。</li>
 <li>メッセージは持たない（説明は版のメモに書く）。</li>
 </ul>
 <p>人の画面はブロックから離れるたびに送るが、それは今の状態を書き換えるだけで、版は増えない。</p>
@@ -550,6 +592,7 @@ policy = ["policies/security.rego"]</code></pre>
 <tr><td>公開範囲を変える</td><td>作成者だけ</td></tr>
 <tr><td>ペーパーを削除する（配下ごとゴミ箱、戻す、完全に消す）</td><td>作成者本人だけ。配下があれば配下もすべて本人のもの（<a href="#d-visibility">D18</a>）。ホームは消せない</td></tr>
 <tr><td>アーカイブする・解く</td><td>そのペーパーを使える人。ホームはアーカイブできない</td></tr>
+<tr><td>裏の処理を見る</td><td>始めた人だけ</td></tr>
 <tr><td>ワークスペース・使える人の規則を決める</td><td>設定ファイルを変えられる人（デプロイの権限。画面からはできない）</td></tr>
 </tbody></table></div>
 <h3>システム管理者はいない</h3>
@@ -565,8 +608,8 @@ policy = ["policies/security.rego"]</code></pre>
 <h2 style="margin-top:8px">保存先の配置</h2>
 <p>Firestore の文書の置き場所。木の形はモデルの「持つ」関係をそのまま映す。ペーパーの木（親子）はパスにせず、<code>ParentID</code> の値で持つ（移動でパスを変えないため）。</p>
 <figure>
-<svg viewBox="0 0 900 414" role="img" aria-label="Firestore の保存先の配置。ワークスペースの下にペーパー、検索エントリ、転送の記録。ペーパーの下にブロック、版、変更の記録、添付。ブロックの下に版が指す写し。ユーザーの下に外部 ID、ピン、最近開いたもの。トークンとセッションは最上位。"><text x="20" y="24" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">workspaces/{ws}</text><text x="430" y="24" font-size="12" style="fill:var(--soft)">HomePaperID（ワークスペースは設定ファイル、ここには記録だけ）</text><path d="M28 30V46H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="50" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">papers/{paper}</text><text x="430" y="50" font-size="12" style="fill:var(--soft)">Paper（タイトル・親・公開範囲・状態）</text><path d="M58 56V72H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="76" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">blocks/{block}</text><text x="430" y="76" font-size="12" style="fill:var(--soft)">Block の今の状態と Rev（読むのはここだけ）</text><path d="M88 82V98H106" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="110" y="102" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">snapshots/{rev}</text><text x="430" y="102" font-size="12" style="fill:var(--soft)">版が指す中身の写し（版の保存時に作る。不変）</text><path d="M58 56V124H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="128" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">versions/{n}</text><text x="430" y="128" font-size="12" style="fill:var(--soft)">版（明示的に保存。不変）</text><path d="M58 56V150H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="154" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">events/{id}</text><text x="430" y="154" font-size="12" style="fill:var(--soft)">変更の記録（配信のためだけ。短時間で消える）</text><path d="M58 56V176H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="180" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">attachments/{id}</text><text x="430" y="180" font-size="12" style="fill:var(--soft)">添付のメタデータ（中身は AttachmentStore）</text><path d="M28 30V202H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="206" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">search/{paper}_{block | title}</text><text x="430" y="206" font-size="12" style="fill:var(--soft)">検索エントリ（派生。平文）</text><path d="M28 30V228H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="232" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">forwards/{元の paper}</text><text x="430" y="232" font-size="12" style="fill:var(--soft)">ワークスペースをまたいで移ったペーパーの転送先</text><text x="20" y="258" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">users/{user}</text><text x="430" y="258" font-size="12" style="fill:var(--soft)">User</text><path d="M28 264V280H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="284" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">identities/{provider}_{subject}</text><text x="430" y="284" font-size="12" style="fill:var(--soft)">外部 ID との結びつき</text><path d="M28 264V306H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="310" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">pins/{ws}_{paper}</text><text x="430" y="310" font-size="12" style="fill:var(--soft)">お気に入り（並び順キー）</text><path d="M28 264V332H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="336" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">recent/{ws}</text><text x="430" y="336" font-size="12" style="fill:var(--soft)">最近開いたペーパー（ワークスペースごとに 1 件）</text><text x="20" y="362" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">tokens/{token}</text><text x="430" y="362" font-size="12" style="fill:var(--soft)">API トークン（秘密のハッシュ・制限）</text><text x="20" y="388" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">sessions/{session}</text><text x="430" y="388" font-size="12" style="fill:var(--soft)">ログインのセッション（秘密のハッシュ）</text></svg>
-<figcaption>灰色は派生データや一時的なもの。添付の中身だけは Firestore ではなく AttachmentStore（本番は Cloud Storage、開発はメモリかファイルシステム）。版と写しは作るだけで書き換えない。変更の記録は配信のためだけで、短時間で消える。</figcaption>
+<svg viewBox="0 0 900 466" role="img" aria-label="Firestore の保存先の配置。ワークスペースの下にペーパー、検索エントリ、転送の記録、裏の処理。ペーパーの下にブロック、版、変更の記録、添付。ブロックの下に版が指す写し。ユーザーの下に外部 ID、ピン、最近開いたもの。トークンとセッションは最上位。"><text x="20" y="24" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">workspaces/{ws}</text><text x="430" y="24" font-size="12" style="fill:var(--soft)">HomePaperID（ワークスペースは設定ファイル、ここには記録だけ）</text><path d="M28 30V46H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="50" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">papers/{paper}</text><text x="430" y="50" font-size="12" style="fill:var(--soft)">Paper（タイトル・親・公開範囲・状態）</text><path d="M58 56V72H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="76" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">blocks/{block}</text><text x="430" y="76" font-size="12" style="fill:var(--soft)">Block の今の状態と Rev（読むのはここだけ）</text><path d="M88 82V98H106" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="110" y="102" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">snapshots/{rev}</text><text x="430" y="102" font-size="12" style="fill:var(--soft)">版が指す中身の写し（版の保存時に作る。不変）</text><path d="M58 56V124H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="128" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">versions/{n}</text><text x="430" y="128" font-size="12" style="fill:var(--soft)">版（明示的に保存。不変）</text><path d="M58 56V150H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="154" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">events/{id}</text><text x="430" y="154" font-size="12" style="fill:var(--soft)">変更の記録（配信のためだけ。短時間で消える）</text><path d="M58 56V176H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="180" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">attachments/{id}</text><text x="430" y="180" font-size="12" style="fill:var(--soft)">添付のメタデータ（中身は AttachmentStore）</text><path d="M28 30V202H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="206" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">search/{paper}_{block | title}</text><text x="430" y="206" font-size="12" style="fill:var(--soft)">検索エントリ（派生。平文）</text><path d="M28 30V228H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="232" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">forwards/{元の paper}</text><text x="430" y="232" font-size="12" style="fill:var(--soft)">ワークスペースをまたいで移ったペーパーの転送先</text><path d="M28 30V254H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="258" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">jobs/{job}</text><text x="430" y="258" font-size="12" style="fill:var(--soft)">裏の処理（終わって 7 日で消える）</text><path d="M58 264V280H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="284" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">items/{paper}</text><text x="430" y="284" font-size="12" style="fill:var(--soft)">対象のペーパーごとの進み具合</text><text x="20" y="310" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">users/{user}</text><text x="430" y="310" font-size="12" style="fill:var(--soft)">User</text><path d="M28 316V332H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="336" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">identities/{provider}_{subject}</text><text x="430" y="336" font-size="12" style="fill:var(--soft)">外部 ID との結びつき</text><path d="M28 316V358H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="362" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">pins/{ws}_{paper}</text><text x="430" y="362" font-size="12" style="fill:var(--soft)">お気に入り（並び順キー）</text><path d="M28 316V384H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="388" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">recent/{ws}</text><text x="430" y="388" font-size="12" style="fill:var(--soft)">最近開いたペーパー（ワークスペースごとに 1 件）</text><text x="20" y="414" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">tokens/{token}</text><text x="430" y="414" font-size="12" style="fill:var(--soft)">API トークン（秘密のハッシュ・制限）</text><text x="20" y="440" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">sessions/{session}</text><text x="430" y="440" font-size="12" style="fill:var(--soft)">ログインのセッション（秘密のハッシュ）</text></svg>
+<figcaption>灰色は派生データや一時的なもの。添付の中身だけは Firestore ではなく AttachmentStore（本番は Cloud Storage、開発はメモリかファイルシステム）。版と写しは作るだけで書き換えない。変更の記録は配信のためだけで、短時間で消える。裏の処理は終わって 7 日で消える。</figcaption>
 </figure>
 </section>
 
@@ -601,7 +644,7 @@ policy = ["policies/security.rego"]</code></pre>
 <li>親を持つのは表のセルだけで、その親は同じペーパーの表。表のセルは、親の表の行 ID と列 ID の組ごとにちょうど 1 つあり、表にない行・列を指すセルはない。</li>
 <li>ブロックの属性には、その種類に関係する値しか入っていない。区切り線と表の本文は空。</li>
 <li>各ブロックの <code>Rev</code> は 1 から始まり、内容が変わるたびにちょうど 1 増える。位置の変更では増えない。</li>
-<li>操作のまとまりは、全部の結果が書かれるか、1 つも書かれないかのどちらか。ブロック・ペーパー・検索エントリ・変更の記録（<code>Event</code>）は同じトランザクションで書かれる。</li>
+<li>操作のまとまりは、全部の結果が書かれるか、1 つも書かれないかのどちらか。ブロック・ペーパー・検索エントリ・変更の記録（<code>Event</code>）は同じトランザクションで書かれる。<a href="#job">裏の処理</a>は段ごとにこれを満たし、段はやり直しても同じ結果になる。</li>
 <li>強行しない限り、読んだ後に他の書き手が変えた内容が、知らないうちに消えることはない。</li>
 <li>版の番号はペーパーごとに 1 から欠番なしで、どれも不変。版が指すブロックの写し（ブロック ID + <code>Rev</code>）は存在し、不変。<code>Paper.VersionNumber</code> は最大の番号と一致する。</li>
 <li>版は書き手の明示的な保存の操作でだけ作られる。システムが自動で作ることはない。</li>
@@ -615,7 +658,8 @@ policy = ["policies/security.rego"]</code></pre>
 <li>private のペーパーは親を持たず、どの本文にもペーパーブロックとして置かれない。子も持たない。</li>
 <li><code>paper</code> ブロックは本文の一番上の段にだけあり、表のセルにはない。</li>
 <li>画像ブロックが指す添付は、そのブロックと同じペーパーに属する。添付の中身は変わらない。</li>
-<li>ゴミ箱に入ったペーパーの配下は、すべて同じかそれより前の削除でゴミ箱にある（ゴミ箱にない親の下に、ゴミ箱のペーパーのペーパーブロックが生きて残ることはない）。</li>
+<li>ゴミ箱に入ったペーパーの配下は、裏の処理が終わった後は、すべて同じかそれより前の削除でゴミ箱にある（ゴミ箱にない親の下に、ゴミ箱のペーパーのペーパーブロックが生きて残ることはない）。</li>
+<li><code>JobID</code> のあるペーパーとそのブロックを書くのは、その裏の処理だけ。<code>JobID</code> のあるペーパーは、どの主体の検索にも出ず、写しはどの親の本文にも置かれていない。</li>
 </ol>
 </section>
 
@@ -925,6 +969,16 @@ C. 平文と、範囲で指した装飾
 </ul>
 </div>
 
+<div class="decision" id="d-job" style="border-left-color:var(--human)">
+<h3>D19. 配下すべてに及ぶ処理とワークスペースをまたぐ移動は裏の処理で進める（決定 2026-11-22）</h3>
+<p>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動は、配下の数に比例して書く。1 つのトランザクションでは、大きな木で Firestore の上限（10 MiB・270 秒）を必ず超える。</p>
+<ul>
+<li><b>A. 同期のまま上限を置く</b>: 1 回で扱う配下を 500 などで打ち切り、超えたら分けてもらう。ワークスペースをまたぐ移動は 2 つのトランザクション（写してから消す）。</li>
+<li><b>B. 裏の処理にする</b>: 対象を小さなトランザクションの列に分け、どのインスタンスでも続きを進められるように進み具合を保存する。</li>
+</ul>
+<div class="rec"><b>決定: B</b>。配下の数は制限しない約束なので、上限で断るのは筋が違う。トランザクションの境界はワークスペースではなく量で決まる（Firestore のトランザクションは同じデータベースのどの文書も扱えるが、量の上限は変わらない）。小さな木で応答が遅れないよう、リクエストは数秒まで自分で進め、終われば普通の応答を返す。移動の途中で元への書き込みが失われないよう、元は書けなくする（ロックではなく、裏の処理が持つ印で、終われば外れる）。段と失敗時の扱いは<a href="#job">裏の処理</a>。</div>
+</div>
+
 <div class="decision" id="d-removed" style="border-left-color:var(--human)">
 <h3>D13. 設定から消えたワークスペースのデータは残して見えなくする（決定: A）</h3>
 <p>ワークスペースは設定から外せるが、ペーパーは保存先に残る。id を変えた場合も、古い id のデータが取り残される。</p>
@@ -971,6 +1025,7 @@ C. 平文と、範囲で指した装飾
 <tr><td>D18-A private と削除</td><td>なし</td><td>private は作成者だけ。public の削除は誰でも（ゴミ箱つき）</td><td>private の印</td></tr>
 <tr><td>ペーパーの入れ子（決定）</td><td><code>Paper.ParentID</code>、ブロックの種類 <code>paper</code>、ワークスペースの記録 <code>HomePaperID</code></td><td><code>insert</code> の <code>paper</code>、<code>move_paper</code>、パスでの親の指定、「この配下で」の範囲。起動時のホーム作成。インスタンスごとの親の対応表</td><td>ペーパーブロックの表示と作成、移動、パンくず</td></tr>
 <tr><td>ワークスペースをまたぐ移動（決定）</td><td>転送の記録（元の ID → 新しい場所）</td><td>写して消す裏の処理、古い URL の転送</td><td>移動先の選択、進み具合、見える人が変わる確認</td></tr>
+<tr><td>D19 裏の処理（決定）</td><td><code>Job</code>・<code>JobItem</code>、<code>Paper.JobID</code></td><td>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動を裏の処理に。応答の <code>202</code> と裏の処理、状態の取得。期限切れの引き継ぎ。1 回で扱う配下の上限を廃止</td><td>進み具合の表示、終わったら読み直す</td></tr>
 <tr><td>版とアーカイブ（決定）</td><td><code>Paper.VersionNumber</code>・<code>ArchivedAt</code></td><td><code>archive</code> の操作、<code>at</code> での読み取り</td><td><code>/latest</code>・<code>/v/{番号}</code>、「v3 から変更あり」の表示</td></tr>
 <tr><td>private は木の外（決定）</td><td>なし（<code>ParentID</code> が空）</td><td><code>set_visibility</code> で親に置く・外す</td><td>サイドバーの自分だけの一覧</td></tr>
 <tr><td>サイドバー（決定）</td><td><code>Pin</code>、最近開いたペーパーの記録</td><td>ピンの追加・並べ替え</td><td>お気に入りとその配下、最近開いたもの、ホーム</td></tr>

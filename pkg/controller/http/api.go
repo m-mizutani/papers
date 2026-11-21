@@ -33,6 +33,7 @@ func (s *Server) routeAPI(r chi.Router) {
 		r.Get("/trash", s.handleListTrash)
 		r.Get("/resolve", s.handleResolve)
 		r.Post("/papers", s.handleCreatePaper)
+		r.Get("/jobs/{job}", s.handleGetJob)
 		r.Route("/papers/{paper}", func(r chi.Router) {
 			r.Get("/", s.handleGetPaper)
 			r.Get("/blocks", s.handleListBlocks)
@@ -69,6 +70,11 @@ func respond(w http.ResponseWriter, r *http.Request, status int, v any, err erro
 	if err != nil {
 		writeError(r.Context(), w, err)
 		return
+	}
+	// A batch whose background job goes on after the response is accepted,
+	// not done.
+	if res, ok := v.(*usecase.BatchResult); ok && res != nil && res.Pending() && status == http.StatusOK {
+		status = http.StatusAccepted
 	}
 	writeJSON(r.Context(), w, status, v)
 }
@@ -517,4 +523,9 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	safe.Copy(r.Context(), w, c.Body)
+}
+
+func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
+	j, err := s.uc.GetJob(r.Context(), principalFrom(r.Context()), wsParam(r), model.JobID(chi.URLParam(r, "job")))
+	respond(w, r, http.StatusOK, j, err)
 }

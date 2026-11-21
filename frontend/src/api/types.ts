@@ -47,6 +47,8 @@ export interface Paper {
   archived_at?: string
   deleted_at?: string
   deleted_with?: string
+  /** Set while a move to another workspace works on the paper (read-only). */
+  job_id?: string
   created_by: Actor
   created_at: string
   updated_by: Actor
@@ -185,6 +187,37 @@ export interface BatchResult {
   editing?: Editing[]
   not_restored?: NotRestored[]
   forward?: Forward
+  /** Background jobs the request started; unfinished ones go on after it. */
+  jobs?: Job[]
+}
+
+export type JobKind = 'trash' | 'drop' | 'restore' | 'archive' | 'unarchive' | 'move'
+export type JobState = 'queued' | 'running' | 'done' | 'failed'
+
+export interface JobResult {
+  trashed?: boolean
+  archived?: boolean
+  skipped?: string[]
+  copy_id?: string
+  forward?: Forward
+}
+
+/** Work on everything under a paper, run in steps in the background. */
+export interface Job {
+  id: string
+  workspace_id: string
+  kind: JobKind
+  paper_id: string
+  block_id?: string
+  state: JobState
+  phase: string
+  done: number
+  total: number
+  result?: JobResult
+  error?: string
+  error_code?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface PaperView {

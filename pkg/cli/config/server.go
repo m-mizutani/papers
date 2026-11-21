@@ -21,6 +21,10 @@ type Server struct {
 	maxOpsPerBatch int
 	paperTouch     time.Duration
 	trashRetention time.Duration
+	jobInline      time.Duration
+	jobLease       time.Duration
+	jobStep        int
+	jobPoll        time.Duration
 }
 
 func (x *Server) Flags() []cli.Flag {
@@ -56,6 +60,23 @@ func (x *Server) Flags() []cli.Flag {
 			Name: "trash-retention", Category: "editing", Usage: "How long papers stay in the trash before they are deleted for good",
 			Value: 30 * 24 * time.Hour, Sources: cli.EnvVars("PAPERS_TRASH_RETENTION"), Destination: &x.trashRetention,
 		},
+		&cli.DurationFlag{
+			Name: "job-inline", Category: "jobs",
+			Usage: "How long a request runs the background job it starts (trash, restore, archive of a subtree, moves across workspaces) before answering 202",
+			Value: 3 * time.Second, Sources: cli.EnvVars("PAPERS_JOB_INLINE"), Destination: &x.jobInline,
+		},
+		&cli.DurationFlag{
+			Name: "job-lease", Category: "jobs", Usage: "How long an instance holds a background job between steps before another instance may take it over",
+			Value: time.Minute, Sources: cli.EnvVars("PAPERS_JOB_LEASE"), Destination: &x.jobLease,
+		},
+		&cli.IntFlag{
+			Name: "job-step", Category: "jobs", Usage: "Papers (or blocks of a copy) one step of a background job handles in one transaction",
+			Value: 200, Sources: cli.EnvVars("PAPERS_JOB_STEP"), Destination: &x.jobStep,
+		},
+		&cli.DurationFlag{
+			Name: "job-poll", Category: "jobs", Usage: "How often the server looks for background jobs whose instance stopped",
+			Value: 15 * time.Second, Sources: cli.EnvVars("PAPERS_JOB_POLL"), Destination: &x.jobPoll,
+		},
 	}
 }
 
@@ -65,6 +86,9 @@ func (x Server) LogValue() slog.Value {
 		slog.String("base_url", x.baseURL),
 		slog.Bool("enable_mcp", x.enableMCP),
 		slog.Duration("trash_retention", x.trashRetention),
+		slog.Duration("job_inline", x.jobInline),
+		slog.Duration("job_lease", x.jobLease),
+		slog.Int("job_step", x.jobStep),
 	)
 }
 
@@ -73,12 +97,16 @@ func (x *Server) BaseURL() string            { return strings.TrimRight(x.baseUR
 func (x *Server) EnableMCP() bool            { return x.enableMCP }
 func (x *Server) SecureCookie() bool         { return strings.HasPrefix(x.baseURL, "https://") }
 func (x *Server) WebSocketOrigins() []string { return x.wsOrigins }
+func (x *Server) JobPoll() time.Duration     { return x.jobPoll }
 
 func (x *Server) UseCaseConfig() usecase.Config {
 	return usecase.Config{
 		MaxOpsPerBatch:     x.maxOpsPerBatch,
 		PaperTouchInterval: x.paperTouch,
 		TrashRetention:     x.trashRetention,
+		JobInline:          x.jobInline,
+		JobLease:           x.jobLease,
+		JobStep:            x.jobStep,
 	}
 }
 

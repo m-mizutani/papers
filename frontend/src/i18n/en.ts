@@ -182,4 +182,12 @@ export const en: Record<MsgKey, string> = {
   versionsLead: 'Versions are saved on purpose by people or AI. Nothing is saved automatically.',
   viaApi: 'via API',
   workspaceNotFound: 'This workspace does not exist or you cannot use it.',
+  jobStarting: 'Collecting the papers under it…',
+  jobRunning: 'Working on the papers under it: {done} of {total}…',
+  jobContinues: 'This takes a while. It goes on even if you leave this page.',
+  jobFailed: 'The background work failed: {message}',
+  busy: 'This paper is being moved to another workspace. Try again when the move has finished.',
+  moveDone: 'Moved to the other workspace.',
+  trashDone: 'Moved to the trash.',
+  restoredFromTrash: 'Restored from the trash.',
 }

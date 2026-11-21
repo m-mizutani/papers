@@ -98,5 +98,10 @@ UI and pass it as a bearer token (the UI shows the exact command).
 | `--max-ops-per-batch` | `300` | Operations per request (blocks per batch are capped at 240) |
 | `--paper-touch-interval` | `1m` | How stale a paper's "updated" time may get before a write refreshes it |
 | `--trash-retention` | `720h` | How long papers stay in the trash |
+| `--job-inline` | `3s` | How long a request runs the background job it starts (trash, restore or archive of a subtree, moves across workspaces) before answering `202` |
+| `--job-lease`, `--job-poll` | `1m`, `15s` | When an instance stops, another takes its jobs over after the lease; `job-poll` is how often instances look |
+| `--job-step` | `200` | Papers (or blocks of a copy) per transaction of a background job |
+
+Background jobs continue on the instance after the response, so on Cloud Run allocate CPU always (`--no-cpu-throttling`); otherwise they still finish, but only when an instance looks for them.
 
 All flags also read `PAPERS_*` environment variables (see `papers serve --help`).

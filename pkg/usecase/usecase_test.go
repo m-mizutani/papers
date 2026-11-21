@@ -2,6 +2,7 @@ package usecase_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,15 @@ type env struct {
 	rules *rules
 	uc    *usecase.UseCases
 	clock *clock
+	cfg   usecase.Config
+}
+
+// another is a second instance on the same storage.
+func (e *env) another(t *testing.T) *usecase.UseCases {
+	t.Helper()
+	uc, err := usecase.New(e.count, e.rules, e.store, e.cfg, usecase.WithClock(e.clock.Now), usecase.WithoutBackgroundJobs())
+	gt.NoError(t, err).Required()
+	return uc
 }
 
 const (
@@ -62,6 +72,13 @@ const (
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, nil)
+}
+
+// newEnvWith builds an env whose config tune may change, with extra
+// options for the use cases.
+func newEnvWith(t *testing.T, tune func(*usecase.Config), opts ...usecase.Option) *env {
+	t.Helper()
 	repo := memory.New(memory.WithEventBuffer(256))
 	count := &counting{Repository: repo}
 	c := &clock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
@@ -70,12 +87,16 @@ func newEnv(t *testing.T) *env {
 		deny:     map[model.WorkspaceID]map[model.UserID]bool{},
 	}
 	store := attachment.NewMemory()
-	uc, err := usecase.New(count, r, store, usecase.Config{
-		MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour,
-	}, usecase.WithClock(c.Now))
+	cfg := usecase.Config{
+		MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobInline: time.Minute, JobLease: time.Minute, JobStep: 200,
+	}
+	if tune != nil {
+		tune(&cfg)
+	}
+	uc, err := usecase.New(count, r, store, cfg, append([]usecase.Option{usecase.WithClock(c.Now)}, opts...)...)
 	gt.NoError(t, err).Required()
 	gt.NoError(t, uc.Init(context.Background())).Required()
-	return &env{repo: repo, count: count, store: store, rules: r, uc: uc, clock: c}
+	return &env{repo: repo, count: count, store: store, rules: r, uc: uc, clock: c, cfg: cfg}
 }
 
 func (e *env) user(t *testing.T, name string) *model.Principal {
@@ -146,6 +167,21 @@ type counting struct {
 	mu     sync.Mutex
 	papers int // GetPaper + GetPapers calls
 	blocks int
+	// failChildren makes the next calls of ListChildrenOf fail.
+	failChildren int
+}
+
+func (c *counting) ListChildrenOf(ctx context.Context, ws model.WorkspaceID, parents []model.PaperID) ([]*model.Paper, error) {
+	c.mu.Lock()
+	fail := c.failChildren > 0
+	if fail {
+		c.failChildren--
+	}
+	c.mu.Unlock()
+	if fail {
+		return nil, errors.New("storage is unavailable")
+	}
+	return c.Repository.ListChildrenOf(ctx, ws, parents)
 }
 
 func (c *counting) reset() {
@@ -186,12 +222,15 @@ func TestNewValidatesConfig(t *testing.T) {
 	repo := memory.New()
 	ws := workspace.Static(&model.Workspace{ID: "x"})
 	store := attachment.NewMemory()
-	good := usecase.Config{MaxOpsPerBatch: 1, PaperTouchInterval: 0, TrashRetention: time.Hour}
+	good := usecase.Config{MaxOpsPerBatch: 1, PaperTouchInterval: 0, TrashRetention: time.Hour, JobInline: 0, JobLease: time.Minute, JobStep: 1}
 	gt.R1(usecase.New(repo, ws, store, good)).NoError(t)
 	bad := []usecase.Config{
 		{MaxOpsPerBatch: 0, TrashRetention: time.Hour},
 		{MaxOpsPerBatch: 1, PaperTouchInterval: -1, TrashRetention: time.Hour},
 		{MaxOpsPerBatch: 1},
+		{MaxOpsPerBatch: 1, TrashRetention: time.Hour, JobLease: time.Minute},
+		{MaxOpsPerBatch: 1, TrashRetention: time.Hour, JobStep: 1},
+		{MaxOpsPerBatch: 1, TrashRetention: time.Hour, JobInline: -1, JobLease: time.Minute, JobStep: 1},
 	}
 	for _, c := range bad {
 		_, err := usecase.New(repo, ws, store, c)

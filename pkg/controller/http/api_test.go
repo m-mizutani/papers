@@ -2,14 +2,17 @@ package http_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m-mizutani/gt"
 
 	"github.com/m-mizutani/papers/pkg/domain/model"
+	"github.com/m-mizutani/papers/pkg/usecase"
 )
 
 type paperView struct {
@@ -265,4 +268,35 @@ func TestTokenAPI(t *testing.T) {
 	gt.A(t, list.Tokens).Length(1)
 	alice.expect("DELETE", "/api/v1/tokens/"+string(list.Tokens[0].ID), nil, http.StatusNoContent, nil)
 	agent.expect("GET", "/api/v1/workspaces", nil, http.StatusUnauthorized, nil)
+}
+
+func TestBackgroundJobAPI(t *testing.T) {
+	ts := newTestServerWith(t, false, func(c *usecase.Config) { c.JobInline, c.JobLease = 0, time.Nanosecond })
+	alice, bob, ws, paper := setupPaper(t, ts)
+	base := "/api/v1/workspaces/" + string(ws)
+	var kid model.Paper
+	alice.expect("POST", base+"/papers", map[string]any{"title": "Kid", "parent": string(paper)}, http.StatusCreated, &kid)
+
+	var res struct {
+		Jobs []model.Job `json:"jobs"`
+	}
+	alice.expect("POST", base+"/papers/"+string(paper)+"/trash", nil, http.StatusAccepted, &res)
+	gt.A(t, res.Jobs).Length(1).Required()
+	job := res.Jobs[0]
+	gt.Equal(t, job.Kind, model.JobTrash)
+
+	var got model.Job
+	alice.expect("GET", base+"/jobs/"+string(job.ID), nil, http.StatusOK, &got)
+	gt.False(t, got.State.Finished())
+	bob.expect("GET", base+"/jobs/"+string(job.ID), nil, http.StatusNotFound, nil)
+
+	// another instance (here: the sweeper) finishes it
+	time.Sleep(time.Millisecond)
+	gt.R1(ts.uc.RunJobs(context.Background())).NoError(t)
+	alice.expect("GET", base+"/jobs/"+string(job.ID), nil, http.StatusOK, &got)
+	gt.Equal(t, got.State, model.JobDone)
+	gt.True(t, got.Result.Trashed)
+	var view paperView
+	alice.expect("GET", base+"/papers/"+string(kid.ID), nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.DeletedWith, paper)
 }

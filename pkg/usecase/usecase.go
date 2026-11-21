@@ -35,6 +35,15 @@ type Config struct {
 	// TrashRetention is how long a trashed paper is kept before it is
 	// purged.
 	TrashRetention time.Duration
+	// JobInline is how long the request that makes a background job runs
+	// it itself before answering 202.
+	JobInline time.Duration
+	// JobLease is how long an instance holds a job without storing a step;
+	// after it, another instance takes the job over.
+	JobLease time.Duration
+	// JobStep is how many papers (or blocks of a copy) one step of a job
+	// handles in one transaction.
+	JobStep int
 }
 
 func (c Config) validate() error {
@@ -47,6 +56,9 @@ func (c Config) validate() error {
 	if c.TrashRetention <= 0 {
 		return goerr.New("trash retention must be positive")
 	}
+	if c.JobInline < 0 || c.JobLease <= 0 || c.JobStep <= 0 {
+		return goerr.New("job inline time must not be negative; job lease and step must be positive")
+	}
 	return nil
 }
 
@@ -54,9 +66,6 @@ func (c Config) validate() error {
 const (
 	MaxBlocksPerBatch = 240
 	MaxBatchBytes     = 3 << 20
-	// MaxSubtree bounds how many papers one tree operation (trash, archive,
-	// restore, cross-workspace move) may touch in one transaction.
-	MaxSubtree = 500
 )
 
 // UseCases bundles the application services.
@@ -66,6 +75,10 @@ type UseCases struct {
 	store      interfaces.AttachmentStore
 	cfg        Config
 	now        func() time.Time
+	// runner names this instance as the holder of the jobs it runs.
+	runner string
+	// background lets unfinished jobs continue after the request.
+	background bool
 }
 
 type Option func(*UseCases)
@@ -75,6 +88,12 @@ func WithClock(now func() time.Time) Option {
 	return func(u *UseCases) { u.now = now }
 }
 
+// WithoutBackgroundJobs leaves jobs that do not finish inline for RunJobs
+// instead of continuing them in a goroutine (tests).
+func WithoutBackgroundJobs() Option {
+	return func(u *UseCases) { u.background = false }
+}
+
 func New(repo interfaces.Repository, workspaces interfaces.Workspaces, store interfaces.AttachmentStore, cfg Config, opts ...Option) (*UseCases, error) {
 	if repo == nil || workspaces == nil || store == nil {
 		return nil, goerr.New("repository, workspaces and attachment store are required")
@@ -82,7 +101,10 @@ func New(repo interfaces.Repository, workspaces interfaces.Workspaces, store int
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	u := &UseCases{repo: repo, workspaces: workspaces, store: store, cfg: cfg, now: func() time.Time { return time.Now().UTC() }}
+	u := &UseCases{
+		repo: repo, workspaces: workspaces, store: store, cfg: cfg,
+		now: func() time.Time { return time.Now().UTC() }, runner: string(model.NewJobID()), background: true,
+	}
 	for _, opt := range opts {
 		opt(u)
 	}
@@ -128,6 +150,10 @@ func requirePrincipal(p *model.Principal) error {
 
 func notFound(kind string, id any) error {
 	return goerr.Wrap(model.ErrNotFound, kind+" not found", goerr.V("id", id))
+}
+
+func busy(paper *model.Paper) error {
+	return goerr.Wrap(model.ErrBusy, "the paper is being moved to another workspace; try again when the move has finished", goerr.V("paper_id", paper.ID), goerr.V("job_id", paper.JobID))
 }
 
 func readOnly() error {
@@ -229,6 +255,9 @@ func (u *UseCases) writablePaper(ctx context.Context, p *model.Principal, wsID m
 	}
 	if paper.IsTrashed() {
 		return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "the paper is in the trash; restore it first", goerr.V("paper_id", id))
+	}
+	if paper.IsBusy() {
+		return nil, nil, busy(paper)
 	}
 	return ws, paper, nil
 }

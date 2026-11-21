@@ -17,4 +17,7 @@ var (
 	// contents someone else has changed since. Retrying with force overwrites.
 	ErrConflict      = goerr.New("conflict with a newer change")
 	ErrAlreadyExists = goerr.New("already exists")
+	// ErrBusy: a background job is working on the paper (a move); try again
+	// when it has finished.
+	ErrBusy = goerr.New("a background job is working on this paper")
 )

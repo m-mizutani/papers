@@ -14,6 +14,7 @@ import (
 	"github.com/m-mizutani/papers/pkg/cli/config"
 	httpctrl "github.com/m-mizutani/papers/pkg/controller/http"
 	"github.com/m-mizutani/papers/pkg/usecase"
+	"github.com/m-mizutani/papers/pkg/utils/async"
 	"github.com/m-mizutani/papers/pkg/utils/errutil"
 	"github.com/m-mizutani/papers/pkg/utils/logging"
 )
@@ -100,6 +101,11 @@ func cmdServe() *cli.Command {
 
 			// Papers in the trash past the retention are deleted for good.
 			go purgeLoop(ctx, uc, time.Hour)
+			// Background jobs whose instance stopped are taken over.
+			async.DispatchCancelable(ctx, func(ctx context.Context) error {
+				jobLoop(ctx, uc, server.JobPoll())
+				return nil
+			})
 
 			errCh := make(chan error, 1)
 			go func() {
@@ -141,6 +147,27 @@ func purgeLoop(ctx context.Context, uc *usecase.UseCases, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func jobLoop(ctx context.Context, uc *usecase.UseCases, every time.Duration) {
+	if every <= 0 {
+		return
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		n, err := uc.RunJobs(ctx)
+		if err != nil {
+			errutil.Handle(ctx, err, "failed to take over background jobs")
+		} else if n > 0 {
+			logging.From(ctx).Info("took over background jobs", "count", n)
 		}
 	}
 }

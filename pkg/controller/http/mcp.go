@@ -47,7 +47,8 @@ Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"delete","block_id":"...","base_rev":3}   {"op":"move","block_id":"...","after":"..."}
 - {"op":"set_title","title":"..."}
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
-- Paper-level ops, each alone in its batch: move_paper {parent, after, workspace}, set_visibility {visibility, parent}, save_version {note}, restore_version {version}, archive / unarchive {subtree}.`
+- Paper-level ops, each alone in its batch: move_paper {parent, after, workspace}, set_visibility {visibility, parent}, save_version {note}, restore_version {version}, archive / unarchive {subtree}.
+- Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs as a background job. Small trees finish within the call. Otherwise the result lists the job with its state; check it with papers_job until it is done or failed. While a move runs, its papers cannot be written (error "busy").`
 
 func (s *Server) mcpHandler() http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: mcpServerVersion}, &mcp.ServerOptions{Instructions: mcpInstructions})
@@ -225,6 +226,8 @@ type mcpWriteOut struct {
 	Version     *int                    `json:"version,omitempty"`
 	NotRestored []usecase.NotRestored   `json:"not_restored,omitempty"`
 	MovedTo     *model.Forward          `json:"moved_to,omitempty"`
+	// Jobs are background jobs the write started.
+	Jobs []mcpJob `json:"jobs,omitempty"`
 	// Unsaved reminds that the change is not in a version yet.
 	Unsaved        bool   `json:"unsaved"`
 	WorkspaceRules string `json:"workspace_rules,omitempty"`
@@ -258,6 +261,28 @@ type mcpVersion struct {
 
 type mcpVersionsOut struct {
 	Versions []mcpVersion `json:"versions"`
+}
+
+// mcpJob is a background job as agents see it.
+type mcpJob struct {
+	ID      model.JobID      `json:"id"`
+	Kind    model.JobKind    `json:"kind"`
+	PaperID model.PaperID    `json:"paper_id"`
+	State   model.JobState   `json:"state"`
+	Phase   model.JobPhase   `json:"phase"`
+	Done    int              `json:"done"`
+	Total   int              `json:"total"`
+	Result  *model.JobResult `json:"result,omitempty"`
+	Error   string           `json:"error,omitempty"`
+}
+
+func jobOut(j *model.Job) mcpJob {
+	return mcpJob{ID: j.ID, Kind: j.Kind, PaperID: j.PaperID, State: j.State, Phase: j.Phase, Done: j.Done, Total: j.Total, Result: j.Result, Error: j.Error}
+}
+
+type mcpJobIn struct {
+	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
+	Job         model.JobID       `json:"job" jsonschema:"job id from a write result"`
 }
 
 type mcpDiffIn struct {
@@ -404,6 +429,9 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				Trashed: res.Trashed, Archived: res.Archived, Editing: res.Editing, NotRestored: res.NotRestored,
 				MovedTo: res.Forward, Unsaved: res.Version == nil, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
 			}
+			for _, j := range res.Jobs {
+				out.Jobs = append(out.Jobs, jobOut(j))
+			}
 			for _, b := range res.Blocks {
 				out.Revs[b.ID] = b.Rev
 			}
@@ -466,6 +494,15 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				return nil, err
 			}
 			return s.uc.Diff(ctx, p, in.WorkspaceID, q.ID, from, to)
+		})
+
+	addTool(server, "papers_job", "Check a background job you started (state queued, running, done or failed; progress done/total; result).",
+		func(ctx context.Context, p *model.Principal, in mcpJobIn) (mcpJob, error) {
+			j, err := s.uc.GetJob(ctx, p, in.WorkspaceID, in.Job)
+			if err != nil {
+				return mcpJob{}, err
+			}
+			return jobOut(j), nil
 		})
 }
 
