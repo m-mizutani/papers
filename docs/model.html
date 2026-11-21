@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>papers モデルと概念</title>
+<title>papers model and concepts</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
@@ -74,59 +74,59 @@ dl.fields dd{margin:0}
 </head>
 <body>
 <article class="sheet">
-<h1>papers モデルと概念</h1>
-<p class="lede">papers が扱うものを、言葉の意味・持つ値・守る約束・一生の流れまで一つずつ定める。コードを読まなくても、何を保存し、何が起きたら何が変わるかが分かることを目指す。</p>
-<p class="meta">2026-11-21 起草。同日、D10・D11（テキストの装飾とリッチ編集）を追加し、ワークスペースを設定ファイルで定義することを決定（hecatoncheires と同じ方式）。<a href="https://claude.ai/artifact/QQBcNy25EuKL2HprUn5mhC">コードベースの地図</a>を出発点にした設計の詳細化。同日、D1〜D18 の大半を決定し、版を「明示的に保存された写し」だけにまとめ（D15）、モデルを図（実体と関係、ペーパーの状態、保存先の配置）で表した。<a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">ペーパーの整理</a>での決定（ペーパーの入れ子・ホーム・版・移動）を反映。まだ実装は変えない（決めることが決まってから着手する）。2026-11-22、配下すべてに及ぶ処理とワークスペースをまたぐ移動を<a href="#job">裏の処理</a>で進めることを決定（<a href="#d-job">D19</a>）。</p>
-<p class="callout"><b>この文書を papers のモデルと概念の正本とする（2026-11-22 決定）</b>。用語・実体と関係・値・不変条件・アクセス・保存先の配置・操作・衝突の規則・版について、他の文書（<code>docs/design.html</code>、<code>docs/concurrency.html</code>、<code>docs/codebase.html</code>、<code>docs/organize.html</code>）と食い違うときは、この文書に従う。今のコードもこの文書とは違う（実装はまだ追いついていない）。</p>
-<ul class="legend ui"><li class="block human">決定済み・実装済み</li><li class="block held">決めること（選択肢と推奨つき）</li><li class="block agent">AI に関わること</li></ul>
-<nav aria-label="目次"><a href="#terms">用語</a><a href="#map">全体の関係</a><a href="#ids">ID</a><a href="#workspace">ワークスペース</a><a href="#paper">ペーパー</a><a href="#tree">木</a><a href="#job">裏の処理</a><a href="#block">ブロック</a><a href="#version">今の状態と版</a><a href="#commit">操作</a><a href="#conflict">衝突</a><a href="#actor">書き手と主体</a><a href="#access">アクセス</a><a href="#storage">保存先</a><a href="#derived">派生データ</a><a href="#invariants">不変条件</a><a href="#decide">決めること</a></nav>
+<h1>papers model and concepts</h1>
+<p class="lede">Everything papers handles, defined one by one: what the words mean, what values things hold, the promises kept, and how things live and change. The aim is to know what is stored, and what changes when something happens, without reading the code.</p>
+<p class="meta">Drafted 2026-11-21. The same day D10 and D11 (text formatting and rich editing) were added and workspaces were decided to be defined in configuration files (as in hecatoncheires). It details the design starting from the <a href="https://claude.ai/artifact/QQBcNy25EuKL2HprUn5mhC">codebase map</a>. Also the same day most of D1–D18 were decided, versions were reduced to "copies saved on purpose" (D15), and the model was drawn (entities and relations, paper states, storage layout). The decisions of <a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">Organizing papers</a> (nesting, the home, versions, moves) are included. On 2026-11-22, work on whole subtrees and moves across workspaces were decided to run as <a href="#job">background jobs</a> (<a href="#d-job">D19</a>), and the model was implemented.</p>
+<p class="callout"><b>This document is the source of truth for papers' model and concepts (decided 2026-11-22)</b>. On terms, entities and relations, values, invariants, access, storage layout, operations, conflict rules and versions, when another document (<code>docs/design.html</code>, <code>docs/concurrency.html</code>, <code>docs/codebase.html</code>, <code>docs/organize.html</code>) or the code disagrees, this document wins.</p>
+<ul class="legend ui"><li class="block human">decided and implemented</li><li class="block held">to decide (with options and a recommendation)</li><li class="block agent">concerns AI</li></ul>
+<nav aria-label="Contents"><a href="#terms">Terms</a><a href="#map">Overview</a><a href="#ids">IDs</a><a href="#workspace">Workspaces</a><a href="#paper">Papers</a><a href="#tree">Tree</a><a href="#job">Background jobs</a><a href="#block">Blocks</a><a href="#version">Current state and versions</a><a href="#commit">Operations</a><a href="#conflict">Conflicts</a><a href="#actor">Writers and principals</a><a href="#access">Access</a><a href="#storage">Storage</a><a href="#derived">Derived data</a><a href="#invariants">Invariants</a><a href="#decide">Decisions</a></nav>
 
 <section id="terms">
-<h2>用語</h2>
-<p>画面・API・コード・この文書で同じ言葉を同じ意味で使う。英語名はコードと API の名前。</p>
+<h2>Terms</h2>
+<p>Screens, the API, the code and this document use the same words with the same meanings. The second column is the name in the code and the API.</p>
 <div class="scroll"><table>
-<thead><tr><th>用語</th><th>英語名</th><th>意味</th></tr></thead>
+<thead><tr><th>Term</th><th>Code name</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td>ワークスペース</td><td><code>Workspace</code></td><td>ペーパーの入れ物で、権限の基本単位。利用者が画面で切り替える単位でもある。<b>設定ファイルで定義し、データとしては持たない</b>。</td></tr>
-<tr><td>ペーパー</td><td><code>Paper</code></td><td>タイトルとブロックの並びからなる 1 つの文書。人と AI が一緒に書く。他のペーパーを子として本文に埋め込める。</td></tr>
-<tr><td>ホーム</td><td>home</td><td>ワークスペースごとに 1 つある根のペーパー。消せない・動かせない。</td></tr>
-<tr><td>ペーパーブロック</td><td><code>paper</code> ブロック</td><td>親の本文の中に子ペーパーを置くブロック。子の ID だけを持つ。</td></tr>
-<tr><td>親・子・配下</td><td><code>ParentID</code></td><td>ペーパーブロックで本文に置かれたペーパーが子、置いた側が親。子の子まで含めて配下。</td></tr>
-<tr><td>ブロック</td><td><code>Block</code></td><td>編集・衝突の最小単位。段落、見出し、表のセル、AI が書く図など。</td></tr>
-<tr><td>内容</td><td>contents</td><td>ブロックの種類・本文・属性の 3 つ。「内容が変わった」はこの 3 つのどれかが変わったこと。</td></tr>
-<tr><td>位置</td><td>position</td><td>ブロックの親と並び順キー。内容とは別に扱い、位置の変更は衝突にならない。</td></tr>
-<tr><td>今の状態</td><td>current</td><td><b>編集中の最新版</b>。人と AI の書き込みはすぐにここへ反映される。自動保存という概念はなく、書けばそれが今の状態になる。</td></tr>
-<tr><td>版</td><td><code>Version</code></td><td>書き手（人か AI）が<b>明示的に保存した</b>、ペーパー全体の不変の写し。システムが勝手に作ることはない。ペーパーごとに v1, v2 … と数える。履歴の参照と復元は版の単位で行う。</td></tr>
-<tr><td>状態</td><td>status</td><td>下書き（版なし）・正本（版あり）・アーカイブ。版とアーカイブの印から決まる。</td></tr>
-<tr><td>操作</td><td><code>Op</code></td><td>書き手が頼む変更 1 つ。挿入・更新・削除・移動・タイトル変更・Markdown の挿入。ペーパーの移動・公開範囲の変更・版の保存・版への復元・アーカイブもある。</td></tr>
-<tr><td>操作のまとまり</td><td>batch</td><td>書き手が 1 回のリクエストで送る操作の列。全部適用するか全部やめるか。記録としては残らない（残るのは今の状態と版）。</td></tr>
-<tr><td>元のリビジョン</td><td><code>base_rev</code></td><td>書き手が読んだときの、そのブロックの内部の更新番号（<code>Rev</code>）。衝突の判定だけに使い、画面には出さない。</td></tr>
-<tr><td>衝突</td><td><code>Conflict</code></td><td>読んだ後に、他の書き手がそのブロックの内容を変えていたこと。その書き込みは拒否される。</td></tr>
-<tr><td>強行</td><td><code>force</code></td><td>衝突を承知で上書きすること。上書きした結果が今の状態になる（記録は残らない）。</td></tr>
-<tr><td>復元</td><td><code>restore</code></td><td>ペーパーの今の状態を、ある版の中身に戻すこと。版は書き換えない。ブロックごとには戻さない。</td></tr>
-<tr><td>書き手</td><td><code>Actor</code></td><td>変更を行った者の記録。人か AI か、誰の代理か。</td></tr>
-<tr><td>主体</td><td><code>Principal</code></td><td>いまリクエストしてきた者。ユーザーと、使っているトークン。アクセスの判定に使う。</td></tr>
-<tr><td>公開範囲</td><td><code>Visibility</code></td><td>ペーパーごとの public / private。public はワークスペースを使える人全員が読み書きでき、private は作ったユーザーだけ。</td></tr>
-<tr><td>ピン</td><td><code>Pin</code></td><td>ユーザーがサイドバーに出すお気に入りのペーパー。本人だけのもの。</td></tr>
-<tr><td>検索エントリ</td><td><code>SearchEntry</code></td><td>タイトルとブロックの平文の写し。検索のためだけにある派生データ。</td></tr>
-<tr><td>変更フィード</td><td><code>Event</code></td><td>開いているペーパーの変更を、変更後の状態として画面に届ける流れ。</td></tr>
+<tr><td>Workspace</td><td><code>Workspace</code></td><td>The container of papers and the basic unit of access; also what users switch between on screen. <b>Defined in configuration files, not stored as data</b>.</td></tr>
+<tr><td>Paper</td><td><code>Paper</code></td><td>One document: a title and a list of blocks, written by people and AI together. Other papers can be embedded in its body as children.</td></tr>
+<tr><td>Home</td><td>home</td><td>The root paper; one per workspace. It cannot be deleted or moved.</td></tr>
+<tr><td>Paper block</td><td><code>paper</code> block</td><td>The block that places a child paper in its parent's body. It holds only the child's ID.</td></tr>
+<tr><td>Parent, child, subtree</td><td><code>ParentID</code></td><td>A paper placed in a body by a paper block is a child; the paper whose body it is, the parent. A paper's subtree is its children, their children, and so on.</td></tr>
+<tr><td>Block</td><td><code>Block</code></td><td>The smallest unit of editing and of conflicts: a paragraph, a heading, a table cell, a diagram written by AI, and so on.</td></tr>
+<tr><td>Contents</td><td>contents</td><td>A block's type, text and properties. "The contents changed" means one of those three changed.</td></tr>
+<tr><td>Position</td><td>position</td><td>A block's parent and order key. Handled apart from the contents; changing a position is never a conflict.</td></tr>
+<tr><td>Current state</td><td>current</td><td><b>The latest state being edited</b>. Writes by people and AI show here at once. There is no autosave: whatever is written is the current state.</td></tr>
+<tr><td>Version</td><td><code>Version</code></td><td>An immutable copy of the whole paper that a writer (person or AI) <b>saved on purpose</b>. The system never makes one. Counted per paper as v1, v2 … History is referred to and restored by version.</td></tr>
+<tr><td>Status</td><td>status</td><td>Draft (no version), canonical (has versions) or archived. Follows from the versions and the archive mark.</td></tr>
+<tr><td>Operation</td><td><code>Op</code></td><td>One change a writer asks for: insert, update, delete, move, change the title, insert Markdown. Also moving a paper, changing its visibility, saving a version, restoring a version, archiving.</td></tr>
+<tr><td>Batch</td><td>batch</td><td>The list of operations a writer sends in one request; all are applied or none. It is not recorded (what remains is the current state and versions).</td></tr>
+<tr><td>Base revision</td><td><code>base_rev</code></td><td>The block's internal update number (<code>Rev</code>) when the writer read it. Used only to judge conflicts; never shown on screen.</td></tr>
+<tr><td>Conflict</td><td><code>Conflict</code></td><td>Another writer changed the block's contents after it was read. The write is refused.</td></tr>
+<tr><td>Force</td><td><code>force</code></td><td>Overwriting despite a conflict. The result becomes the current state (nothing else is recorded).</td></tr>
+<tr><td>Restore</td><td><code>restore</code></td><td>Setting a paper's current state back to a version's contents. The version is not rewritten. There is no per-block restore.</td></tr>
+<tr><td>Writer</td><td><code>Actor</code></td><td>The record of who made a change: a person or an AI, and for whom.</td></tr>
+<tr><td>Principal</td><td><code>Principal</code></td><td>Who is making the current request: the user and the token in use. Used to decide access.</td></tr>
+<tr><td>Visibility</td><td><code>Visibility</code></td><td>public / private, per paper. A public paper can be read and written by everyone who may use the workspace; a private one only by the user who created it.</td></tr>
+<tr><td>Pin</td><td><code>Pin</code></td><td>A paper a user keeps in the sidebar; personal.</td></tr>
+<tr><td>Search entry</td><td><code>SearchEntry</code></td><td>A plain-text copy of a title or a block, kept only for search (derived data).</td></tr>
+<tr><td>Change feed</td><td><code>Event</code></td><td>How changes to an open paper reach screens, as the resulting state.</td></tr>
 </tbody></table></div>
 </section>
 
 <section id="map">
-<h2>全体の関係</h2>
+<h2>Overview</h2>
 <figure class="wide">
-<svg viewBox="0 0 1000 690" role="img" aria-label="実体と関係の図。設定ファイルのワークスペースがペーパーを含み、ホームのペーパーを 1 つ持つ。ペーパーはブロック、版、添付を持ち、親のペーパーを持つ。paper ブロックは子のペーパーを、image ブロックは添付を指す。ペーパーは明示的に保存された版を持ち、版は各ブロックの中身の写しを指す。検索エントリはブロックとタイトルの派生の写し。ユーザーはピン、トークン、セッションを持つ。">
+<svg viewBox="0 0 1000 690" role="img" aria-label="Entities and relations. A workspace from the configuration contains papers and has one home paper. A paper has blocks, versions and attachments, and a parent paper. A paper block points to a child paper and an image block to an attachment. A paper has versions saved on purpose, which point to snapshots of each block's contents. Search entries are derived copies of blocks and titles. A user has pins, tokens and sessions.">
 <defs><marker id="erm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
-<g><path d="M230 48H266" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="234" y="44" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="258" y="44" font-size="11" text-anchor="end" style="fill:var(--faint)">N</text><text x="248" y="62" font-size="11" text-anchor="middle" style="fill:var(--faint)">含む</text><path d="M230 96H266" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="248" y="90" font-size="11" text-anchor="middle" style="fill:var(--faint)">ホーム</text><text x="248" y="110" font-size="11" text-anchor="middle" style="fill:var(--faint)">1:1</text><path d="M500 48H536" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="504" y="44" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="530" y="44" font-size="11" text-anchor="end" style="fill:var(--faint)">N</text><text x="518" y="62" font-size="11" text-anchor="middle" style="fill:var(--faint)">本文</text><path d="M540 150H504" fill="none" stroke="var(--human)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="520" y="140" font-size="11" text-anchor="middle" style="fill:var(--human)">子</text><text x="520" y="164" font-size="11" text-anchor="middle" style="fill:var(--human)">1:1</text><path d="M385 201V326" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="391" y="216" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="391" y="320" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text><text x="391" y="266" font-size="11" text-anchor="start" style="fill:var(--faint)">版</text><path d="M270 185H256V605H266" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="250" y="200" font-size="11" text-anchor="end" style="fill:var(--faint)">1</text><text x="250" y="599" font-size="11" text-anchor="end" style="fill:var(--faint)">N</text><path d="M500 392H536" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="518" y="386" font-size="11" text-anchor="middle" style="fill:var(--faint)">中身</text><text x="518" y="408" font-size="11" text-anchor="middle" style="fill:var(--faint)">N:N</text><path d="M650 167V296" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="656" y="182" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="656" y="290" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text><text x="656" y="230" font-size="11" text-anchor="start" style="fill:var(--faint)">版を保存するときに</text><text x="656" y="246" font-size="11" text-anchor="start" style="fill:var(--faint)">変わったものだけ写す</text><path d="M556 167V172H526V630H504" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="520" y="470" font-size="11" text-anchor="end" style="fill:var(--faint)">image</text><text x="520" y="484" font-size="11" text-anchor="end" style="fill:var(--faint)">→ 添付</text><path d="M760 150H782V556H764" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="786" y="470" font-size="11" text-anchor="start" style="fill:var(--faint)">写し</text><path d="M120 320V280" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="126" y="314" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="126" y="292" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text><path d="M230 222H266" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="248" y="216" font-size="11" text-anchor="middle" style="fill:var(--faint)">指す</text><path d="M120 409V446" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="126" y="424" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="126" y="442" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text></g>
+<g><path d="M230 48H266" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="234" y="44" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="258" y="44" font-size="11" text-anchor="end" style="fill:var(--faint)">N</text><text x="248" y="62" font-size="11" text-anchor="middle" style="fill:var(--faint)">contains</text><path d="M230 96H266" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="248" y="90" font-size="11" text-anchor="middle" style="fill:var(--faint)">home</text><text x="248" y="110" font-size="11" text-anchor="middle" style="fill:var(--faint)">1:1</text><path d="M500 48H536" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="504" y="44" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="530" y="44" font-size="11" text-anchor="end" style="fill:var(--faint)">N</text><text x="518" y="62" font-size="11" text-anchor="middle" style="fill:var(--faint)">body</text><path d="M540 150H504" fill="none" stroke="var(--human)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="520" y="140" font-size="11" text-anchor="middle" style="fill:var(--human)">child</text><text x="520" y="164" font-size="11" text-anchor="middle" style="fill:var(--human)">1:1</text><path d="M385 201V326" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="391" y="216" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="391" y="320" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text><text x="391" y="266" font-size="11" text-anchor="start" style="fill:var(--faint)">versions</text><path d="M270 185H256V605H266" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="250" y="200" font-size="11" text-anchor="end" style="fill:var(--faint)">1</text><text x="250" y="599" font-size="11" text-anchor="end" style="fill:var(--faint)">N</text><path d="M500 392H536" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="518" y="386" font-size="11" text-anchor="middle" style="fill:var(--faint)">contents</text><text x="518" y="408" font-size="11" text-anchor="middle" style="fill:var(--faint)">N:N</text><path d="M650 167V296" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="656" y="182" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="656" y="290" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text><text x="656" y="230" font-size="11" text-anchor="start" style="fill:var(--faint)">copied on save,</text><text x="656" y="246" font-size="11" text-anchor="start" style="fill:var(--faint)">only what changed</text><path d="M556 167V172H526V630H504" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="520" y="470" font-size="11" text-anchor="end" style="fill:var(--faint)">image</text><text x="520" y="484" font-size="11" text-anchor="end" style="fill:var(--faint)">→ attachment</text><path d="M760 150H782V556H764" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="786" y="470" font-size="11" text-anchor="start" style="fill:var(--faint)">copy</text><path d="M120 320V280" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="126" y="314" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="126" y="292" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text><path d="M230 222H266" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#erm)"/><text x="248" y="216" font-size="11" text-anchor="middle" style="fill:var(--faint)">points to</text><path d="M120 409V446" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#erm)"/><text x="126" y="424" font-size="11" text-anchor="start" style="fill:var(--faint)">1</text><text x="126" y="442" font-size="11" text-anchor="start" style="fill:var(--faint)">N</text></g>
 <rect x="10" y="10" width="220" height="106" rx="6" stroke="var(--held)" fill="var(--sheet)" stroke-width="1.3" stroke-dasharray="2 3"/>
-<text x="20" y="30" font-size="13" font-weight="600">Workspace（設定ファイル）</text>
+<text x="20" y="30" font-size="13" font-weight="600">Workspace (config file)</text>
 <path d="M10 38H230" stroke="var(--rule)"/>
-<text x="20" y="54" font-size="11.5" style="fill:var(--soft)">id（名前・不変）</text>
+<text x="20" y="54" font-size="11.5" style="fill:var(--soft)">id (name, never changes)</text>
 <text x="20" y="71" font-size="11.5" style="fill:var(--soft)">name / description</text>
-<text x="20" y="88" font-size="11.5" style="fill:var(--soft)">authz（Rego → allow）</text>
-<text x="20" y="105" font-size="11.5" style="fill:var(--soft)">保存先: HomePaperID</text><rect x="10" y="170" width="220" height="106" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
-<text x="20" y="190" font-size="13" font-weight="600">Pin（お気に入り）</text>
+<text x="20" y="88" font-size="11.5" style="fill:var(--soft)">authz (Rego → allow)</text>
+<text x="20" y="105" font-size="11.5" style="fill:var(--soft)">stored: HomePaperID</text><rect x="10" y="170" width="220" height="106" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
+<text x="20" y="190" font-size="13" font-weight="600">Pin</text>
 <path d="M10 198H230" stroke="var(--rule)"/>
 <text x="20" y="214" font-size="11.5" style="fill:var(--soft)">UserID</text>
 <text x="20" y="231" font-size="11.5" style="fill:var(--soft)">WorkspaceID</text>
@@ -136,277 +136,277 @@ dl.fields dd{margin:0}
 <path d="M10 348H230" stroke="var(--rule)"/>
 <text x="20" y="364" font-size="11.5" style="fill:var(--soft)">ID</text>
 <text x="20" y="381" font-size="11.5" style="fill:var(--soft)">Email / Name</text>
-<text x="20" y="398" font-size="11.5" style="fill:var(--soft)">Identity（外部 ID）1:N</text><rect x="10" y="450" width="220" height="106" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
+<text x="20" y="398" font-size="11.5" style="fill:var(--soft)">Identity (external ID) 1:N</text><rect x="10" y="450" width="220" height="106" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
 <text x="20" y="470" font-size="13" font-weight="600">Token / Session</text>
 <path d="M10 478H230" stroke="var(--rule)"/>
-<text x="20" y="494" font-size="11.5" style="fill:var(--soft)">ID + 秘密のハッシュ</text>
+<text x="20" y="494" font-size="11.5" style="fill:var(--soft)">ID + hash of the secret</text>
 <text x="20" y="511" font-size="11.5" style="fill:var(--soft)">UserID</text>
-<text x="20" y="528" font-size="11.5" style="fill:var(--soft)">読み取り / 書き込み</text>
-<text x="20" y="545" font-size="11.5" style="fill:var(--soft)">使えるワークスペース</text><rect x="10" y="600" width="220" height="72" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
-<text x="20" y="620" font-size="13" font-weight="600">Forward（転送の記録）</text>
+<text x="20" y="528" font-size="11.5" style="fill:var(--soft)">read / write</text>
+<text x="20" y="545" font-size="11.5" style="fill:var(--soft)">usable workspaces</text><rect x="10" y="600" width="220" height="72" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
+<text x="20" y="620" font-size="13" font-weight="600">Forward</text>
 <path d="M10 628H230" stroke="var(--rule)"/>
-<text x="20" y="644" font-size="11.5" style="fill:var(--soft)">元の ID</text>
-<text x="20" y="661" font-size="11.5" style="fill:var(--soft)">移動先のワークスペースと ID</text><rect x="270" y="10" width="230" height="191" rx="6" stroke="var(--human)" fill="var(--sheet)" stroke-width="1.6"/>
+<text x="20" y="644" font-size="11.5" style="fill:var(--soft)">old ID</text>
+<text x="20" y="661" font-size="11.5" style="fill:var(--soft)">target workspace and ID</text><rect x="270" y="10" width="230" height="191" rx="6" stroke="var(--human)" fill="var(--sheet)" stroke-width="1.6"/>
 <text x="280" y="30" font-size="13" font-weight="600">Paper</text>
 <path d="M270 38H500" stroke="var(--rule)"/>
 <text x="280" y="54" font-size="11.5" style="fill:var(--soft)">ID / WorkspaceID</text>
 <text x="280" y="71" font-size="11.5" style="fill:var(--soft)">Title</text>
-<text x="280" y="88" font-size="11.5" style="fill:var(--soft)">ParentID（親の Paper）</text>
-<text x="280" y="105" font-size="11.5" style="fill:var(--soft)">Visibility（public / private）</text>
-<text x="280" y="122" font-size="11.5" style="fill:var(--soft)">VersionNumber（0 = 下書き）</text>
+<text x="280" y="88" font-size="11.5" style="fill:var(--soft)">ParentID (parent Paper)</text>
+<text x="280" y="105" font-size="11.5" style="fill:var(--soft)">Visibility (public / private)</text>
+<text x="280" y="122" font-size="11.5" style="fill:var(--soft)">VersionNumber (0 = draft)</text>
 <text x="280" y="139" font-size="11.5" style="fill:var(--soft)">ArchivedAt</text>
 <text x="280" y="156" font-size="11.5" style="fill:var(--soft)">DeletedAt / DeletedWith</text>
 <text x="280" y="173" font-size="11.5" style="fill:var(--soft)">CreatedBy</text>
 <text x="280" y="190" font-size="11.5" style="fill:var(--soft)">UpdatedAt / UpdatedBy</text><rect x="270" y="330" width="230" height="123" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
-<text x="280" y="350" font-size="13" font-weight="600">Version（版）</text>
+<text x="280" y="350" font-size="13" font-weight="600">Version</text>
 <path d="M270 358H500" stroke="var(--rule)"/>
-<text x="280" y="374" font-size="11.5" style="fill:var(--soft)">PaperID + Number（v1, v2 …）</text>
+<text x="280" y="374" font-size="11.5" style="fill:var(--soft)">PaperID + Number (v1, v2 …)</text>
 <text x="280" y="391" font-size="11.5" style="fill:var(--soft)">Title</text>
-<text x="280" y="408" font-size="11.5" style="fill:var(--soft)">Blocks[(ID, Rev, 位置)]</text>
+<text x="280" y="408" font-size="11.5" style="fill:var(--soft)">Blocks[(ID, Rev, position)]</text>
 <text x="280" y="425" font-size="11.5" style="fill:var(--soft)">Note</text>
-<text x="280" y="442" font-size="11.5" style="fill:var(--soft)">CreatedBy（人 / AI）/ At</text><rect x="540" y="300" width="220" height="72" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
-<text x="550" y="320" font-size="13" font-weight="600">BlockSnapshot（版が指す中身）</text>
+<text x="280" y="442" font-size="11.5" style="fill:var(--soft)">CreatedBy (person / AI) / At</text><rect x="540" y="300" width="220" height="72" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
+<text x="550" y="320" font-size="13" font-weight="600">BlockSnapshot (contents for versions)</text>
 <path d="M540 328H760" stroke="var(--rule)"/>
 <text x="550" y="344" font-size="11.5" style="fill:var(--soft)">BlockID + Rev</text>
-<text x="550" y="361" font-size="11.5" style="fill:var(--soft)">種類・本文・属性（不変）</text><rect x="270" y="560" width="230" height="106" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
+<text x="550" y="361" font-size="11.5" style="fill:var(--soft)">type, text, props (immutable)</text><rect x="270" y="560" width="230" height="106" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.3"/>
 <text x="280" y="580" font-size="13" font-weight="600">Attachment</text>
 <path d="M270 588H500" stroke="var(--rule)"/>
 <text x="280" y="604" font-size="11.5" style="fill:var(--soft)">ID / PaperID</text>
 <text x="280" y="621" font-size="11.5" style="fill:var(--soft)">Name / Type / Size</text>
 <text x="280" y="638" font-size="11.5" style="fill:var(--soft)">SHA256</text>
-<text x="280" y="655" font-size="11.5" style="fill:var(--soft)">中身は AttachmentStore</text><rect x="540" y="10" width="220" height="157" rx="6" stroke="var(--human)" fill="var(--sheet)" stroke-width="1.6"/>
+<text x="280" y="655" font-size="11.5" style="fill:var(--soft)">bytes in AttachmentStore</text><rect x="540" y="10" width="220" height="157" rx="6" stroke="var(--human)" fill="var(--sheet)" stroke-width="1.6"/>
 <text x="550" y="30" font-size="13" font-weight="600">Block</text>
 <path d="M540 38H760" stroke="var(--rule)"/>
 <text x="550" y="54" font-size="11.5" style="fill:var(--soft)">ID / PaperID</text>
-<text x="550" y="71" font-size="11.5" style="fill:var(--soft)">Type（paper・image・table …）</text>
-<text x="550" y="88" font-size="11.5" style="fill:var(--soft)">Content（記法つき文字列）</text>
+<text x="550" y="71" font-size="11.5" style="fill:var(--soft)">Type (paper, image, table …)</text>
+<text x="550" y="88" font-size="11.5" style="fill:var(--soft)">Content (markup string)</text>
 <text x="550" y="105" font-size="11.5" style="fill:var(--soft)">Props</text>
-<text x="550" y="122" font-size="11.5" style="fill:var(--soft)">ParentID（表 → セル）/ Order</text>
-<text x="550" y="139" font-size="11.5" style="fill:var(--soft)">Rev（内部の更新番号）</text>
+<text x="550" y="122" font-size="11.5" style="fill:var(--soft)">ParentID (table → cell) / Order</text>
+<text x="550" y="139" font-size="11.5" style="fill:var(--soft)">Rev (internal revision)</text>
 <text x="550" y="156" font-size="11.5" style="fill:var(--soft)">CreatedBy / UpdatedBy</text><rect x="540" y="520" width="220" height="72" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.2" stroke-dasharray="5 4"/>
-<text x="550" y="540" font-size="13" font-weight="600">SearchEntry（派生）</text>
+<text x="550" y="540" font-size="13" font-weight="600">SearchEntry (derived)</text>
 <path d="M540 548H760" stroke="var(--rule)"/>
 <text x="550" y="564" font-size="11.5" style="fill:var(--soft)">PaperID + BlockID | title</text>
-<text x="550" y="581" font-size="11.5" style="fill:var(--soft)">平文（記法を除く）</text><rect x="800" y="10" width="190" height="89" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.2" stroke-dasharray="5 4"/>
-<text x="810" y="30" font-size="13" font-weight="600">Event（変更フィード）</text>
+<text x="550" y="581" font-size="11.5" style="fill:var(--soft)">plain text (no markup)</text><rect x="800" y="10" width="190" height="89" rx="6" stroke="currentColor" fill="var(--sheet)" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="810" y="30" font-size="13" font-weight="600">Event (change feed)</text>
 <path d="M800 38H990" stroke="var(--rule)"/>
 <text x="810" y="54" font-size="11.5" style="fill:var(--soft)">PaperID</text>
-<text x="810" y="71" font-size="11.5" style="fill:var(--soft)">変わったブロック</text>
-<text x="810" y="88" font-size="11.5" style="fill:var(--soft)">一時的（TTL）</text><rect x="800" y="230" width="190" height="106" rx="6" stroke="var(--agent)" fill="var(--sheet)" stroke-width="1.2" stroke-dasharray="1 3"/>
-<text x="810" y="250" font-size="13" font-weight="600">Actor（値）</text>
+<text x="810" y="71" font-size="11.5" style="fill:var(--soft)">changed blocks</text>
+<text x="810" y="88" font-size="11.5" style="fill:var(--soft)">short-lived (TTL)</text><rect x="800" y="230" width="190" height="106" rx="6" stroke="var(--agent)" fill="var(--sheet)" stroke-width="1.2" stroke-dasharray="1 3"/>
+<text x="810" y="250" font-size="13" font-weight="600">Actor (value)</text>
 <path d="M800 258H990" stroke="var(--rule)"/>
-<text x="810" y="274" font-size="11.5" style="fill:var(--soft)">人 / AI</text>
-<text x="810" y="291" font-size="11.5" style="fill:var(--soft)">代理元の UserID</text>
-<text x="810" y="308" font-size="11.5" style="fill:var(--soft)">表示名 / AI の名前</text>
+<text x="810" y="274" font-size="11.5" style="fill:var(--soft)">person / AI</text>
+<text x="810" y="291" font-size="11.5" style="fill:var(--soft)">UserID acted for</text>
+<text x="810" y="308" font-size="11.5" style="fill:var(--soft)">display name / AI name</text>
 <text x="810" y="325" font-size="11.5" style="fill:var(--soft)">TokenID</text>
 </svg>
-<figcaption>実体と関係。四角が実体で、中は主な値。<b>青</b>は人と AI が書く中心（ペーパーとブロック）、<b>橙の点線</b>は保存先ではなく設定ファイルにあるもの、<b>破線</b>は派生（作り直せる写し）、<b>紫の点線</b>は単独では保存しない値（ブロック・版に埋め込む）。実線の矢印は「持つ」（1:N）、破線の矢印は「指す」。ペーパーの入れ子は、親の本文の <code>paper</code> ブロックが子を指し、子が <code>ParentID</code> で親を持つ形で表す（<a href="#tree">木</a>）。</figcaption>
+<figcaption>Entities and relations. Boxes are entities with their main values. <b>Blue</b> is the core that people and AI write (papers and blocks), <b>amber dotted</b> lives in configuration files rather than storage, <b>dashed</b> is derived (copies that can be rebuilt), and <b>violet dotted</b> are values never stored on their own (embedded in blocks and versions). Solid arrows mean "has" (1:N), dashed arrows "points to". Nesting is a <code>paper</code> block in the parent's body pointing to the child, and the child keeping its parent in <code>ParentID</code> (<a href="#tree">Tree</a>).</figcaption>
 </figure>
-<p>保存の階層もこの入れ子のとおり（<code>workspaces/{ws}/papers/{p}/blocks/{b}</code>、<code>…/papers/{p}/versions/{n}</code>、<code>workspaces/{ws}/search/{…}</code>。全体は<a href="#storage">保存先の配置</a>）。ワークスペースそのものは設定にあり、保存先には ID の名前空間としてだけ現れる。ユーザー・トークン・セッションはワークスペースの外にある。</p>
+<p>Storage follows the same nesting (<code>workspaces/{ws}/papers/{p}/blocks/{b}</code>, <code>…/papers/{p}/versions/{n}</code>, <code>workspaces/{ws}/search/{…}</code>; the whole layout is in <a href="#storage">Storage</a>). Workspaces themselves are configuration and appear in storage only as an ID namespace. Users, tokens and sessions live outside workspaces.</p>
 </section>
 
 <section id="ids" class="concept">
 <h2 style="margin-top:8px">ID</h2>
-<p>ID は papers が発行し、外部のサービスの ID（Google の subject など）をそのまま使わない。一度決めた ID は変えず、削除後も使い回さない。</p>
+<p>papers issues its own IDs and never uses an external service's ID (a Google subject, say) directly. An ID never changes and is never reused after deletion.</p>
 <div class="scroll"><table>
-<thead><tr><th>対象</th><th>形式</th><th>発行</th><th>例</th></tr></thead>
+<thead><tr><th>What</th><th>Format</th><th>Issued by</th><th>Example</th></tr></thead>
 <tbody>
-<tr><td>ワークスペース</td><td>小文字・数字・ハイフンの短い名前（<code>^[a-z0-9]+(-[a-z0-9]+)*$</code>、63 文字まで）</td><td>設定ファイルに書く</td><td><code>security</code></td></tr>
-<tr><td>すべて（ペーパー・ブロック・添付・ユーザー・セッション・トークン）</td><td>UUID v4（ランダム 122 ビット）を英数字だけの base62（<code>0-9 A-Z a-z</code>）にした 22 文字。短いときは先頭を <code>0</code> で埋めて長さを揃える</td><td>サーバー</td><td><code>1csQdaLtbzOEz6NzfMfH6Z</code></td></tr>
-<tr><td>版</td><td>ペーパーごとの通し番号（1, 2, 3 …）</td><td>サーバー（保存のトランザクション内）</td><td><code>…/papers/{id}/versions/2</code></td></tr>
-<tr><td>ブロックの更新番号（<code>Rev</code>）</td><td>ブロックごとの内部の番号。内容が変わるたびに 1 増える</td><td>サーバー</td><td>画面には出さない</td></tr>
-<tr><td>検索エントリ</td><td><code>{ペーパー ID}_{ブロック ID}</code>、タイトルは <code>{ペーパー ID}_title</code></td><td>サーバー（派生）</td><td></td></tr>
-<tr><td>セッション・トークンの秘密</td><td>上の 22 文字の ID + 別のランダムな秘密（保存するのは秘密のハッシュだけ）。トークンは <code>pap_{ID}.{秘密}</code> の形で渡す</td><td>サーバー</td><td></td></tr>
+<tr><td>Workspace</td><td>A short name of lowercase letters, digits and hyphens (<code>^[a-z0-9]+(-[a-z0-9]+)*$</code>, up to 63 characters)</td><td>Written in the configuration</td><td><code>security</code></td></tr>
+<tr><td>Everything else (papers, blocks, attachments, users, sessions, tokens)</td><td>A UUID v4 (122 random bits) in alphanumeric base62 (<code>0-9 A-Z a-z</code>), 22 characters, left-padded with <code>0</code></td><td>Server</td><td><code>1csQdaLtbzOEz6NzfMfH6Z</code></td></tr>
+<tr><td>Version</td><td>A sequence number per paper (1, 2, 3 …)</td><td>Server (in the saving transaction)</td><td><code>…/papers/{id}/versions/2</code></td></tr>
+<tr><td>Block revision (<code>Rev</code>)</td><td>An internal number per block, +1 whenever its contents change</td><td>Server</td><td>never shown on screen</td></tr>
+<tr><td>Search entry</td><td><code>{paper ID}_{block ID}</code>, or <code>{paper ID}_title</code> for the title</td><td>Server (derived)</td><td></td></tr>
+<tr><td>Session and token secrets</td><td>The 22-character ID above plus a separate random secret (only a hash of the secret is stored). A token is handed out as <code>pap_{ID}.{secret}</code></td><td>Server</td><td></td></tr>
 </tbody></table></div>
 <ul>
-<li><b>形式は 1 つ</b>: ID はすべて UUID v4 を短くしたもの。並びが要るものは作成時刻や番号（版）で持つ。</li>
-<li><b>v4 を短くする理由</b>: URL・API の応答・AI に渡す本文に何度も出るので、36 文字から 22 文字に縮める。記号を含まないので、ダブルクリックで全体を選べ、区切り文字とも紛れない。大文字と小文字を区別する。ランダムなので推測されず、時刻も漏れない。</li>
-<li><b>受け取るときの検査</b>: 英数字 22 文字で、復元すると UUID v4 になることを確かめる。形式が違えば、存在しない ID と同じく 404 にする。</li>
-<li><b>ID はすべてサーバーが発行する</b>: クライアントが ID を決めると、他のペーパーや削除済みのブロックと同じ ID を送られたときの扱い（履歴が混ざる、削除済みのブロックを別物で上書きする）を全部の入口で防ぐ必要があり、AI や API からの書き込みでは信用できない。クライアントが決められる ID はない。</li>
-<li><b>同じ操作のまとまりの中で新しいブロックを指す</b>: <code>insert</code> には仮の名前（<code>ref</code>、例 <code>"n1"</code>）を付けられ、後の操作は <code>after: "ref:n1"</code> のようにそれを指せる。仮の名前はそのまとまりの中だけで有効で、保存されない。応答は仮の名前と発行した ID の対応を返す。</li>
-<li><b>画面に先に出す</b>: 画面は新しいブロックを手元の仮のキーで先に表示し、応答で本当の ID に置き換える。置き換える前の編集は手元に溜め、ID が分かってから送る。同時に流れてくるライブの変更は本当の ID で届くので、自分の操作の応答と突き合わせて二重に表示しない。</li>
-<li><b>ID と Firestore</b>: ID はランダムなので、Firestore で単調に増える ID の書き込みが一か所に集中する問題は起きない。</li>
-<li><b>URL</b>: ペーパーの今の状態は <code>/ws/{ワークスペース}/p/{ペーパー ID}</code>、最新の版は <code>…/latest</code>、版 vN は <code>…/v/{番号}</code>（<a href="#version">今の状態と版</a>）。ワークスペースが読める名前なので、URL の前半は読める。</li>
+<li><b>One format</b>: every ID is a shortened UUID v4. Whatever needs an order uses a creation time or a number (versions).</li>
+<li><b>Why a shortened v4</b>: IDs appear again and again in URLs, API answers and text given to AI, so 36 characters shrink to 22. No symbols, so a double click selects the whole ID and it never clashes with separators. Case-sensitive. Random, so not guessable and leaking no time.</li>
+<li><b>Checked on input</b>: 22 alphanumeric characters that decode to a UUID v4. Anything else is 404, the same as an ID that does not exist.</li>
+<li><b>The server issues every ID</b>: if clients chose IDs, every entry point would have to guard against IDs of other papers or deleted blocks (mixing histories, overwriting a deleted block with something else), and writes from AI or the API cannot be trusted with that. No ID is chosen by a client.</li>
+<li><b>Referring to a new block within the same batch</b>: an <code>insert</code> may carry a temporary name (<code>ref</code>, e.g. <code>"n1"</code>), and later ops refer to it as <code>after: "ref:n1"</code>. A ref is valid only within its batch and is not stored. The answer maps each ref to the issued ID.</li>
+<li><b>Showing first on screen</b>: the UI shows a new block under a local temporary key and swaps in the real ID from the answer. Edits before the swap are held locally and sent once the ID is known. Live changes arrive with real IDs and are matched with the answers to one's own ops so nothing shows twice.</li>
+<li><b>IDs and Firestore</b>: IDs are random, so the Firestore hotspot of monotonically increasing IDs never occurs.</li>
+<li><b>URLs</b>: a paper's current state is <code>/ws/{workspace}/p/{paper ID}</code>, its latest version <code>…/latest</code>, version vN <code>…/v/{n}</code> (<a href="#version">Current state and versions</a>). Workspace IDs are readable names, so the first half of a URL reads well.</li>
 </ul>
 </section>
 
 <section id="workspace" class="concept">
-<h2 style="margin-top:8px">ワークスペース</h2>
-<p class="block human">ペーパーの入れ物で、権限の基本単位。「チーム」や「部署」くらいの粒度を想定する。<b>ワークスペースは設定ファイルで定義し、画面や API からは作らない・変えない</b>（hecatoncheires と同じ方式）。ワークスペースをまたぐ操作（移動・横断検索）はない。</p>
-<h3>定義の仕方</h3>
-<pre><code># --config に渡したディレクトリの中の 1 ファイル = 1 ワークスペース
+<h2 style="margin-top:8px">Workspaces</h2>
+<p class="block human">The container of papers and the basic unit of access, about the size of a team or a department. <b>Workspaces are defined in configuration files; the UI and the API neither create nor change them</b> (as in hecatoncheires). Nothing spans workspaces except moving a paper (as copy and delete); there is no cross-workspace search.</p>
+<h3>Defining one</h3>
+<pre><code># One file per workspace in the directory given to --config
 # workspaces/security.toml
 [workspace]
-id          = "security"            # 変えない。保存先の名前空間になる
+id          = "security"            # never change: it is the storage namespace
 name        = "Security Team"
 description = """
-障害対応の手順と、インシデントの振り返りを集める。
-手順は番号付きリストで書き、コマンドはコードブロックにする。
-"""                                   # AI にこのワークスペースの決まりごととして渡す
+Runbooks for on-call and incident retrospectives.
+Write procedures as numbered lists and put commands in code blocks.
+"""                                   # given to AI as this workspace's rules
 emoji       = "🛡️"
-language    = "ja"                  # 任意
+language    = "en"                  # optional
 
-[authz]                              # 誰がこのワークスペースを使えるか（allow を返す）
+[authz]                              # who may use this workspace (returns allow)
 policy = ["policies/security.rego"]</code></pre>
 <dl class="fields">
-<dt>id</dt><dd><code>^[a-z0-9]+(-[a-z0-9]+)*$</code>、63 文字まで、全ワークスペースで一意。<b>変えてはいけない</b>（保存先のパス <code>workspaces/{id}/…</code> になる）。名前を変えたいときは name を変える。</dd>
-<dt>name</dt><dd>表示名。省略すると id。</dd>
-<dt>description</dt><dd>何を集めるワークスペースか、どう書くか。人には説明として見せ、AI には MCP の <code>papers_guide</code> と読み書きの結果に「このワークスペースの決まりごと」として渡す。</dd>
-<dt>emoji / color</dt><dd>画面の目印。どちらか一方。</dd>
-<dt>language</dt><dd>AI に書かせる言語の既定（任意）。</dd>
-<dt>authz</dt><dd>このワークスペースを使える人の規則。Rego が <code>allow</code>（真 / 偽）を返す（<a href="#access">アクセス</a>）。</dd>
+<dt>id</dt><dd><code>^[a-z0-9]+(-[a-z0-9]+)*$</code>, up to 63 characters, unique across workspaces. <b>Must never change</b> (it becomes the storage path <code>workspaces/{id}/…</code>). To rename, change name.</dd>
+<dt>name</dt><dd>The display name; id when omitted.</dd>
+<dt>description</dt><dd>What the workspace collects and how to write in it. Shown to people as a description, and given to AI as "this workspace's rules" by MCP's <code>papers_guide</code> and with read and write results.</dd>
+<dt>emoji / color</dt><dd>A mark on screen; one or the other.</dd>
+<dt>language</dt><dd>The default language AI writes in (optional).</dd>
+<dt>authz</dt><dd>The rule for who may use this workspace: Rego returning <code>allow</code> (true / false) (<a href="#access">Access</a>).</dd>
 </dl>
 <ul>
-<li><b>管理者の権限で決めることは、すべて設定ファイルに書く</b>。設定ファイルはデプロイと一緒に届くもので、変えられるかはデプロイの権限で決まる。画面と API には、全体に関わる設定を変える入口がない。</li>
-<li>起動時にすべて検証し、1 つでも不正なら起動しない。変更は再起動で反映する。</li>
-<li>ワークスペースの表示上のまとまり（サイドバーでの分類）は全体設定ファイル（<code>--global-config</code>）に書く。まとまりは表示の整理だけで、権限には効かない。</li>
-<li><b>ホーム</b>: 起動時に、設定の各ワークスペースについてホームのペーパーがなければ作る（何度起動しても 1 つ）。どれがホームかは保存先の <code>workspaces/{id}</code> の記録の <code>HomePaperID</code> で持つ。最初のタイトルは name。<code>/ws/{id}</code> はホームを開く（<a href="#tree">木</a>）。</li>
-<li>description は「AI への決まりごと」（デプロイで変える）、ホームの本文は「人と AI が読むワークスペースのまとめと入口」（誰でも書ける）。</li>
-<li>設定から消したワークスペースのデータは、ホームも含めて消えない（<a href="#d-removed">D13</a>）。</li>
+<li><b>Everything an administrator would decide is written in configuration files</b>. They ship with deployments, so who can change them is decided by who can deploy. The UI and the API have no way to change global settings.</li>
+<li>Everything is validated at startup, and any invalid file stops the server from starting. Changes take effect on restart.</li>
+<li>Display groups of workspaces (how the sidebar groups them) are written in the global configuration file (<code>--global-config</code>). Groups only organize the display and have no effect on access.</li>
+<li><b>Home</b>: at startup each configured workspace gets a home paper if it has none (exactly one however often the server starts). Which paper is the home is recorded as <code>HomePaperID</code> in the stored <code>workspaces/{id}</code> record. Its first title is name. <code>/ws/{id}</code> opens the home (<a href="#tree">Tree</a>).</li>
+<li>The description is "the rules for AI" (changed by deploying); the home paper's body is "the workspace's summary and entrance, read by people and AI" (anyone can write it).</li>
+<li>Removing a workspace from the configuration does not delete its data, home included (<a href="#d-removed">D13</a>).</li>
 </ul>
-<p class="callout">これにより、画面と API からワークスペースを作る・名前や使える人を変える機能はなくなる。作成の許可設定も不要になる。ワークスペースの削除・アーカイブは「設定から外す」で表す（D4 からは外す）。</p>
+<p class="callout">So the UI and the API have no way to create a workspace or change its name or who may use it, and no permission setting for creating one is needed. Deleting or archiving a workspace means "remove it from the configuration" (outside D4).</p>
 </section>
 
 <section id="paper" class="concept">
-<h2 style="margin-top:8px">ペーパー</h2>
-<p>タイトルとブロックの並び。人も AI も同じペーパーを同じ操作で書く。書いたものはすぐ<b>今の状態</b>（編集中の最新版）になる。誰か（人か AI）が明示的に保存したときだけ<a href="#version">版</a>ができ、履歴はその版の列で表す。</p>
+<h2 style="margin-top:8px">Papers</h2>
+<p>A title and an ordered list of blocks. People and AI write the same papers with the same operations. What is written becomes the <b>current state</b> (the latest, being edited) at once. A <a href="#version">version</a> exists only when someone (a person or AI) explicitly saves one, and history is the list of those versions.</p>
 <dl class="fields">
-<dt>ID / WorkspaceID</dt><dd>不変。ワークスペースをまたぐ「移動」は、新しい ID での写しと元の削除として行う（<a href="#tree">木</a>）。</dd>
-<dt>ParentID</dt><dd>親のペーパー。親の本文にある自分のペーパーブロックと常に一致する（同じトランザクションで書く）。ホームと private のペーパーは空。祖先の列は持たない（<a href="#tree">木</a>）。</dd>
-<dt>Title</dt><dd>1 行、256 バイトまで。空でもよい（画面では「無題」）。版に含まれるが、独立した番号は持たず、同時に変えたら後勝ち（<a href="#d-title">D1</a>）。</dd>
-<dt>Visibility</dt><dd><code>public</code>（既定）か <code>private</code>。意味は<a href="#access">アクセス</a>。変えられるのは作成者だけ。private のペーパーは木に入らず、作成者だけの平らな一覧に置く。</dd>
-<dt>VersionNumber</dt><dd>最新の版の番号。0 なら下書き、1 以上なら正本。</dd>
-<dt>ArchivedAt</dt><dd>アーカイブした時刻。空でなければアーカイブ（版の有無によらない）。一覧・検索は既定でアーカイブを除く。</dd>
-<dt>DeletedAt / DeletedWith</dt><dd>ゴミ箱に入れた時刻と、配下ごとの削除を始めたペーパーの ID（<a href="#d-delete">D4</a>）。30 日後に本当に消す。</dd>
-<dt>JobID</dt><dd>このペーパーをワークスペースをまたいで移している<a href="#job">裏の処理</a>。空でなければ、その裏の処理だけが書ける（他の書き込みは「処理中」で断る）。移動の間は検索にも出ない（写しを途中で見せないため。元もその間だけ出ない）。</dd>
-<dt>CreatedBy</dt><dd>作成した書き手。private のペーパーを読み書きできるのは、このユーザー（AI が作ったなら代理元のユーザー）だけ。</dd>
-<dt>UpdatedAt / UpdatedBy</dt><dd><b>おおよその</b>最終更新。ペーパー本体への書き込みを減らすため、タイトル変更か、前回から 1 分以上たった書き込みのときだけ更新する。最大 1 分遅れる（<a href="#d-touch">D6</a>）。</dd>
+<dt>ID / WorkspaceID</dt><dd>Never change. A "move" across workspaces is a copy under new IDs plus deleting the original (<a href="#tree">Tree</a>).</dd>
+<dt>ParentID</dt><dd>The parent paper. Always matches the paper block for this paper in the parent's body (written in the same transaction). Empty for the home and for private papers. No list of ancestors is kept (<a href="#tree">Tree</a>).</dd>
+<dt>Title</dt><dd>One line, up to 256 bytes. May be empty ("Untitled" on screen). Included in versions, but has no revision of its own: concurrent changes are last-write-wins (<a href="#d-title">D1</a>).</dd>
+<dt>Visibility</dt><dd><code>public</code> (default) or <code>private</code>; meaning in <a href="#access">Access</a>. Only the creator changes it. Private papers are not in the tree; they sit in a flat list that only their creator sees.</dd>
+<dt>VersionNumber</dt><dd>The number of the latest version. 0 means draft, 1 or more means published.</dd>
+<dt>ArchivedAt</dt><dd>When it was archived. Non-empty means archived (regardless of versions). Lists and search leave archived papers out by default.</dd>
+<dt>DeletedAt / DeletedWith</dt><dd>When it went to the trash, and the ID of the paper whose subtree deletion took it there (<a href="#d-delete">D4</a>). Purged after 30 days.</dd>
+<dt>JobID</dt><dd>The <a href="#job">background job</a> working on this paper. While set, only that job may write it (other writes are refused as "busy"). During a move the paper is also left out of search (so a half-made copy is never shown; the original is hidden for that time too).</dd>
+<dt>CreatedBy</dt><dd>The writer who created it. Only this user (for a paper made by AI, the user it acted for) may read and write a private paper.</dd>
+<dt>UpdatedAt / UpdatedBy</dt><dd>The <b>approximate</b> last update. To keep writes to the paper record low, it is updated only on a title change or a write at least one minute after the previous update, so it may lag by up to a minute (<a href="#d-touch">D6</a>).</dd>
 </dl>
-<h3>ペーパーの状態</h3>
+<h3>Paper states</h3>
 <figure>
-<svg viewBox="0 0 910 362" role="img" aria-label="ペーパーの状態の図。下書きは最初の版の保存で正本になり、正本は版を重ねる。下書きと正本はアーカイブでき、アーカイブは解ける。削除するとゴミ箱に入り、30 日後に完全に消える。ゴミ箱から戻せる。">
+<svg viewBox="0 0 910 362" role="img" aria-label="Paper states. A draft becomes published when its first version is saved, and a published paper gains more versions. Drafts and published papers can be archived and unarchived. Deleting puts a paper in the trash, purged after 30 days; it can be restored from the trash.">
 <defs><marker id="stm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
-<path d="M180 88H296" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="238" y="80" text-anchor="middle" font-size="12" style="fill:currentColor">版を保存（v1）</text><path d="M360 60C350 14 430 14 420 56" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="390" y="18" text-anchor="middle" font-size="12" style="fill:currentColor">版を保存（v2, v3 …）</text><path d="M95 116C95 170 140 200 160 210" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#stm)"/><text x="84" y="170" text-anchor="end" font-size="11" style="fill:currentColor">archive</text><path d="M405 116C405 170 380 190 372 200" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#stm)"/><text x="420" y="170" text-anchor="start" font-size="11" style="fill:currentColor">archive</text><path d="M200 200C170 170 150 150 130 120" fill="none" stroke="var(--soft)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#stm)"/><text x="182" y="150" text-anchor="middle" font-size="11" style="fill:var(--soft)">unarchive</text><path d="M470 88C540 88 560 140 586 152" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="540" y="92" text-anchor="start" font-size="11" style="fill:currentColor">delete（作成者だけ）</text><path d="M390 228C500 228 560 190 586 172" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><path d="M590 168C540 200 520 210 470 112" fill="none" stroke="var(--soft)" stroke-width="1.4" marker-end="url(#stm)"/><text x="560" y="222" text-anchor="start" font-size="11" style="fill:var(--soft)">戻す（作成者だけ、元の状態へ）</text><path d="M70 116C0 360 580 330 620 188" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="110" y="296" text-anchor="start" font-size="11" style="fill:currentColor">delete（作成者だけ）</text><path d="M730 158H786" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="758" y="150" text-anchor="middle" font-size="11" style="fill:currentColor">30 日後</text><text x="20" y="336" text-anchor="start" font-size="11" style="fill:var(--soft)">archive / unarchive はペーパーを使える人なら誰でも。delete・戻す・完全に消すは作成者本人だけ（配下ごと）。ホームはどの矢印も使えない。</text><text x="20" y="354" text-anchor="start" font-size="11" style="fill:var(--soft)">公開範囲（public / private）と木の中の位置は、この状態とは別の軸。</text><rect x="30" y="60" width="150" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="currentColor"/><text x="105.0" y="84" text-anchor="middle" font-size="14" font-weight="600">下書き</text><text x="105.0" y="102" text-anchor="middle" font-size="11" style="fill:var(--soft)">版なし</text><rect x="300" y="60" width="170" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="var(--human)"/><text x="385.0" y="84" text-anchor="middle" font-size="14" font-weight="600">正本</text><text x="385.0" y="102" text-anchor="middle" font-size="11" style="fill:var(--soft)">v1, v2 …</text><rect x="150" y="200" width="240" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="var(--soft)" stroke-dasharray="4 3"/><text x="270.0" y="224" text-anchor="middle" font-size="14" font-weight="600">アーカイブ済み</text><text x="270.0" y="242" text-anchor="middle" font-size="11" style="fill:var(--soft)">下書き / 正本の区別は保つ</text><rect x="590" y="130" width="140" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="currentColor"/><text x="660.0" y="154" text-anchor="middle" font-size="14" font-weight="600">ゴミ箱</text><text x="660.0" y="172" text-anchor="middle" font-size="11" style="fill:var(--soft)">30 日間</text><rect x="790" y="130" width="110" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="var(--held)"/><text x="845.0" y="163.0" text-anchor="middle" font-size="14" font-weight="600">完全に消える</text>
+<path d="M180 88H296" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="238" y="80" text-anchor="middle" font-size="12" style="fill:currentColor">save version (v1)</text><path d="M360 60C350 14 430 14 420 56" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="390" y="18" text-anchor="middle" font-size="12" style="fill:currentColor">save version (v2, v3 …)</text><path d="M95 116C95 170 140 200 160 210" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#stm)"/><text x="84" y="170" text-anchor="end" font-size="11" style="fill:currentColor">archive</text><path d="M405 116C405 170 380 190 372 200" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#stm)"/><text x="420" y="170" text-anchor="start" font-size="11" style="fill:currentColor">archive</text><path d="M200 200C170 170 150 150 130 120" fill="none" stroke="var(--soft)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#stm)"/><text x="182" y="150" text-anchor="middle" font-size="11" style="fill:var(--soft)">unarchive</text><path d="M470 88C540 88 560 140 586 152" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="540" y="92" text-anchor="start" font-size="11" style="fill:currentColor">delete (creator only)</text><path d="M390 228C500 228 560 190 586 172" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><path d="M590 168C540 200 520 210 470 112" fill="none" stroke="var(--soft)" stroke-width="1.4" marker-end="url(#stm)"/><text x="560" y="222" text-anchor="start" font-size="11" style="fill:var(--soft)">restore (creator only, to the previous state)</text><path d="M70 116C0 360 580 330 620 188" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="110" y="296" text-anchor="start" font-size="11" style="fill:currentColor">delete (creator only)</text><path d="M730 158H786" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#stm)"/><text x="758" y="150" text-anchor="middle" font-size="11" style="fill:currentColor">after 30 days</text><text x="20" y="336" text-anchor="start" font-size="11" style="fill:var(--soft)">Anyone who can use the paper may archive / unarchive. Only the creator deletes, restores and purges (with the subtree). No arrow applies to the home.</text><text x="20" y="354" text-anchor="start" font-size="11" style="fill:var(--soft)">Visibility (public / private) and the position in the tree are separate from this state.</text><rect x="30" y="60" width="150" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="currentColor"/><text x="105.0" y="84" text-anchor="middle" font-size="14" font-weight="600">Draft</text><text x="105.0" y="102" text-anchor="middle" font-size="11" style="fill:var(--soft)">no versions</text><rect x="300" y="60" width="170" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="var(--human)"/><text x="385.0" y="84" text-anchor="middle" font-size="14" font-weight="600">Published</text><text x="385.0" y="102" text-anchor="middle" font-size="11" style="fill:var(--soft)">v1, v2 …</text><rect x="150" y="200" width="240" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="var(--soft)" stroke-dasharray="4 3"/><text x="270.0" y="224" text-anchor="middle" font-size="14" font-weight="600">Archived</text><text x="270.0" y="242" text-anchor="middle" font-size="11" style="fill:var(--soft)">keeps draft / published</text><rect x="590" y="130" width="140" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="currentColor"/><text x="660.0" y="154" text-anchor="middle" font-size="14" font-weight="600">Trash</text><text x="660.0" y="172" text-anchor="middle" font-size="11" style="fill:var(--soft)">30 days</text><rect x="790" y="130" width="110" height="56" rx="28" fill="var(--sheet)" stroke-width="1.5" stroke="var(--held)"/><text x="845.0" y="163.0" text-anchor="middle" font-size="14" font-weight="600">Purged</text>
 </svg>
-<figcaption>状態は <code>VersionNumber</code>（0 なら下書き）、<code>ArchivedAt</code>、<code>DeletedAt</code> の 3 つの値から決まる。正本から下書きには戻らない。アーカイブは検索・一覧・AI の道案内から除くだけで、URL では開ける（<a href="#d-visibility">D18</a>）。</figcaption>
+<figcaption>The state follows from three values: <code>VersionNumber</code> (0 means draft), <code>ArchivedAt</code> and <code>DeletedAt</code>. A published paper never becomes a draft again. Archiving only leaves a paper out of search, lists and AI's guidance; it still opens by URL (<a href="#d-visibility">D18</a>).</figcaption>
 </figure>
-<h3>なぜペーパー本体をほとんど書かないか</h3>
-<p>Firestore は 1 つのドキュメントに毎秒 1 回程度しか書けない。全員の書き込みがペーパー本体を書くと、そこが詰まる。だから中身はブロック側に持ち、ペーパー本体はタイトル・親・公開範囲・状態・おおよその更新時刻だけにした。親・公開範囲・状態はまれにしか変わらない。</p>
+<h3>Why the paper record is rarely written</h3>
+<p>Firestore sustains about one write per second to a single document. If every write touched the paper record, it would become the bottleneck. So contents live on blocks, and the paper record holds only the title, parent, visibility, state and approximate update time. Parent, visibility and state change rarely.</p>
 </section>
 
 <section id="tree" class="concept">
-<h2 style="margin-top:8px">木（ペーパーの入れ子）</h2>
-<p class="block human">入れ物の概念（フォルダ）は作らない。子ペーパーは、親の本文の中の<b>ペーパーブロック</b>として置かれる（Notion と同じ形）。親の本文がそのまま、子を紹介しながらまとめる場所になる。人が「どこに何があるか」をつかむための構造で、深さは制限しない。詳しい検討は<a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">ペーパーの整理</a>。</p>
-<h3>形</h3>
+<h2 style="margin-top:8px">Tree (nested papers)</h2>
+<p class="block human">There is no container concept (folders). A child paper is placed as a <b>paper block</b> in its parent's body (as in Notion). The parent's body itself becomes the place that introduces and summarizes its children. The tree is the structure people use to know where things are; depth is not limited. The detailed discussion is in <a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">Organizing papers</a>.</p>
+<h3>Shape</h3>
 <ul>
-<li>ワークスペースごとに<b>ホーム</b>のペーパーが 1 つある。ホームは消せず、動かせず、private にできない。</li>
-<li><b>ホーム以外の public のペーパーは、ちょうど 1 つの親の本文に、ちょうど 1 つのペーパーブロックとして置かれる</b>。いちばん上の段はホームの本文にある。</li>
-<li><b>private のペーパーは木に入らない</b>。親も子も持たず、作成者だけの平らな一覧に置く。public にすることは、どこかの親に置くこと。private にできるのは子のない public のペーパーだけ。</li>
-<li>子の並び順は、親の本文のペーパーブロックの並びそのもの。別には持たない。</li>
-<li>深さは制限しない。実装の安全弁として、親を辿るのは 100 段で打ち切る。</li>
+<li>Each workspace has one <b>home</b> paper. The home cannot be deleted, moved or made private.</li>
+<li><b>Every public paper other than the home sits in exactly one parent's body as exactly one paper block</b>. The top level is in the home's body.</li>
+<li><b>Private papers are not in the tree</b>. They have no parent or children and sit in a flat list that only their creator sees. Making a paper public means placing it under some parent. Only a public paper without children can be made private.</li>
+<li>The order of children is the order of the paper blocks in the parent's body; it is not stored separately.</li>
+<li>Depth is not limited. As a safety valve in the implementation, walking up parents stops at 100 levels.</li>
 </ul>
-<h3>操作ごとに起きること</h3>
+<h3>What each operation does</h3>
 <div class="scroll"><table>
-<thead><tr><th>操作</th><th>起きること</th></tr></thead>
+<thead><tr><th>Operation</th><th>What happens</th></tr></thead>
 <tbody>
-<tr><td>子を作る</td><td>親の本文に <code>paper</code> ブロックを挿入し、同じ操作のまとまりで子のペーパーを作る。</td></tr>
-<tr><td>ペーパーブロックを消す</td><td><a href="#job">裏の処理</a>（<code>drop</code>）で行う。配下がすべて消す人のものなら、子を<b>配下ごとゴミ箱</b>に入れ、ブロックを消す。他の人のペーパーが含まれていれば、ブロックは消さず、子を配下ごとアーカイブする（<a href="#d-visibility">D18</a>）。ゴミ箱へは（配下に <code>DeletedAt</code> と <code>DeletedWith</code>）。画面は消す前に件数を見せて確かめる。親を版に戻してブロックが戻れば、同じ <code>DeletedWith</code> の配下も戻る（作成者本人のとき）。</td></tr>
-<tr><td>移動（同じワークスペース）</td><td>元の親の本文からペーパーブロックを消し、新しい親の本文に新しいペーパーブロックを足し、子の <code>ParentID</code> を書き換える。この 3 件だけを 1 つのトランザクションで書く。<b>配下には何も書かない</b>（配下は親を指しているだけなので付いていく）。移動は後勝ちで、衝突の対象にしない。移動そのものの記録は残さない。親の本文の変化は、次にその親の版を保存したときに版に表れる。</td></tr>
-<tr><td>移動（ワークスペースをまたぐ）</td><td><a href="#job">裏の処理</a>（<code>move</code>）で行う。新しい ID で配下ごと写し、元を配下ごとゴミ箱へ入れ、元の ID から新しい場所への転送の記録を残す。今の状態と最新の版（写しの v1 になる）を写し、古い版は写さない。</td></tr>
-<tr><td>親を版に戻す</td><td>よそへ移った子のペーパーブロックは戻さない（移動した時点で元の親の管理から外れている）。結果に「戻さなかった子」を添える。ゴミ箱にある子は、戻す人がその子の作成者本人なら戻る（本人でなければ戻さず、結果に添える）。子そのものは操作のまとまりの中で戻し、一緒にゴミ箱に入った配下は<a href="#job">裏の処理</a>（<code>restore</code>）で戻す。</td></tr>
+<tr><td>Create a child</td><td>Insert a <code>paper</code> block into the parent's body, and create the child paper in the same batch.</td></tr>
+<tr><td>Delete a paper block</td><td>Done by a <a href="#job">background job</a> (<code>drop</code>). If everything below belongs to the person deleting, the child goes <b>to the trash with its subtree</b> and the block is removed. If others' papers are included, the block stays and the child is archived with its subtree (<a href="#d-visibility">D18</a>). Going to the trash sets <code>DeletedAt</code> and <code>DeletedWith</code> on the subtree. The UI shows the count and asks before deleting. When the parent is restored to a version and the block comes back, the subtree with the same <code>DeletedWith</code> comes back too (when it is the creator restoring).</td></tr>
+<tr><td>Move (same workspace)</td><td>Remove the paper block from the old parent's body, add a new paper block to the new parent's body, and rewrite the child's <code>ParentID</code>: just these three writes in one transaction. <b>Nothing below is written</b> (descendants only point to their parents, so they follow). Moves are last-write-wins and are never conflicts. The move itself is not recorded. The change to the parents' bodies shows in a version the next time that parent is saved.</td></tr>
+<tr><td>Move (across workspaces)</td><td>Done by a <a href="#job">background job</a> (<code>move</code>). The subtree is copied under new IDs, the original subtree goes to the trash, and a forward from the old ID to the new place is recorded. The current state and the latest version (which becomes the copy's v1) are copied; older versions are not.</td></tr>
+<tr><td>Restore a parent to a version</td><td>Paper blocks of children that moved elsewhere are not restored (once moved, they are no longer the old parent's). The result lists the "children not restored". A child in the trash comes back if the person restoring is its creator (otherwise it does not, and the result lists it). The child itself is restored within the batch; the subtree that went to the trash with it is restored by a <a href="#job">background job</a> (<code>restore</code>).</td></tr>
 </tbody></table></div>
-<h3>読み方</h3>
+<h3>Reading</h3>
 <ul>
-<li>ペーパーは親だけを持ち、祖先の列は持たない。移動で数千〜数万のペーパーが動いても、書くのは 3 件で済むため。</li>
-<li>パンくず・パス（<code>security / 手順 / DB 切り替え</code>）と循環の検査は親を辿る。サーバーは「ペーパー → 親」の対応を手元に覚え、変更フィードで更新する。トランザクションの中では読み直して確かめる。</li>
-<li>子の一覧は親の本文から分かる。子のタイトル・状態は一括取得で 1 回読む。</li>
-<li>「この配下で探す」は、検索の当たりそれぞれの親を辿って絞る。「配下をまとめてアーカイブ・書き出す」は子の索引で 1 段ずつ降りる<a href="#job">裏の処理</a>。</li>
-<li>AI はパスで親を指定できる（同じタイトルが複数あれば候補を返す）。URL は ID のまま。</li>
+<li>A paper keeps only its parent, not a list of ancestors, so a move of thousands or tens of thousands of papers still writes only three records.</li>
+<li>Breadcrumbs and paths (<code>security / Runbooks / DB failover</code>) and cycle checks walk up parents. The server keeps a "paper → parent" map in memory and updates it from the change feed; inside a transaction it reads again to confirm.</li>
+<li>The list of children comes from the parent's body. Their titles and states are read in one batch read.</li>
+<li>"Search under here" walks up the parents of each hit to filter. "Archive or export a subtree" is a <a href="#job">background job</a> that descends one level at a time through the children index.</li>
+<li>AI may name a parent by path (if several papers share a title, the candidates are returned). URLs stay as IDs.</li>
 </ul>
-<h3>サイドバー</h3>
-<p>木全体は出さない。ホーム、ユーザーごとのお気に入り（<code>Pin</code>: ユーザー・ワークスペース・ペーパー・並び順キー）とその配下（開いた段だけ読む）、最近開いたペーパー数件、自分の private の一覧を出す。</p>
+<h3>Sidebar</h3>
+<p>The whole tree is not shown. The sidebar shows the home, the user's pins (<code>Pin</code>: user, workspace, paper, order key) and what is under them (only the levels opened are read), a few recently opened papers, and the user's private papers.</p>
 </section>
 
 <section id="job" class="concept">
-<h2 style="margin-top:8px">裏の処理（Job）</h2>
-<p>配下のペーパーすべてに及ぶ操作と、ワークスペースをまたぐ移動は、1 つのトランザクションに収まるとは限らない。Firestore の 1 回の書き込みは 10 MiB まで、トランザクションは 270 秒まで。配下の数は制限しないので、大きな木は必ずどこかでこれを超える。これらは<b>裏の処理</b>として、小さなトランザクションの列に分けて進める（<a href="#d-job">D19</a>）。同じワークスペースの中の移動と公開範囲の変更は、書くのが 3 件以下なので裏の処理にしない。</p>
+<h2 style="margin-top:8px">Background jobs (Job)</h2>
+<p>Operations on a whole subtree and moves across workspaces do not always fit in one transaction: one Firestore write is at most 10 MiB and a transaction at most 270 seconds. The size of a subtree is not limited, so a large tree will exceed these somewhere. These run as <b>background jobs</b>, split into a series of small transactions (<a href="#d-job">D19</a>). Moves within a workspace and visibility changes write three records or fewer, so they are not jobs.</p>
 <dl class="fields">
-<dt>ID / WorkspaceID</dt><dd>サーバーが発行。始めたワークスペース（移動なら元のワークスペース）に置く。</dd>
-<dt>Kind</dt><dd><code>trash</code>（ゴミ箱へ）・<code>drop</code>（本文でペーパーブロックを消した）・<code>restore</code>（ゴミ箱から戻す）・<code>archive</code> / <code>unarchive</code>（配下ごと）・<code>move</code>（ワークスペースをまたぐ移動）。</dd>
-<dt>PaperID / BlockID</dt><dd>根のペーパー。<code>drop</code> なら、親の本文で消されたペーパーブロックも。</dd>
-<dt>Target</dt><dd><code>move</code> の移動先（ワークスペース・親・位置）。</dd>
-<dt>CreatedBy</dt><dd>始めた書き手。裏の処理はこの書き手の権限で進め、書いたものの書き手もこの書き手になる。</dd>
-<dt>State</dt><dd><code>queued</code> → <code>running</code> → <code>done</code> か <code>failed</code>。</dd>
-<dt>Phase / Done / Total</dt><dd>今の段と、処理した数・対象の数（進み具合）。</dd>
-<dt>Result / Error</dt><dd>結果（ゴミ箱に入れたか、アーカイブしたか、戻さなかったペーパー、写しの ID と転送）と、<code>failed</code> の理由。</dd>
-<dt>LeaseUntil</dt><dd>今進めているインスタンスの期限。過ぎたら他のインスタンスが引き継ぐ。</dd>
-<dt>ExpireAt</dt><dd>終わってから 7 日で消える。</dd>
+<dt>ID / WorkspaceID</dt><dd>Issued by the server. Stored in the workspace where it started (for a move, the source workspace).</dd>
+<dt>Kind</dt><dd><code>trash</code> (to the trash), <code>drop</code> (a paper block was removed from a body), <code>restore</code> (back from the trash), <code>archive</code> / <code>unarchive</code> (with the subtree), <code>move</code> (move across workspaces).</dd>
+<dt>PaperID / BlockID</dt><dd>The root paper; for <code>drop</code>, also the paper block removed from the parent's body.</dd>
+<dt>Target</dt><dd>Where a <code>move</code> goes (workspace, parent, position).</dd>
+<dt>CreatedBy</dt><dd>The writer who started it. The job runs with this writer's rights, and what it writes is written as this writer.</dd>
+<dt>State</dt><dd><code>queued</code> → <code>running</code> → <code>done</code> or <code>failed</code>.</dd>
+<dt>Phase / Done / Total</dt><dd>The current phase, and how many items are done out of how many (progress).</dd>
+<dt>Result / Error</dt><dd>The result (whether it went to the trash or was archived, papers not restored, the copy's ID and the forward) and, for <code>failed</code>, why.</dd>
+<dt>LeaseUntil</dt><dd>Until when the instance running it holds it. After that another instance takes over.</dd>
+<dt>ExpireAt</dt><dd>Removed 7 days after it finishes.</dd>
 </dl>
-<p>対象のペーパー 1 件ごとに <b>JobItem</b>（ペーパー・親・深さ・子を集めたか・済んだか、移動なら写しの ID と写した位置）を、裏の処理の下に置く。対象の一覧を裏の処理の本体に持たないのは、文書の大きさ（1 MiB）を超えないため。</p>
-<h3>進み方</h3>
+<p>Each paper in scope gets a <b>JobItem</b> under the job (paper, parent, depth, whether its children were collected, whether it is done, and for a move the copy's ID and where it was copied). The list is not kept on the job record itself so that it stays under the document size limit (1 MiB).</p>
+<h3>How a job runs</h3>
 <ol>
-<li>リクエストは、その場で確かめられること（ペーパーを使えるか、作成者か、ホームでないか、移動先を使えるか）だけを確かめて裏の処理を作り、<b>すぐに応答する</b>。裏の処理はそのインスタンスが続けて進める。結果は普通の読み取りと変更の配信で見える（裏の処理の状態を読む API は持たない）。</li>
-<li>各段は 1 つのトランザクションで、対象 200 件までを扱う。進み具合は同じトランザクションで書く。どの段も、やり直して同じ結果になる（冪等）。写しの ID は裏の処理と元の ID から決まるので、写しを書き直しても重ならない。</li>
-<li>インスタンスが止まっても、期限が過ぎた裏の処理を他のインスタンスが拾って続ける。</li>
-<li>一時的な失敗は間隔を空けて再試行する。規則による失敗（移動先がゴミ箱に入った、など）は <code>failed</code> にし、戻せる段ならそれまでの変更を戻す。失敗は誰にも知らせず、サーバーのログにだけ残る（失敗するのは、応答の後に状況が変わったときだけ）。</li>
+<li>The request checks only what it can check right away (the paper can be used, the caller is the creator, it is not the home, the target can be used), creates the job and <b>answers at once</b>. The same instance then runs the job. The result shows through ordinary reads and the change feed (there is no API to read a job's state).</li>
+<li>Each step is one transaction handling up to 200 items, and progress is written in the same transaction. Every step gives the same result when repeated (idempotent). Copy IDs are derived from the job and the source ID, so rewriting a copy never duplicates it.</li>
+<li>If an instance stops, another instance picks up the job once its lease has expired and continues.</li>
+<li>Transient failures are retried with backoff. Failures by rule (the target went to the trash, say) mark the job <code>failed</code>, and when the phase allows it the changes so far are rolled back. Failures notify no one and are only logged on the server (they happen only when something changed after the answer).</li>
 </ol>
-<h3>種類ごとの段</h3>
+<h3>Phases by kind</h3>
 <div class="scroll"><table>
-<thead><tr><th>種類</th><th>段</th><th>他の人のペーパーや失敗</th></tr></thead>
+<thead><tr><th>Kind</th><th>Phases</th><th>Others' papers and failures</th></tr></thead>
 <tbody>
-<tr><td><code>trash</code></td><td><b>集める</b>: 配下を子の索引で 1 段ずつ集め、すべて始めた人のものか確かめる。→ <b>当てる</b>: まず根をゴミ箱に入れ、親の本文からペーパーブロックを消す（1 つのトランザクション）。続けて配下に <code>DeletedAt</code>・<code>DeletedWith</code> を付ける。</td><td>集める段で他の人のペーパーが見つかれば、何も消さずに、根を配下ごとアーカイブする（<a href="#d-visibility">D18</a>。他の人のペーパーを本人以外が消すことはない）。</td></tr>
-<tr><td><code>drop</code></td><td><code>trash</code> と同じ（消すペーパーブロックを覚えている）。</td><td>他の人のペーパーがあれば、ブロックは消さずに配下ごとアーカイブする。</td></tr>
-<tr><td><code>restore</code></td><td>根を戻し、ゴミ箱にない一番近い祖先の下に置く。続けて、同じ <code>DeletedWith</code> で始めた人の配下を戻す。版に戻して子が戻るときは、子は操作のまとまりの中で戻し、配下だけをこの裏の処理で戻す。</td><td>—</td></tr>
-<tr><td><code>archive</code> / <code>unarchive</code></td><td>配下を集め、印を付ける・外す。</td><td>—</td></tr>
-<tr><td><code>move</code></td><td><b>集める</b>: 配下を集め、元の各ペーパーに <code>JobID</code> を付ける（書き込みを止める）。→ <b>写す</b>: 新しい ID で、今の状態・最新の版（写しの v1）・添付を写す。写しにも <code>JobID</code> を付け、木にはつながない。→ <b>つなぐ</b>: 写しの印を外し、写しの根を移動先の親の本文に置く。ここから先は戻さない。→ <b>片付ける</b>: 元を配下ごとゴミ箱に入れ、転送の記録を残し、印を外す。</td><td>つなぐ前なら、写しを消し、元の印を外す（元はそのまま）。</td></tr>
+<tr><td><code>trash</code></td><td><b>Collect</b>: gather the subtree one level at a time through the children index and check that everything belongs to the person who started it. → <b>Apply</b>: first trash the root and remove its paper block from the parent's body (one transaction), then set <code>DeletedAt</code> and <code>DeletedWith</code> on the subtree.</td><td>If collecting finds others' papers, nothing is deleted; the root is archived with its subtree instead (<a href="#d-visibility">D18</a>; no one but its creator ever deletes a paper).</td></tr>
+<tr><td><code>drop</code></td><td>The same as <code>trash</code> (it remembers the removed paper block).</td><td>If others' papers are there, the block stays and the subtree is archived.</td></tr>
+<tr><td><code>restore</code></td><td>Restore the root and place it under its nearest ancestor that is not in the trash, then restore the starter's papers below with the same <code>DeletedWith</code>. When restoring a version brings a child back, the child is restored within the batch and only its subtree by this job.</td><td>—</td></tr>
+<tr><td><code>archive</code> / <code>unarchive</code></td><td>Collect the subtree and set or clear the mark.</td><td>—</td></tr>
+<tr><td><code>move</code></td><td><b>Collect</b>: gather the subtree and set <code>JobID</code> on every original (stopping writes). → <b>Copy</b>: copy the current state, the latest version (the copy's v1) and attachments under new IDs. Copies also carry <code>JobID</code> and are not attached to the tree. → <b>Attach</b>: clear the mark on the copies and place the copy's root in the target parent's body. From here on nothing is rolled back. → <b>Retire</b>: trash the original subtree, record the forward and clear the marks.</td><td>Before attaching, the copies are deleted and the marks on the originals cleared (the originals stay as they were).</td></tr>
 </tbody></table></div>
-<h3>見えるもの</h3>
+<h3>What is visible</h3>
 <ul>
-<li>裏の処理そのものは誰にも見せない。画面と AI は、ペーパーの状態（ゴミ箱・アーカイブ・移動中で書けない）と変更の配信で結果を知る。</li>
-<li>移動が終わると、元のペーパーは転送の記録を持つ。元を開くと（ゴミ箱にあっても）移動先へ案内する。</li>
-<li>途中の状態は見えることがある（配下の一部だけがゴミ箱にある、など）。検索と一覧はペーパーごとの印で判断するので、終われば揃う。移動だけは、元を書けなくして写しを隠すので、途中の状態で書き込みが失われることも、半分の写しが見えることもない。</li>
+<li>Jobs themselves are shown to no one. The UI and AI learn the result from paper states (trashed, archived, busy while moving) and the change feed.</li>
+<li>When a move finishes, the original paper carries the forward. Opening the original (even in the trash) leads to the new place.</li>
+<li>Intermediate states may be visible (only part of a subtree in the trash, say). Search and lists judge by each paper's mark, so they settle once the job finishes. A move alone makes the originals read-only and hides the copies, so no write is lost midway and no half-made copy is seen.</li>
 </ul>
 </section>
 
 <section id="block" class="concept">
-<h2 style="margin-top:8px">ブロック</h2>
-<p>編集・衝突・検索エントリの最小単位。ブロックは<b>内容</b>（種類・本文・属性）と<b>位置</b>（親・並び順キー）を持ち、この 2 つを分けて扱う。</p>
+<h2 style="margin-top:8px">Blocks</h2>
+<p>The smallest unit of editing, conflicts and search entries. A block has <b>contents</b> (type, text, props) and a <b>position</b> (parent, order key), and the two are handled separately.</p>
 <dl class="fields">
-<dt>ID</dt><dd>サーバーが発行する 22 文字の ID（<a href="#ids">ID</a>）。クライアントは決められない。一度使った ID は、削除後も同じブロックのものとして扱う（復元で戻る）。</dd>
-<dt>Type</dt><dd>種類。下の表のどれか。</dd>
-<dt>Content</dt><dd>本文。意味は種類ごとに違う（下の表）。256 KiB まで。</dd>
-<dt>Props</dt><dd>種類ごとの属性。その種類に関係ない属性は保存前に消す（種類を変えても古い属性が残らない）。</dd>
-<dt>ParentID</dt><dd>親ブロック。表のセルだけが親（表）を持つ。それ以外は空（ペーパー直下）。木は 1 段だけ。</dd>
-<dt>Order</dt><dd>兄弟の間の並び順キー（分数インデックス）。2 つのキーの間には必ず別のキーが作れるので、挿入や移動で他のブロックを書き換えない。同じキーになったら ID の順。</dd>
-<dt>Rev</dt><dd>内部の更新番号。内容（種類・本文・属性）が変わるたびに 1 増える（位置の変更では増えない）。書き手はこれを「元のリビジョン」として送る。画面には出さない。</dd>
-<dt>CreatedBy / UpdatedBy</dt><dd>最初の書き手と、最後に変えた書き手（時刻つき）。</dd>
+<dt>ID</dt><dd>A 22-character ID issued by the server (<a href="#ids">IDs</a>); clients cannot choose it. Once used, an ID belongs to the same block even after deletion (restoring brings it back).</dd>
+<dt>Type</dt><dd>One of the types in the table below.</dd>
+<dt>Content</dt><dd>The text; its meaning depends on the type (table below). Up to 256 KiB.</dd>
+<dt>Props</dt><dd>Per-type properties. Properties unrelated to the type are removed before saving (changing the type leaves no old properties behind).</dd>
+<dt>ParentID</dt><dd>The parent block. Only table cells have a parent (the table); everything else is empty (directly under the paper). The tree is one level deep.</dd>
+<dt>Order</dt><dd>An order key among siblings (fractional index). A new key always fits between two keys, so inserting or moving never rewrites other blocks. Equal keys fall back to ID order.</dd>
+<dt>Rev</dt><dd>An internal revision, +1 whenever the contents (type, text, props) change (not when the position changes). Writers send it as the "base revision". Never shown on screen.</dd>
+<dt>CreatedBy / UpdatedBy</dt><dd>The first writer and the last writer to change it (with times).</dd>
 </dl>
 
-<h3>ブロックの種類</h3>
+<h3>Block types</h3>
 <div class="scroll"><table>
-<thead><tr><th>種類</th><th>本文の意味</th><th>属性</th><th class="c">人が編集</th><th>検索エントリ</th></tr></thead>
+<thead><tr><th>Type</th><th>Meaning of the text</th><th>Props</th><th class="c">People edit</th><th>Search entry</th></tr></thead>
 <tbody>
-<tr><td><code>paragraph</code></td><td>インライン Markdown（太字・斜体・取り消し線・コード・リンク）と色の囲み <code>[文字]{.色}</code>（<a href="#d-style">D10</a>）</td><td>なし</td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>heading</code></td><td>インライン Markdown</td><td><code>level</code> 1〜3</td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>quote</code></td><td>インライン Markdown</td><td>なし</td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>bulleted_list_item</code> / <code>numbered_list_item</code></td><td>インライン Markdown</td><td><code>indent</code> 0〜6（入れ子は木ではなく字下げで表す）</td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>todo</code></td><td>インライン Markdown</td><td><code>indent</code>、<code>checked</code></td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>callout</code></td><td>インライン Markdown</td><td><code>icon</code>（絵文字 1 つ）</td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>code</code></td><td>ソースコード（そのまま）</td><td><code>language</code></td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>divider</code></td><td>空</td><td>なし</td><td class="c">○</td><td>なし</td></tr>
-<tr><td><code>paper</code></td><td>空</td><td><code>paper_id</code>（子のペーパー。変わらない）。本文の一番上の段にだけ置ける</td><td class="c">○</td><td>なし（子のタイトルは子の検索エントリ）</td></tr>
-<tr><td><code>image</code></td><td>キャプション</td><td><code>attachment_id</code>（同じペーパーの添付）か <code>url</code>（外部の画像）</td><td class="c">○</td><td>キャプション</td></tr>
-<tr><td><code>table</code></td><td>空</td><td><code>rows</code>、<code>cols</code>（それぞれ (ID, 並び順キー) の列）、<code>header_row</code></td><td class="c">○</td><td>なし（セル側）</td></tr>
-<tr><td><code>table_cell</code></td><td>インライン Markdown</td><td><code>row_id</code>、<code>col_id</code>（親の表の行・列の ID）</td><td class="c">○</td><td>本文</td></tr>
-<tr><td><code>mermaid</code></td><td>Mermaid のソース</td><td><code>height</code></td><td class="c">AI のみ</td><td>ソース</td></tr>
-<tr><td><code>svg</code></td><td>完全な <code>&lt;svg&gt;</code> 要素</td><td><code>height</code></td><td class="c">AI のみ</td><td>文字のノードだけ</td></tr>
-<tr><td><code>html</code></td><td>自己完結した HTML</td><td><code>height</code></td><td class="c">AI のみ</td><td>文字のノードだけ</td></tr>
+<tr><td><code>paragraph</code></td><td>Inline Markdown (bold, italic, strikethrough, code, links) and colour spans <code>[text]{.colour}</code> (<a href="#d-style">D10</a>)</td><td>none</td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>heading</code></td><td>Inline Markdown</td><td><code>level</code> 1–3</td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>quote</code></td><td>Inline Markdown</td><td>none</td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>bulleted_list_item</code> / <code>numbered_list_item</code></td><td>Inline Markdown</td><td><code>indent</code> 0–6 (nesting is indentation, not a tree)</td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>todo</code></td><td>Inline Markdown</td><td><code>indent</code>, <code>checked</code></td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>callout</code></td><td>Inline Markdown</td><td><code>icon</code> (one emoji)</td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>code</code></td><td>Source code (verbatim)</td><td><code>language</code></td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>divider</code></td><td>empty</td><td>none</td><td class="c">✓</td><td>none</td></tr>
+<tr><td><code>paper</code></td><td>empty</td><td><code>paper_id</code> (the child paper; never changes). Only at the top level of a body</td><td class="c">✓</td><td>none (the child's title is the child's search entry)</td></tr>
+<tr><td><code>image</code></td><td>caption</td><td><code>attachment_id</code> (an attachment of the same paper) or <code>url</code> (an external image)</td><td class="c">✓</td><td>caption</td></tr>
+<tr><td><code>table</code></td><td>empty</td><td><code>rows</code>, <code>cols</code> (each a list of (ID, order key)), <code>header_row</code></td><td class="c">✓</td><td>none (on the cells)</td></tr>
+<tr><td><code>table_cell</code></td><td>Inline Markdown</td><td><code>row_id</code>, <code>col_id</code> (row and column IDs of the parent table)</td><td class="c">✓</td><td>text</td></tr>
+<tr><td><code>mermaid</code></td><td>Mermaid source</td><td><code>height</code></td><td class="c">AI only</td><td>source</td></tr>
+<tr><td><code>svg</code></td><td>A complete <code>&lt;svg&gt;</code> element</td><td><code>height</code></td><td class="c">AI only</td><td>text nodes only</td></tr>
+<tr><td><code>html</code></td><td>Self-contained HTML</td><td><code>height</code></td><td class="c">AI only</td><td>text nodes only</td></tr>
 </tbody></table></div>
-<p>「AI のみ」は書き込みの制限ではなく画面の制限。API と MCP からは人のトークンでも書けるが、Web UI は編集の入口を出さず、sandbox 付きの iframe で描くだけ。</p>
+<p>"AI only" is a limit of the UI, not of writing. The API and MCP accept them even with a person's token, but the web UI offers no way to edit them and only draws them in a sandboxed iframe.</p>
 
-<h3>ブロックの一生</h3>
+<h3>Life of a block</h3>
 <figure>
-<svg viewBox="0 0 900 200" role="img" aria-label="ブロックはまだ無い状態から挿入で存在する状態になり、更新で内部の番号が増える。削除で削除済みになり、版に含まれていればペーパーを版に戻すと戻る。">
+<svg viewBox="0 0 900 200" role="img" aria-label="A block goes from not existing to existing by insert; updates raise its internal revision. Delete makes it deleted; if a version contains it, restoring the paper to that version brings it back.">
 <defs><marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
 <g fill="none" stroke-width="1.5">
 <rect x="20" y="70" width="150" height="56" rx="28" stroke="currentColor" style="stroke-dasharray:5 4"/>
@@ -417,271 +417,271 @@ policy = ["policies/security.rego"]</code></pre>
 <path d="M716 112H564" stroke="var(--held)" marker-end="url(#m2)"/>
 <path d="M410 62C400 18 500 18 490 58" stroke="currentColor" marker-end="url(#m2)"/>
 </g>
-<g font-size="14" font-weight="600" text-anchor="middle"><text x="95" y="103">まだ無い</text><text x="450" y="96">存在する</text><text x="450" y="116" font-size="12" font-weight="400" style="fill:var(--soft)">今の状態</text><text x="800" y="96">削除済み</text><text x="800" y="114" font-size="12" font-weight="400" style="fill:var(--soft)">版にあれば戻せる</text></g>
-<g font-size="12" text-anchor="middle"><text x="253" y="90">insert</text><text x="638" y="82">delete</text><text x="640" y="134" style="fill:var(--held)">版への復元</text><text x="450" y="16">update（Rev +1）/ move</text></g>
+<g font-size="14" font-weight="600" text-anchor="middle"><text x="95" y="103">not yet</text><text x="450" y="96">exists</text><text x="450" y="116" font-size="12" font-weight="400" style="fill:var(--soft)">current state</text><text x="800" y="96">deleted</text><text x="800" y="114" font-size="12" font-weight="400" style="fill:var(--soft)">back if in a version</text></g>
+<g font-size="12" text-anchor="middle"><text x="253" y="90">insert</text><text x="638" y="82">delete</text><text x="640" y="134" style="fill:var(--held)">restore a version</text><text x="450" y="16">update (Rev +1) / move</text></g>
 </svg>
-<figcaption>削除したブロックの中身は、それを含む版があれば版に残る。ペーパーをその版に戻すと同じ ID で戻る。版を保存する前に作って消したブロックは残らない。</figcaption>
+<figcaption>A deleted block's contents remain in any version that contains it, and restoring the paper to that version brings it back under the same ID. A block created and deleted before any save leaves nothing.</figcaption>
 </figure>
 </section>
 
 <section id="version" class="concept">
-<h2 style="margin-top:8px">今の状態と版</h2>
-<p class="block human">ペーパーにあるのは 2 つだけ。<b>今の状態</b>（編集中の最新版。人と AI の書き込みがすぐ反映される）と、<b>版</b>（人か AI が明示的に保存した、ペーパー全体の不変の写し）。自動保存という概念はなく、編集の細かい履歴も残さない。履歴の参照と復元は版の単位で、ペーパー単位で行う（ブロックごとには行わない）。</p>
+<h2 style="margin-top:8px">Current state and versions</h2>
+<p class="block human">A paper has only two things: the <b>current state</b> (the latest, being edited; writes from people and AI show at once) and <b>versions</b> (immutable copies of the whole paper, saved explicitly by a person or AI). There is no autosave and no fine-grained edit history. History is viewed and restored by version, per paper (never per block).</p>
 <figure>
-<svg viewBox="0 0 900 196" role="img" aria-label="今の状態は書き込みのたびに変わり続ける。誰かが保存したときだけ、その時点の写しが v1, v2, v3 として残る。版に戻すと、今の状態がその版の中身になる。">
+<svg viewBox="0 0 900 196" role="img" aria-label="The current state keeps changing with every write. Only when someone saves does a copy of that moment remain as v1, v2, v3. Restoring a version makes the current state that version's contents.">
 <defs><marker id="vm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
 <path d="M30 60H860" stroke="var(--human)" stroke-width="3" fill="none" marker-end="url(#vm)"/>
-<text x="30" y="40" font-size="13" font-weight="600">今の状態（編集中の最新版）</text>
-<g font-size="11" style="fill:var(--soft)"><text x="90" y="82">AI が書く</text><text x="260" y="82">Alice が直す</text><text x="480" y="82">Claude が足す</text><text x="610" y="82">Bob が直す</text></g>
+<text x="30" y="40" font-size="13" font-weight="600">Current state (the latest, being edited)</text>
+<g font-size="11" style="fill:var(--soft)"><text x="90" y="82">AI writes</text><text x="260" y="82">Alice fixes</text><text x="480" y="82">Claude adds</text><text x="610" y="82">Bob fixes</text></g>
 <g stroke="currentColor" stroke-width="1.3" fill="none"><path d="M200 66V120" marker-end="url(#vm)"/><path d="M420 66V120" marker-end="url(#vm)"/><path d="M760 66V120" marker-end="url(#vm)"/></g>
 <g fill="var(--sheet)" stroke="currentColor" stroke-width="1.4"><rect x="160" y="124" width="80" height="40" rx="6"/><rect x="380" y="124" width="80" height="40" rx="6"/><rect x="720" y="124" width="80" height="40" rx="6"/></g>
 <g font-size="14" font-weight="600" text-anchor="middle"><text x="200" y="149">v1</text><text x="420" y="149">v2</text><text x="760" y="149">v3</text></g>
-<g font-size="11" style="fill:var(--soft)"><text x="208" y="104">Alice が保存</text><text x="428" y="104">Claude が保存</text><text x="768" y="104">Bob が保存</text></g>
+<g font-size="11" style="fill:var(--soft)"><text x="208" y="104">Alice saves</text><text x="428" y="104">Claude saves</text><text x="768" y="104">Bob saves</text></g>
 <path d="M460 158C560 186 640 120 690 66" stroke="var(--held)" stroke-width="1.3" stroke-dasharray="5 4" fill="none" marker-end="url(#vm)"/>
-<text x="470" y="190" font-size="11" style="fill:var(--held)">v2 に戻す（今の状態が v2 の中身になる）</text>
+<text x="470" y="190" font-size="11" style="fill:var(--held)">restore v2 (the current state becomes v2's contents)</text>
 </svg>
-<figcaption>今の状態は書き込みのたびに変わり続ける。誰か（人か AI）が「保存」したときだけ版ができ、システムが勝手に版を作ることはない。版と版の間の細かい変化は残らない。</figcaption>
+<figcaption>The current state keeps changing with every write. A version exists only when someone (a person or AI) saves; the system never makes one on its own. Fine-grained changes between versions are not kept.</figcaption>
 </figure>
-<h3>版が持つもの</h3>
+<h3>What a version holds</h3>
 <dl class="fields">
-<dt>PaperID + Number</dt><dd>ペーパーごとに 1 から欠番なし（v1, v2 …）。保存のトランザクションで <code>Paper.VersionNumber</code> と一緒に決める。</dd>
-<dt>Title</dt><dd>その時点のタイトル。</dd>
-<dt>Blocks</dt><dd>その時点の全ブロックの (ブロック ID, <code>Rev</code>, 親, 位置) の列。中身は <code>BlockSnapshot</code>（ブロック ID + <code>Rev</code> ごとの不変の写し）を指す。保存のとき、前の版から <code>Rev</code> が変わったブロックだけ写しを作り、変わっていないブロックは前の写しを指す。ペーパーブロックは子の ID を含むが、子の中身は含まない（子はそれぞれの版を持つ）。</dd>
-<dt>Note</dt><dd>この版で何が変わったか（任意。AI に下書きさせてもよい）。</dd>
-<dt>CreatedBy / CreatedAt</dt><dd>保存した書き手（人か AI か、AI なら誰の代理か）と時刻。</dd>
+<dt>PaperID + Number</dt><dd>Per paper, from 1 without gaps (v1, v2 …). Decided together with <code>Paper.VersionNumber</code> in the saving transaction.</dd>
+<dt>Title</dt><dd>The title at that moment.</dd>
+<dt>Blocks</dt><dd>The list of (block ID, <code>Rev</code>, parent, position) for every block at that moment. Contents point to a <code>BlockSnapshot</code> (an immutable copy per block ID + <code>Rev</code>). On save, a snapshot is made only for blocks whose <code>Rev</code> changed since the previous version; unchanged blocks point to the earlier snapshot. A paper block carries the child's ID but not the child's contents (each child has its own versions).</dd>
+<dt>Note</dt><dd>What changed in this version (optional; AI may draft it).</dd>
+<dt>CreatedBy / CreatedAt</dt><dd>The writer who saved (person or AI, and for AI whom it acted for) and when.</dd>
 </dl>
 <ul>
-<li><b>誰が保存するか</b>: そのペーパーを使える書き手なら誰でも（人も AI も）。画面の「保存」、API・MCP の <code>save_version</code>。<b>システムが自動で保存することはない</b>（自動保存という概念はない）。誰が保存したかは版の一覧に出す（「v4 · Claude（Alice の代理）」）。</li>
-<li><b>最初の版（v1）で下書きから正本になる</b>。正本から下書きには戻らない。要らなくなったらアーカイブする。</li>
-<li><b>取り消さない</b>: 版は書き換えも削除もしない（ペーパーを完全に消すときだけ一緒に消す）。気に入らなければ前の版に戻して、新しい版として保存する。</li>
-<li><b>前の版と変わっていなければ保存しない</b>（何も起きなかった、が答え）。</li>
+<li><b>Who saves</b>: any writer who can use the paper (people and AI): "Save" in the UI, <code>save_version</code> in the API and MCP. <b>The system never saves on its own</b> (there is no autosave). The version list shows who saved ("v4 · Claude (for Alice)").</li>
+<li><b>The first version (v1) turns a draft into a published paper</b>. A published paper never becomes a draft again; archive it when it is no longer needed.</li>
+<li><b>No undo</b>: versions are never rewritten or deleted (only purged together with the paper). If one is wrong, restore an earlier version and save that as a new version.</li>
+<li><b>Nothing changed since the previous version means no save</b> (the answer is "nothing happened").</li>
 </ul>
-<h3>できること</h3>
+<h3>What you can do</h3>
 <div class="scroll"><table>
-<thead><tr><th>やりたいこと</th><th>やり方</th></tr></thead>
+<thead><tr><th>To</th><th>How</th></tr></thead>
 <tbody>
-<tr><td>履歴を見る</td><td>ペーパーの版を新しい順に。誰がいつ保存したか、メモ</td></tr>
-<tr><td>ある版を見る</td><td>版を 1 件読み、指す写しを一括取得（組み立ては要らない）</td></tr>
-<tr><td>差分</td><td>2 つの版、または版と今の状態を、ブロック ID と <code>Rev</code> で突き合わせ、違うものだけ中身を読んで比べる</td></tr>
-<tr><td>版に戻す</td><td>今の状態を、その版の中身に合わせる（消えたブロックは同じ ID で戻り、その後にできたブロックは消える）。今の状態に<b>保存していない変更</b>があれば、それは残らないので、戻す前に「先に保存しますか」と確かめる。よそへ移った子は戻さず、ゴミ箱の子は作成者本人のときだけ戻す（<a href="#tree">木</a>）</td></tr>
+<tr><td>See the history</td><td>The paper's versions, newest first: who saved when, and the note</td></tr>
+<tr><td>See a version</td><td>Read one version and batch-read the snapshots it points to (nothing to reconstruct)</td></tr>
+<tr><td>Diff</td><td>Match two versions, or a version and the current state, by block ID and <code>Rev</code>, and read and compare only what differs</td></tr>
+<tr><td>Restore a version</td><td>Make the current state match that version (deleted blocks come back under the same IDs; blocks made since are removed). <b>Unsaved changes</b> in the current state are lost, so the UI asks "save first?" before restoring. Children that moved elsewhere are not restored; children in the trash come back only for their creator (<a href="#tree">Tree</a>)</td></tr>
 </tbody></table></div>
-<h3>URL と見せるもの</h3>
+<h3>URLs and what they show</h3>
 <div class="scroll"><table>
-<thead><tr><th>URL</th><th>見せるもの</th><th>編集</th></tr></thead>
+<thead><tr><th>URL</th><th>Shows</th><th>Edit</th></tr></thead>
 <tbody>
-<tr><td><code>/ws/{ws}/p/{id}</code></td><td>今の状態（リアルタイムで更新される編集中の最新版）。版があれば「v3 から変更あり」を出す</td><td>できる</td></tr>
-<tr><td><code>/ws/{ws}/p/{id}/latest</code></td><td>最新の版。版が増えれば次を指す。下書きなら「まだ版がありません」</td><td>できない</td></tr>
-<tr><td><code>/ws/{ws}/p/{id}/v/{番号}</code></td><td>その版。中身が変わらない</td><td>できない</td></tr>
-<tr><td><code>/ws/{ws}</code></td><td>ホームの今の状態</td><td>できる</td></tr>
-<tr><td><code>/</code></td><td>最後に開いたワークスペースのホーム（初めてなら一覧）</td><td>—</td></tr>
+<tr><td><code>/ws/{ws}/p/{id}</code></td><td>The current state (the latest, updated live). With versions, shows "changed since v3"</td><td>yes</td></tr>
+<tr><td><code>/ws/{ws}/p/{id}/latest</code></td><td>The latest version; follows new versions. For a draft, "no versions yet"</td><td>no</td></tr>
+<tr><td><code>/ws/{ws}/p/{id}/v/{n}</code></td><td>That version; its contents never change</td><td>no</td></tr>
+<tr><td><code>/ws/{ws}</code></td><td>The home's current state</td><td>yes</td></tr>
+<tr><td><code>/</code></td><td>The home of the last workspace opened (the list the first time)</td><td>—</td></tr>
 </tbody></table></div>
 <ul>
-<li>本文中のリンク・ペーパーブロック・サイドバー・検索結果は何も付けない URL へ。検索は今の状態から探す。</li>
-<li>AI の読み取りの既定は今の状態（<code>at</code> で <code>latest</code> や番号も指定できる）。AI が回答の根拠として示すのは <code>/v/{番号}</code>。</li>
-<li>一覧・検索は既定で、下書きと正本を出し、アーカイブを除く。</li>
+<li>Links in bodies, paper blocks, the sidebar and search results go to the plain URL. Search looks in the current state.</li>
+<li>AI reads the current state by default (<code>at</code> may name <code>latest</code> or a number). When AI cites a paper as the basis of an answer, it cites <code>/v/{n}</code>.</li>
+<li>Lists and search show drafts and published papers and leave archived ones out by default.</li>
 </ul>
 </section>
 
 <section id="commit" class="concept">
-<h2 style="margin-top:8px">操作</h2>
-<p>書き手は操作（Op）の列を 1 回のリクエスト（操作のまとまり）で送る。全部適用されるか、何も適用されないかのどちらか。適用した結果が今の状態になる。まとまり自体は記録として残らない。</p>
+<h2 style="margin-top:8px">Operations</h2>
+<p>A writer sends a list of operations (Ops) in one request (a batch). Either all apply or none does. The applied result becomes the current state. The batch itself is not recorded.</p>
 <div class="scroll"><table>
-<thead><tr><th>操作</th><th>必須の値</th><th>元のリビジョン</th><th>結果</th><th>何も起きないとき</th></tr></thead>
+<thead><tr><th>Op</th><th>Required</th><th>Base revision</th><th>Result</th><th>When nothing happens</th></tr></thead>
 <tbody>
-<tr><td><code>insert</code></td><td>種類（位置は <code>after</code>、仮の名前 <code>ref</code> は任意）。<code>paper</code> なら子のタイトル</td><td>不要</td><td>ブロックの追加（表ならセルも、<code>paper</code> なら子のペーパーも）</td><td>—</td></tr>
-<tr><td><code>update</code></td><td>ブロック</td><td><b>必須</b></td><td>内容の更新（<code>Rev</code> +1。表の形が変わればセルの追加・削除も）</td><td>内容が変わらない</td></tr>
-<tr><td><code>delete</code></td><td>ブロック</td><td><b>必須</b></td><td>削除（表ならセルも、<code>paper</code> なら<a href="#job">裏の処理</a>で子を配下ごとゴミ箱へ）</td><td>他の人がすでに削除していた</td></tr>
-<tr><td><code>move</code></td><td>ブロック（位置は <code>after</code>）</td><td>不要</td><td>位置の変更</td><td>位置が変わらない、または削除済み</td></tr>
-<tr><td><code>set_title</code></td><td>タイトル</td><td>なし（後勝ち、<a href="#d-title">D1</a>）</td><td>タイトルの変更</td><td>タイトルが同じ</td></tr>
-<tr><td><code>insert_markdown</code></td><td>Markdown</td><td>不要</td><td>ブロックの追加の列</td><td>—</td></tr>
-<tr><td><code>move_paper</code></td><td>新しい親（ID かパス）と位置</td><td>不要</td><td>元の親・新しい親・本人の 3 件を書き換え</td><td>同じ親の同じ位置</td></tr>
-<tr><td><code>set_visibility</code></td><td>public / private（public にするなら親と位置）</td><td>不要</td><td>本人と親を書き換え</td><td>同じ公開範囲</td></tr>
-<tr><td><code>save_version</code></td><td>メモ（任意）</td><td>不要</td><td>版の作成</td><td>前の版から変更がない</td></tr>
-<tr><td><code>restore_version</code></td><td>戻す版の番号</td><td>不要（ペーパー単位）</td><td>今の状態をその版に合わせる追加・更新・削除</td><td>今の状態と同じ</td></tr>
-<tr><td><code>archive</code> / <code>unarchive</code></td><td>配下も含めるか</td><td>不要</td><td>アーカイブの印（配下も含めるなら<a href="#job">裏の処理</a>）</td><td>すでにその状態</td></tr>
+<tr><td><code>insert</code></td><td>Type (position by <code>after</code>; a temporary name <code>ref</code> is optional). For <code>paper</code>, the child's title</td><td>not needed</td><td>A block is added (for a table also its cells, for <code>paper</code> also the child paper)</td><td>—</td></tr>
+<tr><td><code>update</code></td><td>Block</td><td><b>required</b></td><td>Contents updated (<code>Rev</code> +1; cells added or removed when the table's shape changes)</td><td>Contents unchanged</td></tr>
+<tr><td><code>delete</code></td><td>Block</td><td><b>required</b></td><td>Deleted (for a table also its cells; for <code>paper</code> the child goes to the trash with its subtree by a <a href="#job">background job</a>)</td><td>Someone else already deleted it</td></tr>
+<tr><td><code>move</code></td><td>Block (position by <code>after</code>)</td><td>not needed</td><td>Position changed</td><td>Position unchanged, or already deleted</td></tr>
+<tr><td><code>set_title</code></td><td>Title</td><td>none (last-write-wins, <a href="#d-title">D1</a>)</td><td>Title changed</td><td>Same title</td></tr>
+<tr><td><code>insert_markdown</code></td><td>Markdown</td><td>not needed</td><td>A series of blocks is added</td><td>—</td></tr>
+<tr><td><code>move_paper</code></td><td>New parent (ID or path) and position</td><td>not needed</td><td>Three records rewritten: old parent, new parent, the paper itself</td><td>Same position under the same parent</td></tr>
+<tr><td><code>set_visibility</code></td><td>public / private (for public, a parent and position)</td><td>not needed</td><td>The paper and its parent rewritten</td><td>Same visibility</td></tr>
+<tr><td><code>save_version</code></td><td>Note (optional)</td><td>not needed</td><td>A version is made</td><td>Nothing changed since the previous version</td></tr>
+<tr><td><code>restore_version</code></td><td>The version number</td><td>not needed (per paper)</td><td>Inserts, updates and deletes that make the current state match that version</td><td>Same as the current state</td></tr>
+<tr><td><code>archive</code> / <code>unarchive</code></td><td>Whether to include the subtree</td><td>not needed</td><td>The archive mark (with the subtree, by a <a href="#job">background job</a>)</td><td>Already in that state</td></tr>
 </tbody></table></div>
-<h3>操作のまとまりの約束</h3>
+<h3>Batch rules</h3>
 <ul>
-<li>応答は結果と、<code>insert</code> の仮の名前と発行した ID の対応を返す。</li>
-<li>1 回で変えられるブロックは 240 まで、書く本文の合計は 3 MiB まで。超えたら分けてもらう。</li>
-<li>同じワークスペースの中の移動と公開範囲の変更は、複数のペーパーにまたがっても 1 つのトランザクションで書く。配下すべてに及ぶ処理と、ワークスペースをまたぐ移動は<a href="#job">裏の処理</a>になり、応答に裏の処理を添える。</li>
-<li>メッセージは持たない（説明は版のメモに書く）。</li>
+<li>The answer returns the result and the mapping from each <code>insert</code>'s temporary name to the issued ID.</li>
+<li>One batch changes at most 240 blocks and writes at most 3 MiB of text in total; beyond that the writer splits it.</li>
+<li>Moves and visibility changes within a workspace are written in one transaction even when they touch several papers. Operations on a whole subtree and moves across workspaces become <a href="#job">background jobs</a>, which start when the batch is answered.</li>
+<li>Batches have no message (explanations go in a version's note).</li>
 </ul>
-<p>人の画面はブロックから離れるたびに送るが、それは今の状態を書き換えるだけで、版は増えない。</p>
+<p>The UI sends each time the person leaves a block, but that only rewrites the current state; it adds no version.</p>
 </section>
 
 <section id="conflict" class="concept">
-<h2 style="margin-top:8px">元のリビジョンと衝突</h2>
-<p>ロックは持たない。書き手が「どの状態を見て書いたか」（そのブロックの <code>Rev</code> = 元のリビジョン）を添え、その後に他の書き手が内容を変えていたら、気づかないまま消さないように一度止める。決めた経緯は<a href="https://claude.ai/artifact/PeJpD9i89oasquNhJJPwmT">同時編集の設計</a>にある。</p>
-<h3>判定の規則</h3>
-<p>操作がブロック <i>b</i> を元のリビジョン <i>r</i> で書き換えようとしたとき、<i>b</i> の<b>このまとまりが始まる前の状態</b>を <i>cur</i> とする。</p>
+<h2 style="margin-top:8px">Base revisions and conflicts</h2>
+<p>There are no locks. A writer states which state it wrote from (that block's <code>Rev</code> = the base revision), and if another writer changed the contents since, the write stops once so nothing is lost unnoticed. How this was decided is in <a href="https://claude.ai/artifact/PeJpD9i89oasquNhJJPwmT">Concurrent editing</a>.</p>
+<h3>The rule</h3>
+<p>When an op rewrites block <i>b</i> from base revision <i>r</i>, let <i>cur</i> be <i>b</i>'s state <b>before this batch started</b>.</p>
 <div class="scroll"><table>
-<thead><tr><th>状況</th><th>結果</th></tr></thead>
+<thead><tr><th>Situation</th><th>Result</th></tr></thead>
 <tbody>
-<tr><td><i>r</i> がない、または <i>r</i> &gt; <i>cur.Rev</i></td><td>不正な要求（400）</td></tr>
-<tr><td><i>r</i> = <i>cur.Rev</i></td><td>そのまま適用</td></tr>
-<tr><td><i>r</i> &lt; <i>cur.Rev</i></td><td><b>衝突</b>。強行なら上書きする。<code>Rev</code> は内容が変わったときだけ増えるので、位置だけ動かされた場合は衝突にならない</td></tr>
-<tr><td><i>b</i> が他の書き手に削除されていた</td><td>更新は<b>衝突</b>（強行でも。書き手は新しいブロックとして足し直す）。削除・移動は何もしない</td></tr>
-<tr><td><i>b</i> がこのまとまりの中で作られた</td><td>判定しない</td></tr>
+<tr><td>No <i>r</i>, or <i>r</i> &gt; <i>cur.Rev</i></td><td>Invalid request (400)</td></tr>
+<tr><td><i>r</i> = <i>cur.Rev</i></td><td>Applied as is</td></tr>
+<tr><td><i>r</i> &lt; <i>cur.Rev</i></td><td><b>Conflict</b>; with force, overwrite. <code>Rev</code> rises only when contents change, so a block that was only moved is not a conflict</td></tr>
+<tr><td><i>b</i> was deleted by another writer</td><td>An update is a <b>conflict</b> (even with force; the writer adds it again as a new block). A delete or move does nothing</td></tr>
+<tr><td><i>b</i> was created in this batch</td><td>Not checked</td></tr>
 </tbody></table></div>
 <ul>
-<li>まとまりの中に衝突が 1 つでもあれば、何も書かずに全部を返す（409、衝突ごとに <i>cur</i> を添える）。書き手は全体を見て直せる。</li>
-<li>「このまとまりが始まる前の状態」と比べるので、同じまとまりの中で同じブロックを 2 回触っても、自分の 1 回目とは衝突しない。</li>
-<li>人の画面は<b>編集を始めた時点の <code>Rev</code></b> を送る。保存直前に受け取った最新を送ると、編集中に届いた他人の変更を見逃す。</li>
-<li>強行で上書きされた内容は、版に入っていなければ残らない（細かい履歴は持たないため）。画面は強行の前に、上書きされる相手の内容を見せる。</li>
+<li>If a batch has even one conflict, nothing is written and all of them are returned (409, each with <i>cur</i>), so the writer can fix the whole batch at once.</li>
+<li>Comparison is with the state before the batch started, so touching the same block twice in one batch never conflicts with one's own first touch.</li>
+<li>The UI sends <b>the <code>Rev</code> from when editing started</b>. Sending the latest received just before saving would miss others' changes that arrived while editing.</li>
+<li>Contents overwritten by force are gone unless a version holds them (there is no fine-grained history). Before forcing, the UI shows the contents that will be overwritten.</li>
 </ul>
-<h3>衝突しないもの（意図して）</h3>
+<h3>What never conflicts (on purpose)</h3>
 <ul>
-<li><b>位置</b>: 並び替えは後勝ち。並びが入れ替わっても内容は失われない。</li>
-<li><b>タイトル</b>: 後勝ち。負けた側の変更も履歴に残る（<a href="#d-title">D1</a>）。</li>
-<li><b>行・列の削除で消えるセル</b>: 元のリビジョンは見ない。編集中の人がいれば消す人に伝える（<a href="#d-shrink">D3</a>）。</li>
-<li><b>公開範囲</b>: 作成者だけが変えるもので、同時に変える場面はない。後勝ち。</li>
+<li><b>Position</b>: reordering is last-write-wins. Order may swap, but no contents are lost.</li>
+<li><b>Title</b>: last-write-wins. The losing change also remains in history (<a href="#d-title">D1</a>).</li>
+<li><b>Cells removed with a row or column</b>: base revisions are not checked. If someone is editing them, the person removing is told (<a href="#d-shrink">D3</a>).</li>
+<li><b>Visibility</b>: only the creator changes it, so there is no concurrent change. Last-write-wins.</li>
 </ul>
 </section>
 
 <section id="actor" class="concept">
-<h2 style="margin-top:8px">書き手と主体</h2>
-<p>似た言葉が 2 つあるので分けておく。<b>主体</b>は「いまリクエストしている者」、<b>書き手</b>は「その者が書いた、という記録」。主体でアクセスを判定し、主体が書けば書き手が残る。</p>
+<h2 style="margin-top:8px">Writers and principals</h2>
+<p>Two similar words, kept apart. The <b>principal</b> is "who is making this request"; the <b>writer</b> (actor) is "the record that this one wrote it". Access is decided by the principal; when a principal writes, a writer is recorded.</p>
 <div class="scroll"><table>
-<thead><tr><th></th><th>主体（Principal）</th><th>書き手（Actor）</th></tr></thead>
+<thead><tr><th></th><th>Principal</th><th>Writer (Actor)</th></tr></thead>
 <tbody>
-<tr><td>ひと言で</td><td>いまリクエストしている者</td><td>書いた者の記録</td></tr>
-<tr><td>いつ</td><td>リクエストごとに作る。保存しない</td><td>書き込みのたびに作り、ブロック（作成者・最終更新者）と版（保存した人）に残す</td></tr>
-<tr><td>中身</td><td>ユーザー、使ったトークン</td><td>人か AI か、代理元のユーザー、その時点の表示名、AI の名前、トークン</td></tr>
-<tr><td>用途</td><td>アクセスの判定（ワークスペースの規則、private の作成者か、トークンの制限）</td><td>「誰が書いたか」の表示と、上書きされた人の特定</td></tr>
-<tr><td>例</td><td>トークン「Claude」で来た Alice</td><td>「Claude（Alice の代理）」</td></tr>
+<tr><td>In short</td><td>Who is making the request</td><td>The record of who wrote</td></tr>
+<tr><td>When</td><td>Made per request; not stored</td><td>Made on every write and kept on blocks (creator, last writer) and versions (who saved)</td></tr>
+<tr><td>Holds</td><td>User, the token used</td><td>Person or AI, the user acted for, the display name at the time, the AI's name, the token</td></tr>
+<tr><td>Used for</td><td>Access decisions (workspace rule, whether the creator of a private paper, token limits)</td><td>Showing "who wrote this", and knowing whose change was overwritten</td></tr>
+<tr><td>Example</td><td>Alice, coming with the token "Claude"</td><td>"Claude (for Alice)"</td></tr>
 </tbody></table></div>
-<h3>人と AI の区別</h3>
+<h3>People and AI</h3>
 <div class="scroll"><table>
-<thead><tr><th>入り方</th><th>書き手の種類</th><th>表示</th></tr></thead>
+<thead><tr><th>Way in</th><th>Writer kind</th><th>Shown as</th></tr></thead>
 <tbody>
-<tr><td>Web UI（セッション）</td><td>人</td><td>ユーザー名</td></tr>
-<tr><td>AI 用トークン（REST / MCP）</td><td>AI</td><td>「Claude（Alice の代理）」</td></tr>
-<tr><td>MCP をセッションで使う（開発モード）</td><td>AI</td><td>「MCP client（… の代理）」</td></tr>
-<tr><td>個人用トークン（スクリプト）</td><td><b>人</b></td><td>ユーザー名（「API 経由」と添える、<a href="#d-personal">D7</a>）</td></tr>
+<tr><td>Web UI (session)</td><td>person</td><td>User name</td></tr>
+<tr><td>AI token (REST / MCP)</td><td>AI</td><td>"Claude (for Alice)"</td></tr>
+<tr><td>MCP with a session (development mode)</td><td>AI</td><td>"MCP client (for …)"</td></tr>
+<tr><td>Personal token (scripts)</td><td><b>person</b></td><td>User name (with "via API", <a href="#d-personal">D7</a>)</td></tr>
 </tbody></table></div>
 <ul>
-<li>AI は必ず誰かの代理。アクセスはその人のものを借り、トークンで狭める。AI 単独の利用者はいない。</li>
-<li>ユーザーは papers が発行する ID を持ち、Google などの外部の ID とは <code>Identity</code> で結びつける。1 人が複数の外部 ID でログインできる。</li>
+<li>AI always acts for someone. It borrows that person's access, narrowed by the token. There is no user that is AI alone.</li>
+<li>Users have IDs issued by papers and are tied to external IDs such as Google's through <code>Identity</code>. One person may sign in with several external IDs.</li>
 </ul>
 </section>
 
 <section id="access" class="concept">
-<h2 style="margin-top:8px">アクセス</h2>
-<p class="block human"><b>ロールは持たない</b>。決めるのは 2 つだけ: ワークスペースを使えるか（設定の規則）と、ペーパーが public か private か。閲覧者・編集者・所有者の区別も、ペーパーごとの割り当てもない。</p>
-<h3>決まり方</h3>
+<h2 style="margin-top:8px">Access</h2>
+<p class="block human"><b>There are no roles</b>. Only two things decide: whether one may use the workspace (the configured rule) and whether the paper is public or private. There is no viewer / editor / owner distinction and no per-paper assignment.</p>
+<h3>How it is decided</h3>
 <ol>
-<li><b>ワークスペースを使えるか</b>: ワークスペースの設定の <code>[authz]</code> の Rego が <code>allow</code> を返すか（hecatoncheires と同じ）。入力はワークスペースとユーザー（ID・メール）。ユーザーのグループは当面持たない（<a href="#d-groups">D14</a>）ので、規則はメールやドメインで書く。規則がないワークスペースの扱いは <a href="#d-authz">D12</a>。</li>
-<li><b>ペーパーを使えるか</b>:
+<li><b>May one use the workspace</b>: whether the Rego in the workspace configuration's <code>[authz]</code> returns <code>allow</code> (as in hecatoncheires). The input is the workspace and the user (ID, email). There are no user groups for now (<a href="#d-groups">D14</a>), so rules are written with emails or domains. A workspace without a rule: <a href="#d-authz">D12</a>.</li>
+<li><b>May one use the paper</b>:
 <ul>
-<li>public → ワークスペースを使える人なら読み書きできる（ホームを含む）</li>
-<li>private → ワークスペースを使え、かつ作成者のユーザーであるときだけ読み書きできる</li>
+<li>public → anyone who may use the workspace may read and write it (the home included)</li>
+<li>private → only when one may use the workspace and is the creator</li>
 </ul></li>
-<li><b>トークンで狭める</b>: 読み取り用のトークンでは書けない。許可したワークスペースの外は使えない。トークンは本人ができることを広げない。</li>
+<li><b>Narrowed by the token</b>: a read-only token cannot write, and nothing outside the allowed workspaces can be used. A token never extends what its user can do.</li>
 </ol>
-<p>判定結果はインスタンスごとに短時間（hecatoncheires と同じ 60 秒）キャッシュし、判定できないときは拒否する。</p>
-<h3>操作ごとの条件</h3>
+<p>Decisions are cached briefly per instance (60 seconds, as in hecatoncheires), and anything that cannot be decided is refused.</p>
+<h3>Conditions per operation</h3>
 <div class="scroll"><table>
-<thead><tr><th>操作</th><th>条件</th></tr></thead>
+<thead><tr><th>Operation</th><th>Condition</th></tr></thead>
 <tbody>
-<tr><td>ペーパーを読む・履歴を見る・変更を受け取る・検索で見つける・一覧に出る</td><td>そのペーパーを使える（public ならワークスペースを使える、private なら作成者）</td></tr>
-<tr><td>ペーパーを作る</td><td>ワークスペースを使える（書き込みできるトークン）</td></tr>
-<tr><td>ブロックを書く・タイトルを変える</td><td>そのペーパーを使える（書き込みできるトークン）</td></tr>
-<tr><td>子を作る・移動する</td><td>関わるペーパー（元の親・新しい親・動かすペーパー）をすべて使える。ワークスペースをまたぐなら移動先も使える</td></tr>
-<tr><td>版を保存する</td><td>そのペーパーを使える（書き込みできるトークン。AI も可）</td></tr>
-<tr><td>公開範囲を変える</td><td>作成者だけ</td></tr>
-<tr><td>ペーパーを削除する（配下ごとゴミ箱、戻す、完全に消す）</td><td>作成者本人だけ。配下があれば配下もすべて本人のもの（<a href="#d-visibility">D18</a>）。ホームは消せない</td></tr>
-<tr><td>アーカイブする・解く</td><td>そのペーパーを使える人。ホームはアーカイブできない</td></tr>
-<tr><td>ワークスペース・使える人の規則を決める</td><td>設定ファイルを変えられる人（デプロイの権限。画面からはできない）</td></tr>
+<tr><td>Read a paper, see its history, receive changes, find it in search, see it in lists</td><td>May use the paper (public: may use the workspace; private: the creator)</td></tr>
+<tr><td>Create a paper</td><td>May use the workspace (with a token that can write)</td></tr>
+<tr><td>Write blocks, change the title</td><td>May use the paper (with a token that can write)</td></tr>
+<tr><td>Create a child, move</td><td>May use every paper involved (old parent, new parent, the paper moved); across workspaces, may also use the target</td></tr>
+<tr><td>Save a version</td><td>May use the paper (with a token that can write; AI too)</td></tr>
+<tr><td>Change visibility</td><td>The creator only</td></tr>
+<tr><td>Delete a paper (to the trash with its subtree, restore, purge)</td><td>The creator only, and if it has a subtree everything below is theirs too (<a href="#d-visibility">D18</a>). The home cannot be deleted</td></tr>
+<tr><td>Archive, unarchive</td><td>Anyone who may use the paper. The home cannot be archived</td></tr>
+<tr><td>Decide workspaces and who may use them</td><td>Whoever can change the configuration files (deploy rights; not possible from the UI)</td></tr>
 </tbody></table></div>
-<h3>システム管理者はいない</h3>
-<p>papers の中に、規則や公開範囲を越えて何でもできる人はいない。管理者の権限で決めることはすべて設定ファイルに入れ、設定ファイルはデプロイと一緒に届く。</p>
+<h3>No system administrators</h3>
+<p>No one inside papers can do anything beyond the rules and visibility. Everything an administrator would decide goes into configuration files, which ship with deployments.</p>
 <ul>
-<li>ユーザーの停止は、ログインの入口（Google のアカウント）か規則で行う。papers の画面にユーザー管理はない。</li>
-<li>作成者がいなくなった private のペーパーは誰も開けない（<a href="#d-visibility">D18</a>）。</li>
+<li>Users are stopped at the sign-in (their Google account) or by the rules. The papers UI has no user management.</li>
+<li>A private paper whose creator is gone can be opened by no one (<a href="#d-visibility">D18</a>).</li>
 </ul>
-<p>使えない相手には「存在しない」（404）を返し、ペーパーやワークスペースがあることを漏らさない。読めるが書けない（読み取り用トークン）ときだけ 403 を返す。</p>
+<p>Callers who may not use something get "does not exist" (404), so no paper or workspace leaks its existence. Only when one may read but not write (a read-only token) is it 403.</p>
 </section>
 
 <section id="storage" class="concept">
-<h2 style="margin-top:8px">保存先の配置</h2>
-<p>Firestore の文書の置き場所。木の形はモデルの「持つ」関係をそのまま映す。ペーパーの木（親子）はパスにせず、<code>ParentID</code> の値で持つ（移動でパスを変えないため）。</p>
+<h2 style="margin-top:8px">Storage layout</h2>
+<p>Where Firestore documents live. The shape mirrors the model's "has" relations. The paper tree (parent and child) is not part of paths but held in the <code>ParentID</code> value (so moves never change paths).</p>
 <figure>
-<svg viewBox="0 0 900 466" role="img" aria-label="Firestore の保存先の配置。ワークスペースの下にペーパー、検索エントリ、転送の記録、裏の処理。ペーパーの下にブロック、版、変更の記録、添付。ブロックの下に版が指す写し。ユーザーの下に外部 ID、ピン、最近開いたもの。トークンとセッションは最上位。"><text x="20" y="24" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">workspaces/{ws}</text><text x="430" y="24" font-size="12" style="fill:var(--soft)">HomePaperID（ワークスペースは設定ファイル、ここには記録だけ）</text><path d="M28 30V46H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="50" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">papers/{paper}</text><text x="430" y="50" font-size="12" style="fill:var(--soft)">Paper（タイトル・親・公開範囲・状態）</text><path d="M58 56V72H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="76" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">blocks/{block}</text><text x="430" y="76" font-size="12" style="fill:var(--soft)">Block の今の状態と Rev（読むのはここだけ）</text><path d="M88 82V98H106" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="110" y="102" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">snapshots/{rev}</text><text x="430" y="102" font-size="12" style="fill:var(--soft)">版が指す中身の写し（版の保存時に作る。不変）</text><path d="M58 56V124H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="128" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">versions/{n}</text><text x="430" y="128" font-size="12" style="fill:var(--soft)">版（明示的に保存。不変）</text><path d="M58 56V150H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="154" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">events/{id}</text><text x="430" y="154" font-size="12" style="fill:var(--soft)">変更の記録（配信のためだけ。短時間で消える）</text><path d="M58 56V176H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="180" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">attachments/{id}</text><text x="430" y="180" font-size="12" style="fill:var(--soft)">添付のメタデータ（中身は AttachmentStore）</text><path d="M28 30V202H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="206" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">search/{paper}_{block | title}</text><text x="430" y="206" font-size="12" style="fill:var(--soft)">検索エントリ（派生。平文）</text><path d="M28 30V228H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="232" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">forwards/{元の paper}</text><text x="430" y="232" font-size="12" style="fill:var(--soft)">ワークスペースをまたいで移ったペーパーの転送先</text><path d="M28 30V254H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="258" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">jobs/{job}</text><text x="430" y="258" font-size="12" style="fill:var(--soft)">裏の処理（終わって 7 日で消える）</text><path d="M58 264V280H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="284" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">items/{paper}</text><text x="430" y="284" font-size="12" style="fill:var(--soft)">対象のペーパーごとの進み具合</text><text x="20" y="310" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">users/{user}</text><text x="430" y="310" font-size="12" style="fill:var(--soft)">User</text><path d="M28 316V332H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="336" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">identities/{provider}_{subject}</text><text x="430" y="336" font-size="12" style="fill:var(--soft)">外部 ID との結びつき</text><path d="M28 316V358H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="362" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">pins/{ws}_{paper}</text><text x="430" y="362" font-size="12" style="fill:var(--soft)">お気に入り（並び順キー）</text><path d="M28 316V384H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="388" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">recent/{ws}</text><text x="430" y="388" font-size="12" style="fill:var(--soft)">最近開いたペーパー（ワークスペースごとに 1 件）</text><text x="20" y="414" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">tokens/{token}</text><text x="430" y="414" font-size="12" style="fill:var(--soft)">API トークン（秘密のハッシュ・制限）</text><text x="20" y="440" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">sessions/{session}</text><text x="430" y="440" font-size="12" style="fill:var(--soft)">ログインのセッション（秘密のハッシュ）</text></svg>
-<figcaption>灰色は派生データや一時的なもの。添付の中身だけは Firestore ではなく AttachmentStore（本番は Cloud Storage、開発はメモリかファイルシステム）。版と写しは作るだけで書き換えない。変更の記録は配信のためだけで、短時間で消える。裏の処理は終わって 7 日で消える。</figcaption>
+<svg viewBox="0 0 900 466" role="img" aria-label="Firestore storage layout. Under a workspace: papers, search entries, forwards and jobs. Under a paper: blocks, versions, change events and attachments. Under a block: the snapshots versions point to. Under a user: external IDs, pins and recently opened papers. Tokens and sessions are top level."><text x="20" y="24" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">workspaces/{ws}</text><text x="430" y="24" font-size="12" style="fill:var(--soft)">HomePaperID (workspaces are configuration; only a record here)</text><path d="M28 30V46H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="50" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">papers/{paper}</text><text x="430" y="50" font-size="12" style="fill:var(--soft)">Paper (title, parent, visibility, state)</text><path d="M58 56V72H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="76" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">blocks/{block}</text><text x="430" y="76" font-size="12" style="fill:var(--soft)">Block current state and Rev (the only thing read)</text><path d="M88 82V98H106" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="110" y="102" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">snapshots/{rev}</text><text x="430" y="102" font-size="12" style="fill:var(--soft)">snapshots versions point to (made on save; immutable)</text><path d="M58 56V124H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="128" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">versions/{n}</text><text x="430" y="128" font-size="12" style="fill:var(--soft)">versions (saved explicitly; immutable)</text><path d="M58 56V150H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="154" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">events/{id}</text><text x="430" y="154" font-size="12" style="fill:var(--soft)">change events (for fan-out only; short-lived)</text><path d="M58 56V176H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="180" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">attachments/{id}</text><text x="430" y="180" font-size="12" style="fill:var(--soft)">attachment metadata (bytes in AttachmentStore)</text><path d="M28 30V202H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="206" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">search/{paper}_{block | title}</text><text x="430" y="206" font-size="12" style="fill:var(--soft)">search entries (derived; plain text)</text><path d="M28 30V228H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="232" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">forwards/{old paper}</text><text x="430" y="232" font-size="12" style="fill:var(--soft)">where a paper moved across workspaces went</text><path d="M28 30V254H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="258" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">jobs/{job}</text><text x="430" y="258" font-size="12" style="fill:var(--soft)">background jobs (removed 7 days after finishing)</text><path d="M58 264V280H76" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="80" y="284" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:var(--soft)">items/{paper}</text><text x="430" y="284" font-size="12" style="fill:var(--soft)">progress per paper in scope</text><text x="20" y="310" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">users/{user}</text><text x="430" y="310" font-size="12" style="fill:var(--soft)">User</text><path d="M28 316V332H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="336" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">identities/{provider}_{subject}</text><text x="430" y="336" font-size="12" style="fill:var(--soft)">ties to external IDs</text><path d="M28 316V358H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="362" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">pins/{ws}_{paper}</text><text x="430" y="362" font-size="12" style="fill:var(--soft)">pins (order key)</text><path d="M28 316V384H46" fill="none" stroke="var(--rule)" stroke-width="1.3"/><text x="50" y="388" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">recent/{ws}</text><text x="430" y="388" font-size="12" style="fill:var(--soft)">recently opened paper (one per workspace)</text><text x="20" y="414" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">tokens/{token}</text><text x="430" y="414" font-size="12" style="fill:var(--soft)">API tokens (secret hash, limits)</text><text x="20" y="440" font-size="13" font-family="ui-monospace,Menlo,monospace" style="fill:currentColor">sessions/{session}</text><text x="430" y="440" font-size="12" style="fill:var(--soft)">sign-in sessions (secret hash)</text></svg>
+<figcaption>Grey is derived or short-lived. Only attachment bytes live outside Firestore, in the AttachmentStore (Cloud Storage in production, memory or a file system in development). Versions and snapshots are only created, never rewritten. Change events exist only for fan-out and disappear shortly. Jobs disappear 7 days after they finish.</figcaption>
 </figure>
 </section>
 
 <section id="derived" class="concept">
-<h2 style="margin-top:8px">派生データ</h2>
-<h3>検索エントリ</h3>
+<h2 style="margin-top:8px">Derived data</h2>
+<h3>Search entries</h3>
 <ul>
-<li>タイトル 1 つと、平文を持つブロック 1 つごとに 1 件。ワークスペースごとに置く（検索の範囲をパスで切るため）。</li>
-<li>ブロックと同じトランザクションで書く。書いた時点で検索にも当たる。</li>
-<li>正本ではない。すべてペーパーとブロックから作り直せる。</li>
-<li>アクセスの情報も木の情報（親・祖先）も持たない。検索の後で、ペーパーの公開範囲・ゴミ箱・アーカイブで絞り、「この配下で」なら当たりの親を辿って絞る。移動しても書き直さない。</li>
+<li>One for the title and one per block that has plain text, kept per workspace (so the search scope is cut by path).</li>
+<li>Written in the same transaction as the blocks, so a write is searchable at once.</li>
+<li>Not a source of truth: everything can be rebuilt from papers and blocks.</li>
+<li>They hold neither access information nor tree information (parent, ancestors). After searching, results are filtered by the paper's visibility, trash and archive state, and "under here" walks up the parents of each hit. Moves rewrite nothing.</li>
 </ul>
-<h3>変更フィード</h3>
+<h3>Change feed</h3>
 <ul>
-<li>ブロックの更新・削除、ペーパーの更新（親・公開範囲・状態の変化を含む）・削除を、変更後の状態として届ける。各ブロックの <code>Rev</code> と更新時刻を比べて新しいほうを反映すれば、何度届いても、順番が入れ替わっても同じ結果になる。</li>
-<li>取りこぼしは許す設計。接続し直したら必ず読み直す。受け手が遅れたら切って読み直させる。</li>
-<li>届けるために、ペーパーごとの短命の変更の記録（<code>Event</code>、例: 1 日で消える）を書き込みと同じトランザクションで書き、画面はそれを購読する（<a href="#d-load">D17</a>）。これは配信のためだけのもので、履歴ではない。</li>
+<li>Delivers block updates and deletes and paper updates (including changes of parent, visibility and state) and deletes, as the resulting state. Applying whichever is newer by each block's <code>Rev</code> and update time gives the same result however often and in whatever order events arrive.</li>
+<li>Designed to tolerate loss: after reconnecting, always read again. A slow receiver is cut off and made to read again.</li>
+<li>For delivery, short-lived change events per paper (<code>Event</code>, gone after a day, say) are written in the same transaction as the write, and the UI subscribes to them (<a href="#d-load">D17</a>). They exist only for delivery and are not history.</li>
 </ul>
-<h3>親の対応表</h3>
+<h3>Parent map</h3>
 <ul>
-<li>各インスタンスが手元に持つ「ペーパー → 親」の対応。パンくず・パス・循環の検査に使う。変更フィードで更新し、ずれていても親（<code>ParentID</code>）が正本なので、書き込みのトランザクションでは読み直す。</li>
+<li>Each instance keeps a "paper → parent" map in memory for breadcrumbs, paths and cycle checks. It is updated from the change feed; it may lag, but the parent (<code>ParentID</code>) is the source of truth, so write transactions read again.</li>
 </ul>
 </section>
 
 <section id="invariants">
-<h2>不変条件</h2>
-<p>どの書き方をしても、保存されたデータが常に満たすこと。保存先の契約テストと use case のテストで守る。</p>
+<h2>Invariants</h2>
+<p>What stored data always satisfies, however it is written. Kept by the repository contract tests and the use-case tests.</p>
 <ol class="inv">
-<li>ペーパーはどれも、設定に定義されたワークスペースに属する（設定から消えたワークスペースのペーパーは、どの主体からも見えない）。</li>
-<li>private のペーパーは、作成者のユーザー（AI が作ったなら代理元）以外のどの主体からも見えない。検索・一覧・変更フィードも含む。</li>
-<li>ブロックはちょうど 1 つのペーパーに属し、ペーパーはちょうど 1 つのワークスペースに属する。ブロックはペーパーをまたいで動かず、ペーパーはワークスペースをまたいで動かない（またぐ「移動」は写しと削除）。</li>
-<li>親を持つのは表のセルだけで、その親は同じペーパーの表。表のセルは、親の表の行 ID と列 ID の組ごとにちょうど 1 つあり、表にない行・列を指すセルはない。</li>
-<li>ブロックの属性には、その種類に関係する値しか入っていない。区切り線と表の本文は空。</li>
-<li>各ブロックの <code>Rev</code> は 1 から始まり、内容が変わるたびにちょうど 1 増える。位置の変更では増えない。</li>
-<li>操作のまとまりは、全部の結果が書かれるか、1 つも書かれないかのどちらか。ブロック・ペーパー・検索エントリ・変更の記録（<code>Event</code>）は同じトランザクションで書かれる。<a href="#job">裏の処理</a>は段ごとにこれを満たし、段はやり直しても同じ結果になる。</li>
-<li>強行しない限り、読んだ後に他の書き手が変えた内容が、知らないうちに消えることはない。</li>
-<li>版の番号はペーパーごとに 1 から欠番なしで、どれも不変。版が指すブロックの写し（ブロック ID + <code>Rev</code>）は存在し、不変。<code>Paper.VersionNumber</code> は最大の番号と一致する。</li>
-<li>版は書き手の明示的な保存の操作でだけ作られる。システムが自動で作ることはない。</li>
-<li>ID はすべてサーバーが発行したもので、クライアントが送った ID で新しいものが作られることはない。</li>
-<li>すべての変更には書き手があり、AI の書き手には必ず代理元のユーザーがある。</li>
-<li>検索エントリは、タイトルと平文を持つブロックにちょうど 1 件ずつあり、内容が一致する。</li>
-<li>ペーパーの更新時刻は、最後の書き込みの時刻より最大 1 分（設定値）までしか遅れない。</li>
-<li>設定の各ワークスペースには、ホームのペーパーがちょうど 1 つある。ホームは親を持たず、ゴミ箱にも入らず、public である。</li>
-<li>ホーム以外の public でゴミ箱にないペーパーは、ちょうど 1 つの親を持ち、親の本文にそのペーパーを指すペーパーブロックがちょうど 1 つある。逆に、ゴミ箱にない <code>paper</code> ブロックはどれも、その <code>ParentID</code> がそのブロックのペーパーである子を指す。</li>
-<li>親を辿るとホームに着く（循環しない）。親は同じワークスペースの public のペーパー。</li>
-<li>private のペーパーは親を持たず、どの本文にもペーパーブロックとして置かれない。子も持たない。</li>
-<li><code>paper</code> ブロックは本文の一番上の段にだけあり、表のセルにはない。</li>
-<li>画像ブロックが指す添付は、そのブロックと同じペーパーに属する。添付の中身は変わらない。</li>
-<li>ゴミ箱に入ったペーパーの配下は、裏の処理が終わった後は、すべて同じかそれより前の削除でゴミ箱にある（ゴミ箱にない親の下に、ゴミ箱のペーパーのペーパーブロックが生きて残ることはない）。</li>
-<li><code>JobID</code> のあるペーパーとそのブロックを書くのは、その裏の処理だけ。<code>JobID</code> のあるペーパーは、どの主体の検索にも出ず、写しはどの親の本文にも置かれていない。</li>
+<li>Every paper belongs to a workspace defined in the configuration (papers of a workspace removed from the configuration are visible to no principal).</li>
+<li>A private paper is visible to no principal other than its creator (for AI-created papers, the user acted for), in search, lists and the change feed too.</li>
+<li>A block belongs to exactly one paper and a paper to exactly one workspace. Blocks never move between papers and papers never move between workspaces (a "move" across is a copy and a delete).</li>
+<li>Only table cells have a parent, and that parent is a table in the same paper. There is exactly one cell per pair of the parent table's row and column IDs, and no cell points to a row or column the table does not have.</li>
+<li>A block's props hold only values relevant to its type. Dividers and tables have empty text.</li>
+<li>Each block's <code>Rev</code> starts at 1 and rises by exactly 1 whenever its contents change; position changes do not raise it.</li>
+<li>A batch either writes all of its results or none. Blocks, papers, search entries and change events (<code>Event</code>) are written in the same transaction. <a href="#job">Background jobs</a> satisfy this per step, and repeating a step gives the same result.</li>
+<li>Unless forced, contents another writer changed after one read them are never lost unnoticed.</li>
+<li>Version numbers are per paper, from 1 without gaps, and all immutable. The block snapshots a version points to (block ID + <code>Rev</code>) exist and are immutable. <code>Paper.VersionNumber</code> equals the highest number.</li>
+<li>Versions are made only by a writer's explicit save; the system never makes one on its own.</li>
+<li>Every ID was issued by the server; nothing new is ever created under an ID a client sent.</li>
+<li>Every change has a writer, and every AI writer has a user it acted for.</li>
+<li>There is exactly one search entry for the title and for each block with plain text, and its contents match.</li>
+<li>A paper's update time lags the last write by at most one minute (configurable).</li>
+<li>Each configured workspace has exactly one home paper. The home has no parent, is never in the trash, and is public.</li>
+<li>Every public paper other than the home that is not in the trash has exactly one parent, and the parent's body has exactly one paper block pointing to it. Conversely, every <code>paper</code> block not in the trash points to a child whose <code>ParentID</code> is that block's paper.</li>
+<li>Walking up parents reaches the home (no cycles). Parents are public papers of the same workspace.</li>
+<li>A private paper has no parent, is never placed in a body as a paper block, and has no children.</li>
+<li><code>paper</code> blocks exist only at the top level of a body, never in table cells.</li>
+<li>The attachment an image block points to belongs to the same paper as the block. Attachment bytes never change.</li>
+<li>Once its job has finished, everything under a trashed paper is in the trash from the same or an earlier delete (no live paper block of a trashed paper remains under a parent that is not in the trash).</li>
+<li>A paper with a <code>JobID</code> and its blocks are written only by that job. A paper with a <code>JobID</code> appears in no principal's search, and copies are placed in no parent's body.</li>
 </ol>
 </section>
 
 <section id="decide">
-<h2>決めること</h2>
-<p>モデルを詰める中で見つかった、曖昧さや穴と、その決定。青い線は決定済み、橙の線はまだ決めていないもの（いまはなし）。灰色の線は取り下げたもの。決定は実装の指示があるまでコードには入れない。</p>
+<h2>Decisions</h2>
+<p>Ambiguities and gaps found while refining the model, and how they were decided. A blue line is decided, an orange line not yet decided (none now), a grey line withdrawn. Decisions go into code only when implementation is asked for.</p>
 
 <div class="decision" id="d-title" style="border-left-color:var(--human)">
-<h3>D1. タイトルは履歴の管理下に置くが、独立した番号は持たない（決定）</h3>
-<p>タイトルは版で追えるようにするが、ブロックのような独自の版番号や衝突の判定は持たせない。</p>
+<h3>D1. Titles are under version history but have no revision of their own (decided)</h3>
+<p>Titles can be followed through versions, but they get no revision number or conflict check of their own like blocks.</p>
 <ul>
-<li><b>履歴</b>: 版はその時点のタイトルを持つ。版同士の差分にもタイトルが出る。</li>
-<li><b>戻す</b>: 版に戻せばタイトルもその版のものに戻る。</li>
-<li><b>持たないもの</b>: <code>TitleVersion</code> のような独立した番号、<code>set_title</code> の元のリビジョン、タイトルの衝突。同時に変えたら後勝ち。</li>
+<li><b>History</b>: a version holds the title at that moment, and diffs between versions show titles too.</li>
+<li><b>Restore</b>: restoring a version restores its title too.</li>
+<li><b>Not kept</b>: a separate number like <code>TitleVersion</code>, a base revision for <code>set_title</code>, title conflicts. Concurrent changes are last-write-wins.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-table" style="border-left-color:var(--human)">
-<h3>D2. 表の行・列に ID を持たせる（決定: B）</h3>
-<p>いまセルは「行番号・列番号」で場所を持つ。そのため、途中に行を挿入できない（後ろのセル全部の番号を書き換えることになり、全部のセルが変わって衝突も起きる）。また、行や列を縮めると、そこにあるセルが確認なしに消える。</p>
+<h3>D2. Table rows and columns get IDs (decided: B)</h3>
+<p>Cells used to locate themselves by row and column numbers. So a row could not be inserted in the middle (every later cell's number would be rewritten, changing every cell and causing conflicts), and shrinking rows or columns deleted their cells without asking.</p>
 <figure>
-<svg viewBox="0 0 900 230" role="img" aria-label="左は現在の方式で、セルが行番号と列番号を持つため、2 行目に行を挿入すると以降の全セルの番号が変わる。右は提案で、表が行と列の ID の並びを持ち、セルは行 ID と列 ID で場所を持つため、行の挿入は表の更新 1 つと新しいセルだけで済む。">
-<g font-size="13" font-weight="600"><text x="20" y="22">今: セルが番号を持つ</text><text x="470" y="22">案: 表が行・列の ID の並びを持つ</text></g>
+<svg viewBox="0 0 900 230" role="img" aria-label="Left, the old way: cells hold row and column numbers, so inserting a row at row 2 changes every later cell's numbers. Right, the proposal: the table holds the order of row and column IDs and cells locate by row ID and column ID, so inserting a row is one table update plus the new cells.">
+<g font-size="13" font-weight="600"><text x="20" y="22">Before: cells hold numbers</text><text x="470" y="22">Proposal: the table holds row and column IDs</text></g>
 <g fill="none" stroke="currentColor" stroke-width="1.2">
 <rect x="20" y="40" width="300" height="150"/>
 <path d="M20 90H320M20 140H320M120 40V190M220 40V190"/>
@@ -697,340 +697,340 @@ policy = ["policies/security.rego"]</code></pre>
 <text x="520" y="174">r2·c1</text><text x="620" y="174">r2·c2</text><text x="720" y="174">r2·c3</text>
 </g>
 <g font-size="11">
-<text x="470" y="46">表の属性 rows: [r1 "V", r3 "b", r2 "k"]  cols: [c1, c2, c3]</text>
-<text x="470" y="62" style="fill:var(--soft)">行の挿入 = rows に (ID, 並び順キー) を 1 つ足す + 新しい行のセル</text>
-<text x="20" y="214" style="fill:var(--held)">2 行目に挿入すると、以降の全セルの番号が変わる</text>
-<text x="470" y="214" style="fill:var(--soft)">表示順は並び順キーの順（V &lt; b &lt; k）。r3 が挿入した行（青）</text>
+<text x="470" y="46">table props rows: [r1 "V", r3 "b", r2 "k"]  cols: [c1, c2, c3]</text>
+<text x="470" y="62" style="fill:var(--soft)">insert a row = add one (ID, order key) to rows + the new row's cells</text>
+<text x="20" y="214" style="fill:var(--held)">inserting at row 2 changes every later cell's numbers</text>
+<text x="470" y="214" style="fill:var(--soft)">shown in order-key order (V &lt; b &lt; k); r3 is the inserted row (blue)</text>
 </g>
 </svg>
-<figcaption>案ではセルは行 ID と列 ID で場所を持つ。行を挿入しても既存のセルは 1 つも変わらない。行を消すときは、その行のセルを明示して消す（D3）。</figcaption>
+<figcaption>In the proposal, cells locate by row ID and column ID. Inserting a row changes no existing cell. Removing a row removes that row's cells explicitly (D3).</figcaption>
 </figure>
 <div class="scroll"><table>
-<thead><tr><th>案</th><th>内容</th><th>良い点</th><th>気になる点</th></tr></thead>
+<thead><tr><th>Option</th><th>What</th><th>Good</th><th>Concerns</th></tr></thead>
 <tbody>
-<tr><td>A. 今のまま（番号）</td><td>行・列の追加・削除は末尾だけ</td><td>単純</td><td>途中への挿入・並び替えができない。縮めると確認なしに消える</td></tr>
-<tr><td>B. 行・列の ID</td><td>表の属性に行・列の (ID, 並び順キー) の列。セルは (行 ID, 列 ID)。行・列の挿入・削除・並び替えを専用の操作にする</td><td>途中への挿入や並び替えで既存のセルが変わらない。削除するセルが明確になる</td><td>表の属性が大きくなる（行 100 × 列 20 なら 120 個の ID）。操作が増える</td></tr>
+<tr><td>A. As is (numbers)</td><td>Rows and columns are added and removed only at the end</td><td>Simple</td><td>No inserting in the middle or reordering. Shrinking deletes without asking</td></tr>
+<tr><td>B. Row and column IDs</td><td>Table props hold lists of (ID, order key) for rows and columns; cells are (row ID, column ID). Inserting, deleting and reordering rows and columns are dedicated ops</td><td>Inserting in the middle or reordering changes no existing cell. Which cells are deleted is explicit</td><td>Table props grow (100 rows × 20 columns is 120 IDs). More ops</td></tr>
 </tbody></table></div>
-<div class="rec"><b>決定: B</b>。表は AI がよく書き、人が直す代表的な場面。行の挿入ができない表は使いにくく、番号のずれは衝突と大量の変更を生む。
+<div class="rec"><b>Decided: B</b>. Tables are a typical case of AI writing and people fixing. A table without row insertion is hard to use, and shifting numbers cause conflicts and mass changes.
 <ul>
-<li>行・列の ID はサーバーが発行する（他の ID と同じ 22 文字）。同じ操作のまとまりの中で新しい行・列を指すときは、ブロックと同じく仮の名前 <code>ref</code> を使う。</li>
-<li>表の属性 <code>rows</code> / <code>cols</code> は (ID, 並び順キー) の列。表示順は並び順キーの順。</li>
-<li>セルの属性は <code>row_id</code> / <code>col_id</code>。行・列を挿入・並び替えても既存のセルは変わらない。</li>
-<li>操作: 行・列の挿入（新しい行・列のセルも作る）、削除（その行・列のセルも消す。消すセルの扱いは <a href="#d-shrink">D3</a>）、並び替え（表の属性の更新だけ）。</li>
-<li>表もセルも普通のブロックなので、ペーパーを版に戻せば一緒に戻る。</li>
+<li>Row and column IDs are issued by the server (22 characters like other IDs). New rows and columns are referenced within the same batch by a temporary <code>ref</code>, as blocks are.</li>
+<li>The table props <code>rows</code> / <code>cols</code> are lists of (ID, order key), shown in order-key order.</li>
+<li>Cell props are <code>row_id</code> / <code>col_id</code>. Inserting or reordering rows and columns changes no existing cell.</li>
+<li>Ops: insert a row or column (also creating its cells), delete one (also deleting its cells; how those cells are treated is <a href="#d-shrink">D3</a>), reorder (only a table props update).</li>
+<li>Tables and cells are ordinary blocks, so restoring a paper to a version restores them together.</li>
 </ul></div>
 </div>
 
 <div class="decision" id="d-shrink" style="border-left-color:var(--human)">
-<h3>D3. 行・列を消すとき、セルの元のリビジョンは見ない。編集中の人がいれば伝える（決定）</h3>
-<p>行・列の削除は一瞬の操作で、消したセルの中身は、版に入っていれば版に残る。だから消すセルの元のリビジョンを添えさせて衝突にする仕組みは入れない。代わりに、<b>いまそのセルを編集している人がいれば、消す人にそれを伝える</b>。</p>
+<h3>D3. Deleting rows or columns does not check the cells' base revisions; people editing them are told (decided)</h3>
+<p>Deleting a row or column is instant, and the deleted cells' contents remain in any version that holds them. So there is no mechanism requiring base revisions for the cells to be deleted. Instead, <b>if someone is editing one of those cells right now, the person deleting is told</b>.</p>
 <ul>
-<li><b>消す人の画面</b>: 消そうとする行・列のセルを誰かが編集中なら、「Alice が編集中です」と出してから消すかどうかを選んでもらう。編集中の人がいなければ確認なしに消す。</li>
-<li><b>編集していた人の画面</b>: 自分のセルが消えたら「Bob が行を削除しました」と出し、書きかけの文字は手元に残してコピーできるようにする。保存しようとすると「削除済み」で拒否される。</li>
-<li><b>API・AI</b>: 編集中の人がいても消せる。結果に「編集中だった人」を返す。</li>
+<li><b>The deleter's screen</b>: if someone is editing a cell in the row or column being deleted, it shows "Alice is editing" and asks whether to delete. With no one editing, it deletes without asking.</li>
+<li><b>The editor's screen</b>: when their cell disappears it shows "Bob deleted the row", keeping the unsaved text locally so it can be copied. Trying to save is refused as "deleted".</li>
+<li><b>API and AI</b>: may delete even when someone is editing; the result returns "who was editing".</li>
 </ul>
-<p class="callout"><b>新しく要るもの: 編集中の印（presence）</b>。誰がどのブロックを編集しているかを、画面がサーバーへ知らせる（編集を始めた・やめた、数十秒ごとの更新）。サーバーは保存せず手元に短時間だけ持ち、変更フィードで同じペーパーを開いている画面に流す。今の変更フィードはサーバーから画面への一方向なので、画面からの知らせは HTTP で送る。表だけでなく、他のブロックでも「誰がどこを編集中か」の表示に使える。</p>
+<p class="callout"><b>Newly needed: editing presence</b>. The UI tells the server who is editing which block (started, stopped, refreshed every few tens of seconds). The server does not store it but holds it briefly and streams it through the change feed to screens with the same paper open. The change feed is one-way from server to screen, so the UI sends presence over HTTP. It can show "who is editing where" for any block, not just tables.</p>
 </div>
 
 <div class="decision" id="d-delete" style="border-left-color:var(--human)">
-<h3>D4. ペーパーの削除はゴミ箱に入れる（決定）</h3>
-<p>子ペーパーを消すと配下ごとゴミ箱に入り、戻すときも一緒に戻る、と決めた（<a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">ペーパーの整理</a> D21）ので、A に決まった。</p>
+<h3>D4. Deleting a paper puts it in the trash (decided)</h3>
+<p>Deleting a child paper was decided to put it in the trash with its subtree and to restore them together (<a href="https://claude.ai/artifact/Y46swxokDsYQ6dRxPTabX4">Organizing papers</a> D21), which settled this as A.</p>
 <ul>
-<li><code>DeletedAt</code> と <code>DeletedWith</code>（削除を始めたペーパー）を配下の各ペーパーに付けて隠す。戻すときは同じ <code>DeletedWith</code> のものだけ戻す。30 日後に、<code>DeletedWith</code> ごとにブロック・版・写しまで本当に消す。</li>
-<li>検索エントリは消さず、検索の後で除く（大きな配下で一斉に書き直さないため）。</li>
-<li>親がゴミ箱にあるまま子だけを戻すと、ゴミ箱にない一番近い祖先の下に戻る。</li>
-<li>削除・戻す・完全に消すは作成者本人だけ。他の人はアーカイブする（<a href="#d-visibility">D18</a>）。</li>
-<li>ホームは消せない。ワークスペースは設定で定義するので対象外。</li>
+<li><code>DeletedAt</code> and <code>DeletedWith</code> (the paper where the delete started) are set on every paper below to hide them. Restoring brings back only those with the same <code>DeletedWith</code>. After 30 days, blocks, versions and snapshots are purged per <code>DeletedWith</code>.</li>
+<li>Search entries are not deleted but filtered out after searching (so a large subtree is not rewritten all at once).</li>
+<li>Restoring only a child while its parent is still in the trash puts it under its nearest ancestor that is not in the trash.</li>
+<li>Only the creator deletes, restores and purges. Others archive (<a href="#d-visibility">D18</a>).</li>
+<li>The home cannot be deleted. Workspaces are defined in configuration, so they are out of scope.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-grain" style="border-left-color:var(--soft)">
-<h3>D5. commit の粒度（取り下げ）</h3>
-<p>細かい commit を残す仕組みそのものをやめた（<a href="#d-commit-link">D15</a>）。今の状態と、明示的に保存された版しかないので、まとめて見せる必要もない。</p>
-<h4>読み取りで守ること（引き続き有効）</h4>
+<h3>D5. Commit granularity (withdrawn)</h3>
+<p>The mechanism keeping fine-grained commits was dropped altogether (<a href="#d-commit-link">D15</a>). There is only the current state and explicitly saved versions, so there is nothing to group for display.</p>
+<h4>What reads must keep (still in force)</h4>
 <div class="scroll"><table>
-<thead><tr><th>読みたいもの</th><th>読み方</th></tr></thead>
+<thead><tr><th>To read</th><th>How</th></tr></thead>
 <tbody>
-<tr><td>ペーパーの今の状態</td><td>ペーパー本体を 1 件と、ブロックの今の状態を 1 回の問い合わせで（大きなペーパーは範囲読み、<a href="#d-load">D17</a>）</td></tr>
-<tr><td>最新の版 / 版 vN</td><td>版を番号で 1 件取得し、指す写しを一括取得</td></tr>
-<tr><td>版の一覧</td><td>版を番号の降順で必要な件数だけ</td></tr>
-<tr><td>差分（版同士・版と今）</td><td>ブロック ID と <code>Rev</code> で突き合わせ、違うものだけ中身を一括取得</td></tr>
+<tr><td>A paper's current state</td><td>One paper record and the blocks' current state in one query (a large paper by range reads, <a href="#d-load">D17</a>)</td></tr>
+<tr><td>The latest version / version vN</td><td>Get one version by number and batch-read the snapshots it points to</td></tr>
+<tr><td>The version list</td><td>Versions in descending number order, only as many as needed</td></tr>
+<tr><td>A diff (between versions, or a version and now)</td><td>Match by block ID and <code>Rev</code>, and batch-read only the contents that differ</td></tr>
 </tbody></table></div>
 </div>
 <div class="decision" id="d-touch" style="border-left-color:var(--human)">
-<h3>D6. 更新時刻は今のまま（決定: B）</h3>
-<p><code>UpdatedAt</code> は最大 1 分遅れるが、一覧の並びや「◯分前に更新」の表示で 1 分の誤差に意味はない。名前は <code>UpdatedAt</code> のままにし、改名はしない。</p>
+<h3>D6. Update times stay as they are (decided: B)</h3>
+<p><code>UpdatedAt</code> may lag by up to a minute, but a minute means nothing for list order or "updated N minutes ago". The name stays <code>UpdatedAt</code>; no rename.</p>
 <ul>
-<li>API の説明には「ペーパー本体への書き込みを減らすため、最大 1 分遅れる」と書いておく。</li>
-<li>正確な時刻が要るときは、ブロックの更新時刻や版の保存時刻を使う。</li>
+<li>The API documentation says "may lag by up to a minute, to keep writes to the paper record low".</li>
+<li>When an exact time is needed, use the blocks' update times or versions' save times.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-personal" style="border-left-color:var(--human)">
-<h3>D7. 個人用トークンからの書き込みは人のまま、「API 経由」と添える（決定: B）</h3>
-<p>個人用トークン（スクリプト用）の書き込みは、いま「人」として残る。自動化した書き込みが人の手書きと区別できない。</p>
+<h3>D7. Writes with a personal token stay a person's, marked "via API" (decided: B)</h3>
+<p>Writes with a personal token (for scripts) are recorded as a "person", so automated writes cannot be told apart from handwritten ones.</p>
 <ul>
-<li><b>A. 第 3 の種類「自動化」</b>: <code>ActorKind = automation</code> を足し、画面では「◯◯ のスクリプト」と出す。</li>
-<li><b>B. 人のまま、トークン経由であることだけ表示</b>: 書き手の種類は変えず、<code>TokenID</code> があれば「API 経由」と添える。</li>
-<li><b>C. 今のまま</b>。</li>
+<li><b>A. A third kind, "automation"</b>: add <code>ActorKind = automation</code> and show "X's script" on screen.</li>
+<li><b>B. Stay a person, only show that a token was used</b>: the writer kind stays; with a <code>TokenID</code>, add "via API".</li>
+<li><b>C. As is</b>.</li>
 </ul>
-<div class="rec"><b>決定: B</b>。種類を増やすと権限や表示の分岐が増える。区別が要るのは表示だけ。</div>
+<div class="rec"><b>Decided: B</b>. Another kind multiplies branches in permissions and display, and only display needs the distinction.</div>
 </div>
 
 <div class="decision" id="d-image" style="border-left-color:var(--human)">
-<h3>D8. 添付ファイルの概念を足す（決定: A）</h3>
-<p>画像を外部 URL だけに頼ると、社内の情報が消えたり見えなくなったりする。ペーパーに属する添付ファイルを持てるようにする。</p>
+<h3>D8. Add attachments (decided: A)</h3>
+<p>Relying only on external URLs for images means internal information may disappear or become unreadable. Papers can hold attachments of their own.</p>
 <dl class="fields">
-<dt>ID / PaperID</dt><dd>22 文字の ID。ちょうど 1 つのペーパーに属する。</dd>
-<dt>Name / ContentType / Size</dt><dd>元のファイル名、種類、大きさ。当面は画像だけ、上限つき（例: 20 MiB）。</dd>
-<dt>SHA256</dt><dd>中身のハッシュ。同じペーパーに同じ中身が来たら同じ添付を使う。</dd>
-<dt>CreatedBy / CreatedAt</dt><dd>置いた書き手と時刻。</dd>
+<dt>ID / PaperID</dt><dd>A 22-character ID; belongs to exactly one paper.</dd>
+<dt>Name / ContentType / Size</dt><dd>The original file name, type and size. Images only for now, with a limit (20 MiB, say).</dd>
+<dt>SHA256</dt><dd>A hash of the bytes. The same bytes in the same paper reuse the same attachment.</dd>
+<dt>CreatedBy / CreatedAt</dt><dd>The writer who uploaded it, and when.</dd>
 </dl>
 <ul>
-<li><b>不変</b>: 中身は変わらない。差し替えは新しい添付を置いて、画像ブロックの参照を変える。</li>
-<li><b>保存</b>: 中身の置き場所は保存先の口（<code>AttachmentStore</code>）で抽象化し、起動時の設定で選ぶ。本番は Cloud Storage の <code>workspaces/{ws}/papers/{p}/attachments/{id}</code>、開発環境やテストはメモリかローカルのファイルシステム（同じパス構成のディレクトリ）。メタデータはペーパーと同じ保存先（Firestore・メモリ）。署名付き URL が出せない置き場所では、API を通して渡す。</li>
-<li><b>見る</b>: 権限はペーパーに従う。API を通して渡すか、確認の後に短命の署名付き URL を出す。</li>
-<li><b>画像ブロック</b>: 属性は <code>attachment_id</code> か <code>url</code>（外部）のどちらか。指せるのは同じペーパーの添付だけ。他のペーパーへ貼り付けたら、添付を写す。</li>
-<li><b>寿命</b>: どのブロックからも参照されなくなっても消さない（版が指している）。ペーパーを本当に消すとき（ゴミ箱から 30 日後）に一緒に消す。</li>
-<li><b>移動</b>: 同じワークスペースの中の移動では動かない（ペーパーに属したまま）。ワークスペースをまたぐ移動では写す。</li>
-<li><b>AI</b>: MCP から置ける（中身を送るか、取得してよい URL を渡す）。</li>
+<li><b>Immutable</b>: the bytes never change. Replacing means uploading a new attachment and pointing the image block at it.</li>
+<li><b>Storage</b>: where bytes live is abstracted behind a port (<code>AttachmentStore</code>) chosen at startup: Cloud Storage at <code>workspaces/{ws}/papers/{p}/attachments/{id}</code> in production, memory or a local file system (a directory with the same layout) in development and tests. Metadata lives with the papers (Firestore or memory). Stores that cannot issue signed URLs serve through the API.</li>
+<li><b>Viewing</b>: access follows the paper. Served through the API, or by a short-lived signed URL after the check.</li>
+<li><b>Image blocks</b>: props are either <code>attachment_id</code> or <code>url</code> (external). Only attachments of the same paper may be referenced; pasting into another paper copies the attachment.</li>
+<li><b>Lifetime</b>: an attachment is not deleted when no block references it any more (versions may). It is purged with the paper (30 days after the trash).</li>
+<li><b>Moves</b>: a move within a workspace leaves it where it is (it still belongs to the paper). A move across workspaces copies it.</li>
+<li><b>AI</b>: may upload through MCP (sending the bytes or a URL that may be fetched).</li>
 </ul>
 </div>
 
 <div class="decision" id="d-summary" style="border-left-color:var(--human)">
-<h3>D9. 要約は一旦持たない（決定: C）</h3>
-<p><code>Paper.Summary</code> は足さない。AI の道案内は、親ペーパーの本文（子を紹介するまとめ）とホームから降りていく形（<a href="#tree">木</a>）と、検索で行う。必要になったら改めて検討する。</p>
+<h3>D9. No summaries for now (decided: C)</h3>
+<p>No <code>Paper.Summary</code>. AI finds its way by descending from the home through parents' bodies (which introduce their children) (<a href="#tree">Tree</a>) and by search. To be reconsidered if needed.</p>
 </div>
 
 <div class="decision" id="d-style" style="border-left-color:var(--human)">
-<h3>D10. ブロック内のテキストの装飾は記法つき文字列で持つ（決定: A）</h3>
-<p>ブロックの中の一部だけ色を変える、背景に色を付けるといった装飾が要る。今の本文はインライン Markdown の文字列で、太字・斜体・コード・リンクしか持てず、色は表せない。人の編集欄も記法がそのまま見えるテキスト欄なので、色を付ける操作もない。</p>
-<p>これは「テキスト系ブロックの本文とは何か」を決め直すことになる。対象は段落・見出し・引用・リスト・ToDo・コールアウト・表のセル・画像のキャプション。コードと AI だけが書く図は対象外。</p>
-<h4>表し方</h4>
-<pre><code>A. 文字列のまま記法を足す
-   "手順は[必ず]{.red}守る。**例外なし**"
+<h3>D10. Inline styling in blocks is a markup string (decided: A)</h3>
+<p>Styling such as colouring part of a block or giving it a background is needed. The text was an inline Markdown string that held only bold, italic, code and links, with no colour. The people's edit field was a text field showing the markup as is, with no way to apply colour.</p>
+<p>This redefines "what the text of a text block is". In scope: paragraphs, headings, quotes, lists, to-dos, callouts, table cells and image captions. Out of scope: code and diagrams only AI writes.</p>
+<h4>Representations</h4>
+<pre><code>A. Keep a string and add markup
+   "Always [follow]{.red} the runbook. **No exceptions**"
 
-B. 文字の並び（run）の列として保存する
-   [{"text":"手順は"},
-    {"text":"必ず","marks":{"color":"red"}},
-    {"text":"守る。"},
-    {"text":"例外なし","marks":{"bold":true}}]
+B. Store a list of text runs
+   [{"text":"Always "},
+    {"text":"follow","marks":{"color":"red"}},
+    {"text":" the runbook. "},
+    {"text":"No exceptions","marks":{"bold":true}}]
 
-C. 平文と、範囲で指した装飾
-   text:  "手順は必ず守る。例外なし"
-   marks: [{"from":3,"to":5,"color":"red"},{"from":8,"to":12,"bold":true}]</code></pre>
+C. Plain text plus styling by ranges
+   text:  "Always follow the runbook. No exceptions"
+   marks: [{"from":7,"to":13,"color":"red"},{"from":27,"to":40,"bold":true}]</code></pre>
 <div class="scroll"><table>
-<thead><tr><th>観点</th><th>A. 記法つき文字列</th><th>B. run の列</th><th>C. 平文 + 範囲</th></tr></thead>
+<thead><tr><th>Aspect</th><th>A. Markup string</th><th>B. List of runs</th><th>C. Plain text + ranges</th></tr></thead>
 <tbody>
-<tr><td>AI の書きやすさ</td><td>高い（Markdown の延長。<code>[文字]{.red}</code> は Pandoc の記法で、AI が知っている）</td><td>JSON は冗長で間違えやすい。記法で受けて変換すれば同じ</td><td>位置の数え間違いが起きやすい</td></tr>
-<tr><td>検証</td><td>記法を解析しないと正しいか分からない。エスケープの扱いが難しい</td><td>構造をそのまま検証できる</td><td>範囲の重なり・はみ出しの検証が要る</td></tr>
-<tr><td>検索エントリ・平文化</td><td>解析して取り出す</td><td>text をつなぐだけ</td><td>そのまま</td></tr>
-<tr><td>衝突の判定（内容が同じか）</td><td>文字列の比較</td><td>列の比較（同じ見た目を必ず同じ形に正規化する）</td><td>正規化が要る</td></tr>
-<tr><td>画面のリッチ編集との相性</td><td>編集のたびに記法と相互変換</td><td>ProseMirror などの文書構造に素直に対応する</td><td>変換が要る</td></tr>
-<tr><td>今後の拡張（メンション、ペーパーへのリンク、範囲へのコメント）</td><td>記法が増えて読みにくくなる</td><td>marks や種類を足すだけ</td><td>範囲の追従が難しい</td></tr>
-<tr><td>Markdown への書き出し</td><td>そのまま（Pandoc 互換）</td><td>記法に変換</td><td>変換</td></tr>
+<tr><td>Ease for AI</td><td>High (an extension of Markdown; <code>[text]{.red}</code> is Pandoc syntax AI knows)</td><td>JSON is verbose and error-prone; the same if accepted as markup and converted</td><td>Position counting errors are likely</td></tr>
+<tr><td>Validation</td><td>Needs parsing to know it is valid; escaping is tricky</td><td>The structure validates directly</td><td>Overlapping and out-of-range ranges need checks</td></tr>
+<tr><td>Search entries, plain text</td><td>Extracted by parsing</td><td>Just join the text</td><td>As is</td></tr>
+<tr><td>Conflict check (same contents?)</td><td>String comparison</td><td>List comparison (the same look must always normalize to the same shape)</td><td>Needs normalization</td></tr>
+<tr><td>Fit with rich editing in the UI</td><td>Convert to and from markup on every edit</td><td>Maps directly to document structures like ProseMirror</td><td>Needs conversion</td></tr>
+<tr><td>Future extensions (mentions, links to papers, comments on ranges)</td><td>More markup, harder to read</td><td>Just add marks or kinds</td><td>Keeping ranges in place is hard</td></tr>
+<tr><td>Export to Markdown</td><td>As is (Pandoc-compatible)</td><td>Convert to markup</td><td>Convert</td></tr>
 </tbody></table></div>
-<div class="rec"><b>決定: A</b>（B は保存の形として冗長すぎる）。本文は今と同じ文字列のまま、インライン Markdown に Pandoc の囲み記法 <code>[文字]{.色}</code> を足す。今の本文はそのまま正しい本文なので、移行は要らない。A の弱点は次のように抑える。
+<div class="rec"><b>Decided: A</b> (B is too verbose as a storage shape). The text stays a string as before, and inline Markdown gains Pandoc's bracketed span <code>[text]{.colour}</code>. Existing text is already valid, so no migration is needed. A's weaknesses are contained as follows.
 <ul>
-<li><b>文法を閉じる</b>: 使える記法を決めた一覧（太字・斜体・取り消し線・インラインコード・リンク・<code>[文字]{.色}</code>・<code>[文字]{.bg-色}</code>）に限り、それ以外の記法（HTML など）は文字として扱う。エスケープは CommonMark の規則（<code>\[</code> など）に従う。</li>
-<li><b>保存のときに正規化する</b>: サーバーが本文を解析して、決まった書き方で書き直してから保存する（例: <code>__太字__</code> は <code>**太字**</code> に、隣り合う同じ色の囲みは 1 つに、空の囲みは消す）。「同じ見た目なら同じ文字列」になるので、衝突の判定（内容が同じか）は文字列の比較のままでよい。</li>
-<li><b>検証</b>: 解析できない本文や、パレットにない色は保存の前に拒否し、どこが悪いかを返す（AI が直せるように）。</li>
-<li><b>検索への影響はない</b>: 検索エントリには記法を取り除いた平文だけを書く（保存と同じトランザクションで、解析して文字だけを取り出す）。<code>[必ず]{.red}</code> は「必ず」、<code>**例**外</code> は「例外」として索引されるので、記法で語が分断されることも、<code>{.red}</code> のような記法の文字で当たることもない。リンクは表示される文字だけを索引し、URL は入れない。検索結果の抜粋と強調も平文の上で作る。</li>
-<li><b>画面との相互変換</b>: リッチ編集（D11）は本文を解析して編集用の構造にし、保存のときに記法へ戻す。サーバー（Go）と画面（TypeScript）の解析が食い違わないよう、同じ入出力の例（正規化前 → 正規化後 → 平文）を共有のテストにする。</li>
+<li><b>A closed grammar</b>: only a fixed list of markup (bold, italic, strikethrough, inline code, links, <code>[text]{.colour}</code>, <code>[text]{.bg-colour}</code>); anything else (HTML and so on) is literal text. Escaping follows CommonMark (<code>\[</code> and so on).</li>
+<li><b>Normalize on save</b>: the server parses the text and rewrites it in a canonical form before saving (for example <code>__bold__</code> becomes <code>**bold**</code>, adjacent spans of the same colour merge, empty spans disappear). "Same look, same string", so the conflict check (same contents?) stays a string comparison.</li>
+<li><b>Validation</b>: text that does not parse, or colours outside the palette, are refused before saving with where the problem is (so AI can fix it).</li>
+<li><b>No effect on search</b>: search entries hold only the plain text with markup removed (parsed and extracted in the saving transaction). <code>[always]{.red}</code> is indexed as "always" and <code>**ex**ample</code> as "example", so markup never splits words and markup characters like <code>{.red}</code> never match. Links index only the visible text, not the URL. Search snippets and highlights are built on the plain text too.</li>
+<li><b>Converting with the UI</b>: rich editing (D11) parses the text into an editing structure and turns it back into markup on save. So the server (Go) and the UI (TypeScript) never disagree, they share the same input/output cases (before normalization → after → plain text) as a common test.</li>
 </ul></div>
-<h4>あわせて決めること</h4>
+<h4>Decided along with it</h4>
 <ul>
-<li><b>装飾の種類</b>: 太字・斜体・取り消し線・インラインコード・リンク・文字色・背景色を候補にする。下線・文字の大きさ・フォントは入れない（見出しや種類で表すもの）。</li>
-<li><b>色の指定</b>: 任意の色（#RRGGBB）ではなく名前つきのパレット（灰・茶・橙・黄・緑・青・紫・桃・赤 など）にする。明暗のテーマでそれぞれ見やすい色に割り当てられ、AI も選びやすい。</li>
-<li><b>正規化の規則</b>: 上のとおり、保存のたびに決まった書き方へ書き直す。規則の一覧はテストの例として持つ。</li>
+<li><b>Styles</b>: bold, italic, strikethrough, inline code, links, text colour and background colour. No underline, font size or font (those are expressed by headings and types).</li>
+<li><b>Colours</b>: a named palette (grey, brown, orange, yellow, green, blue, purple, pink, red and so on) rather than arbitrary colours (#RRGGBB). Each maps to a readable colour in the light and dark themes, and AI chooses easily.</li>
+<li><b>Normalization rules</b>: as above, rewritten into the canonical form on every save. The rules are kept as test cases.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-editor" style="border-left-color:var(--human)">
-<h3>D11. 人の編集欄は既存のエディタ部品でリッチ編集にする（決定: A）</h3>
-<p>D10 で色を付けられるようにするなら、人が記法を手で打つ今のテキスト欄では使えない。選んだ文字に色を付ける、見たまま編集する欄が要る。</p>
+<h3>D11. People's edit fields become rich editing with an existing editor component (decided: A)</h3>
+<p>If D10 allows colour, the plain text field where people type markup by hand will not do. A WYSIWYG field that colours selected text is needed.</p>
 <ul>
-<li><b>A. 既存のエディタ部品を使う</b>（ProseMirror / Tiptap、Lexical など）: 1 ブロック = 1 つの小さなエディタにし、ブロックの並びは今のまま papers が持つ。日本語入力の扱いが成熟している。</li>
-<li><b>B. contenteditable を自作する</b>: 依存は減るが、日本語入力・選択範囲・貼り付けの扱いを全部自分で持つことになる。</li>
+<li><b>A. Use an existing editor component</b> (ProseMirror / Tiptap, Lexical and so on): one block = one small editor, and papers keeps owning the order of blocks. Their handling of Japanese input is mature.</li>
+<li><b>B. Build our own contenteditable</b>: fewer dependencies, but all of Japanese input, selection and paste handling become ours.</li>
 </ul>
-<div class="rec"><b>決定: A</b>。ブロック内だけをエディタ部品に任せ、ブロックの分割・結合・並びは papers の操作のまま残す。どの部品にするかは、日本語入力の扱いと、D10-A の記法（Markdown + <code>[文字]{.色}</code>）との相互変換のしやすさで選ぶ（実装に入るときに候補を試して決める）。</div>
-<h4>編集はブロック単位</h4>
+<div class="rec"><b>Decided: A</b>. Only what is inside a block is left to the editor component; splitting, joining and ordering blocks stay papers operations. Which component is chosen by its handling of Japanese input and how easily it converts to and from D10-A's markup (Markdown + <code>[text]{.colour}</code>) (decided by trying candidates when implementation starts).</div>
+<h4>Editing is per block</h4>
 <ul>
-<li><b>1 ブロック = 1 つのエディタ</b>。ページ全体を 1 つの文書として編集する形にはしない。エディタ部品の文書構造は 1 ブロックの中身だけを持つ。</li>
-<li><b>書き込みの単位もブロック</b>: ブロックから離れたとき（と、一定時間打鍵が止まったとき）に、そのブロックの <code>update</code> を、編集を始めたときの <code>Rev</code> を元のリビジョンとして送る。これは今の状態を書き換えるだけで、版は作らない。衝突も編集中の印（D3）もブロック単位。</li>
-<li><b>ブロックをまたぐ動きは papers の操作にする</b>: 行の途中で Enter は「今のブロックを update + 後ろに新しいブロックを insert」、先頭で Backspace は「前のブロックを update + 今のブロックを delete」、複数段落の貼り付けは「insert の列」。どれも 1 つの操作のまとまりで送る。</li>
-<li><b>複数ブロックの選択</b>: コピーはできる。選んだ範囲に色などを付けるときは、ブロックごとの update をまとめて 1 つの操作のまとまりにする。複数ブロックをまたぐ文字の削除も、ブロックごとの update / delete に分けて送る。</li>
+<li><b>One block = one editor</b>. The page is not edited as a single document; the editor component's document holds only one block's contents.</li>
+<li><b>Writes are per block too</b>: on leaving a block (and when typing pauses for a while), the UI sends that block's <code>update</code> with the <code>Rev</code> from when editing started as the base revision. This only rewrites the current state and makes no version. Conflicts and editing presence (D3) are per block as well.</li>
+<li><b>Movements across blocks are papers operations</b>: Enter in the middle of a line is "update this block + insert a new block after it", Backspace at the start is "update the previous block + delete this one", and pasting several paragraphs is "a series of inserts". Each is sent as one batch.</li>
+<li><b>Selecting several blocks</b>: copying works. Colouring a selected range sends one batch of per-block updates. Deleting text across blocks is likewise split into per-block updates and deletes.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-commit-link" style="border-left-color:var(--human)">
-<h3>D15. 今の状態と、明示的に保存された版だけを持つ（決定）</h3>
-<p>commit・リリース・ブロックごとの版という 3 つの概念をまとめ、<b>「版」= 書き手（人か AI）が明示的に保存したペーパーの写し</b>だけにする。自動保存という概念はなく、それ以外は<b>今の状態</b>（編集中の最新版）があるだけ。</p>
+<h3>D15. Only the current state and explicitly saved versions (decided)</h3>
+<p>The three concepts of commits, releases and per-block versions are merged into one: <b>a "version" = a copy of a paper explicitly saved by a writer (person or AI)</b>. There is no autosave; everything else is just the <b>current state</b> (the latest, being edited).</p>
 <ul>
-<li>書き込みは今の状態をすぐ書き換える。書き込みの記録（commit）は残さない。</li>
-<li>版は誰かが保存したときだけできる（v1, v2 …）。システムが勝手に作ることはない。最初の版で正本になる。</li>
-<li>履歴の参照と復元はペーパー単位で、版の単位。ブロックごとには行わない。</li>
-<li>衝突の判定は、ブロックごとの内部の更新番号 <code>Rev</code> で行う（画面には出さない）。</li>
-<li>失うもの: 版と版の間の細かい変化。強行で上書きされた内容や、保存前に消された内容は、版に入っていなければ戻せない。</li>
-<li>これにより、移動の記録（D22・D32 の <code>MoveID</code>）、commit のまとめ方（D5）、ある時点の組み立て（D37）は要らなくなった。</li>
+<li>Writes rewrite the current state at once. No record of writes (commits) is kept.</li>
+<li>Versions exist only when someone saves (v1, v2 …); the system never makes one. The first version makes a paper published.</li>
+<li>History is viewed and restored per paper, by version; never per block.</li>
+<li>Conflicts are checked by each block's internal revision <code>Rev</code> (never shown on screen).</li>
+<li>Lost: fine-grained changes between versions. Contents overwritten by force or deleted before a save cannot be recovered unless a version holds them.</li>
+<li>This removed the need for move records (<code>MoveID</code> of D22 and D32), commit grouping (D5) and reconstructing a point in time (D37).</li>
 </ul>
 </div>
 <div class="decision" id="d-root" style="border-left-color:var(--human)">
-<h3>D16. ペーパーとブロックは 1:N（決定: A）</h3>
-<p>今は 1:N。ペーパーは本体（タイトル・アクセス・作成者）を持ち、ブロックの平らな並びを持つ。親を持つのは表のセルだけ。もう一つの考え方は、ペーパーの中身を 1 つの「ルートのブロック」にし、ブロック全体を木にするもの（Notion のページがブロックであるのと同じ）。</p>
+<h3>D16. Papers and blocks are 1:N (decided: A)</h3>
+<p>Today it is 1:N: a paper has its record (title, access, creator) and a flat list of blocks, and only table cells have parents. The alternative makes a paper's contents one "root block" and the whole set of blocks a tree (as a Notion page is a block).</p>
 <div class="scroll"><table>
-<thead><tr><th></th><th>A. 1:N（平らな並び + 表のセルだけ子）</th><th>B. ルートのブロック（全体を木にする）</th></tr></thead>
+<thead><tr><th></th><th>A. 1:N (flat list; only table cells are children)</th><th>B. A root block (everything a tree)</th></tr></thead>
 <tbody>
-<tr><td>形</td><td>ペーパー → ブロックの列。入れ子は字下げ（属性）で表す</td><td>ペーパー → ルート → 子 → 孫 …。見出しの下の節、トグル、段組みなどを本当の入れ子で持てる</td></tr>
-<tr><td>タイトル</td><td>ペーパー本体に持つ（独立した番号は持たない、D1）</td><td>ルートの本文がタイトル。衝突・履歴がブロックと同じになる</td></tr>
-<tr><td>親の扱い</td><td>「親なし = ペーパー直下」という特別扱いが 1 つある</td><td>どのブロックにも親がある（ルートを除く）。規則が一様</td></tr>
-<tr><td>移動と衝突</td><td>移動は兄弟の間だけ。衝突は 1 ブロック単位で閉じる</td><td>親をまたぐ移動が増える。「他人が親を消した間に子を直した」のような部分木の衝突を決める必要がある</td></tr>
-<tr><td>遅延読み込み</td><td>並び順キーの範囲で区切って読む（D17）</td><td>部分木ごとに読める（閉じた節は中を読まない）</td></tr>
-<tr><td>ペーパー本体との関係</td><td>本体（公開範囲・作成者・位置・状態）と中身がはっきり分かれる</td><td>ルートのブロックと本体の 2 つに情報が分かれる。どちらに何を持つかを決める必要がある</td></tr>
+<tr><td>Shape</td><td>Paper → list of blocks; nesting by indentation (a prop)</td><td>Paper → root → children → grandchildren …; sections under headings, toggles and columns can be truly nested</td></tr>
+<tr><td>Title</td><td>On the paper record (no revision of its own, D1)</td><td>The root's text is the title; conflicts and history work like blocks</td></tr>
+<tr><td>Parents</td><td>One special case: "no parent = directly under the paper"</td><td>Every block but the root has a parent; uniform rules</td></tr>
+<tr><td>Moves and conflicts</td><td>Moves only among siblings; conflicts stay within one block</td><td>Moves across parents appear; subtree conflicts like "someone edited a child while another deleted its parent" must be decided</td></tr>
+<tr><td>Lazy loading</td><td>Read in ranges of order keys (D17)</td><td>Read per subtree (a closed section is not read)</td></tr>
+<tr><td>Relation to the paper record</td><td>The record (visibility, creator, position, state) and contents are clearly apart</td><td>Information splits between the root block and the record; which holds what must be decided</td></tr>
 </tbody></table></div>
-<div class="rec"><b>決定: A（1:N）を維持</b>。ペーパーは「公開範囲・作成者・木の中の位置・状態」を持つ入れ物で、中身とは性質が違う。木にすると移動と衝突の規則が一段難しくなる一方、今ほしい表現（節、リストの入れ子）は見出しと字下げで足りている。トグルや段組みのような本当の入れ子が要ると決まったら、そのとき B を見直す（その場合も、ペーパー本体はブロックにしない）。</div>
+<div class="rec"><b>Decided: keep A (1:N)</b>. A paper is a container holding visibility, creator, position in the tree and state, different in nature from contents. A tree makes the move and conflict rules a level harder, while the expressions needed now (sections, nested lists) are covered by headings and indentation. If true nesting like toggles or columns is decided to be needed, revisit B then (even then the paper record does not become a block).</div>
 </div>
 
 
 
 <div class="decision" id="d-load" style="border-left-color:var(--human)">
-<h3>D17. ブロックが大量にあるペーパーの読み込み（決定: 推奨どおりすべて入れる）</h3>
-<p>全社の情報を集めると、AI が長い資料をそのまま取り込んで数千ブロックのペーパーができる。今は開くたびに全ブロックを読み、しかも 3 回読んでいる（画面の読み込み、変更の購読を始めるときのリスナーの初回、接続後の読み直し）。2,000 ブロック（約 2 MB）なら 1 回開くだけで 6,000 件の読み取りと数 MB の転送になる。</p>
-<h4>遅延読み込みの形</h4>
+<h3>D17. Loading papers with very many blocks (decided: everything as recommended)</h3>
+<p>Gathering a whole company's information, AI will import long documents as they are and make papers of thousands of blocks. Opening a paper read every block, three times (the UI load, the first snapshot of the listener when subscribing, the re-read after connecting). At 2,000 blocks (about 2 MB) one open meant 6,000 reads and several MB transferred.</p>
+<h4>Lazy loading</h4>
 <ul>
-<li><b>範囲で読む</b>: ペーパー直下のブロックを並び順キーの順に N 件ずつ読み、続きはカーソル（最後のキー）で読む。範囲内の表は、そのセルも一緒に読む。索引は既存の (ParentID, Order) で足りる。</li>
-<li><b>途中から読む</b>: 検索で当たったブロックへ飛ぶときは、そのブロックの並び順キーの前後を読む。</li>
-<li><b>画面</b>: 見えている範囲だけ描き（仮想スクロール）、近づいたら続きを読む。</li>
-<li class="block agent"><b>AI</b>: <code>papers_read_paper</code> は「見出しの目次 + 先頭の N ブロック」を返し、続きは見出しかカーソルを指定して読む。AI は目次を見て必要な節だけ読める。</li>
+<li><b>Range reads</b>: read top-level blocks in order-key order N at a time, continuing with a cursor (the last key). Tables in a range are read with their cells. The existing (ParentID, Order) index suffices.</li>
+<li><b>Reading from the middle</b>: jumping to a search hit reads around that block's order key.</li>
+<li><b>UI</b>: draw only what is visible (virtual scrolling), reading more as one approaches it.</li>
+<li class="block agent"><b>AI</b>: <code>papers_read_paper</code> returns "a table of contents of headings + the first N blocks", and the rest is read by heading or cursor. AI reads the table of contents and only the sections it needs.</li>
 </ul>
-<h4>変更の購読も全件を読まないようにする</h4>
-<p>今の購読はブロックのコレクション全体にリスナーを張るので、始めるときに全ブロックを読む。そこで、購読の対象をペーパーごとの短命の変更の記録（<code>Event</code>）にする。</p>
+<h4>Subscriptions do not read everything either</h4>
+<p>The subscription put a listener on the whole block collection, so starting it read every block. Instead, subscriptions target the short-lived change events per paper (<code>Event</code>).</p>
 <ul>
-<li>購読を始めた時刻以降の記録だけを見る（初回はほぼ空）。記録から変わったブロックの ID を集め、一括取得で読む。</li>
-<li>「ブロックの更新時刻が開いた時刻以降」で絞る方法は使えない。開く前からある古いブロックが削除されても、更新時刻では拾えないため。</li>
-<li>読んでいない範囲のブロックの変更は、画面が持っていないので捨ててよい（範囲を読むときに最新を読む）。</li>
-<li>記録は配信のためだけのもので、一定時間（例: 1 日）で消す。履歴ではない。</li>
+<li>Only events since the subscription started are watched (almost none at first). The IDs of changed blocks are collected from events and read in one batch.</li>
+<li>Filtering by "block update time after opening" does not work: an old block that existed before opening and is then deleted would not be caught by its update time.</li>
+<li>Changes to blocks in ranges not read yet may be dropped, since the UI does not hold them (reading the range reads the latest).</li>
+<li>Events exist only for delivery and disappear after a while (a day, say). They are not history.</li>
 </ul>
-<h4 class="block human">要件: ブロックはまとめて読む（N+1 を作らない）<span class="tag">11-21 決定</span></h4>
-<p>ブロック・ペーパー・版・写しを、ループの中で 1 件ずつ読まない。ID の列が分かっているものは 1 回の一括取得で読み、条件で絞るものは 1 本のクエリにする。リポジトリの口（インターフェース）にも一括取得を用意し、1 件ずつの取得をループで呼ぶ書き方をなくす。</p>
+<h4 class="block human">Requirement: read blocks in batches (no N+1)<span class="tag">decided 11-21</span></h4>
+<p>Blocks, papers, versions and snapshots are never read one at a time in a loop. A known list of IDs is read in one batch read, and anything filtered by conditions is one query. The repository ports offer batch reads too, so nothing calls a single-item read in a loop.</p>
 <div class="scroll"><table>
-<thead><tr><th>場面</th><th>1 件ずつ読むと（今・素朴な実装）</th><th>まとめ方</th></tr></thead>
+<thead><tr><th>Case</th><th>One at a time (before, naive)</th><th>Batched</th></tr></thead>
 <tbody>
-<tr><td>範囲読みに含まれる表のセル</td><td>表ごとにセルのクエリ（表の数だけ）</td><td><code>ParentID in [表の ID…]</code> の 1 クエリ（Firestore は 1 クエリ 30 件まで。超えたら 30 件ずつ）</td></tr>
-<tr><td>変更フィード（変更の記録）で変わったブロック</td><td>変更ごとにブロックを取得</td><td>記録から変わったブロックの ID を集めて一括取得（<code>GetAll</code>）</td></tr>
-<tr><td>操作のまとまりの適用（トランザクション内）</td><td>操作ごとに対象ブロック・挿入位置の前後を 1 件ずつ取得</td><td>操作の列から必要なブロック ID と（ブロック, 版）を先に集め、トランザクションの最初に一括取得してから適用する</td></tr>
-<tr><td>検索結果のペーパー</td><td>当たったペーパーごとに取得（最大 limit × 3 件）</td><td>ペーパー ID をまとめて一括取得</td></tr>
-<tr><td>版を開く・差分</td><td>ブロックごとに写しを取得</td><td>写しの ID をまとめて一括取得</td></tr>
-<tr><td>MCP の <code>papers_read_paper</code></td><td>ブロックを読み、Markdown 書き出しのためにもう一度全部読む</td><td>1 回読んだブロックから Markdown も作る</td></tr>
-<tr><td>ペーパーを開く</td><td>全ブロックを 3 回読む（上記）</td><td>1 回（範囲読みなら範囲分だけ）</td></tr>
+<tr><td>Table cells in a range read</td><td>One cell query per table</td><td>One <code>ParentID in [table IDs…]</code> query (Firestore allows 30 values per query; beyond that, 30 at a time)</td></tr>
+<tr><td>Blocks changed per the change feed (events)</td><td>Get the block per change</td><td>Collect the changed block IDs from events and batch-read (<code>GetAll</code>)</td></tr>
+<tr><td>Applying a batch (in a transaction)</td><td>Get the target block and its neighbours per op</td><td>Collect the needed block IDs (and (block, version)) from the ops first, batch-read at the start of the transaction, then apply</td></tr>
+<tr><td>Papers of search results</td><td>Get each hit paper (up to limit × 3)</td><td>Batch-read the paper IDs</td></tr>
+<tr><td>Opening a version, diffs</td><td>Get the snapshot per block</td><td>Batch-read the snapshot IDs</td></tr>
+<tr><td>MCP <code>papers_read_paper</code></td><td>Read the blocks, then read them all again to export Markdown</td><td>Make the Markdown from the blocks read once</td></tr>
+<tr><td>Opening a paper</td><td>Every block read three times (above)</td><td>Once (with range reads, only the range)</td></tr>
 </tbody></table></div>
-<p>リポジトリの口に足すもの（案）: <code>GetBlocks(ws, paper, ids)</code>、<code>ListBlocksRange(ws, paper, after, limit)</code>（範囲内の表のセルを含む）、<code>GetPapers(ws, ids)</code>、<code>GetVersion(ws, paper, n)</code>、<code>GetSnapshots(ws, paper, refs)</code>、トランザクション内の <code>PaperTx.GetBlocks(ids)</code> と 。メモリ実装でも同じ口を持ち、契約テストで「呼び出し 1 回あたりの保存先への読み取り回数」を数えて、N+1 が入り込んだら落とす。</p>
+<p>Repository ports to add (proposal): <code>GetBlocks(ws, paper, ids)</code>, <code>ListBlocksRange(ws, paper, after, limit)</code> (including cells of tables in the range), <code>GetPapers(ws, ids)</code>, <code>GetVersion(ws, paper, n)</code>, <code>GetSnapshots(ws, paper, refs)</code>, and <code>PaperTx.GetBlocks(ids)</code> in transactions. The memory backend has the same ports, and tests count "storage reads per call" so an N+1 that creeps in fails.</p>
 
-<h4>上限</h4>
-<p>1 ペーパーのブロック数に上限（例: 5,000）を設け、超えそうなら AI に分割を促す（<code>papers_guide</code> に書く）。上限は読み込みのためではなく、ペーパーという単位の読みやすさのため。</p>
-<h4>印刷（範囲読みと仮想スクロールの影響）</h4>
-<p>見えている範囲だけを描くと、ブラウザの印刷は描いた部分しか出さない。印刷では必ずペーパー全体を出す。</p>
+<h4>Limit</h4>
+<p>A paper has a block limit (5,000, say); when it would be exceeded, AI is urged to split the paper (written in <code>papers_guide</code>). The limit is for the readability of a paper as a unit, not for loading.</p>
+<h4>Printing (affected by range reads and virtual scrolling)</h4>
+<p>Drawing only what is visible means the browser prints only what was drawn. Printing must always produce the whole paper.</p>
 <ul>
-<li><b>印刷の入口を用意する</b>: 画面のメニューに「印刷・PDF」を置き、押したら残りのブロックをすべて読み（一括取得、N+1 なし）、仮想スクロールを止めて全体を描いてから印刷を開く。読み込み中は進み具合を出す。</li>
-<li><b>ブラウザの印刷（Ctrl+P）を直接使われたとき</b>: 印刷の直前（<code>beforeprint</code>）には非同期の読み込みを待てない。小さなペーパー（全体を最初から読んでいるもの）はそのまま全体が出る。大きなペーパーで読み込みが済んでいなければ、印刷用の表示の先頭に「一部しか含まれていません。メニューの『印刷・PDF』を使ってください」と出す（黙って欠けたまま印刷しない）。</li>
-<li><b>何を印刷するか</b>: 既定は開いているもの（今の状態）。<code>/latest</code> や <code>/v/{番号}</code> を開いていればその版。用紙の上に、タイトル、パス、状態（v3・正本 / 下書き）、印刷した日時を入れる。</li>
-<li><b>子ペーパー</b>: ペーパーブロックは子のタイトルとして出す（中身は含めない）。「配下も含めて印刷」を選んだときだけ、配下を本文の順に続けて出す（配下を集めるのは裏の処理なので、大きければ時間がかかると伝える）。</li>
-<li><b>見た目</b>: サイドバー・編集中の印・操作ボタンは出さない。ブロックの途中や表の行の途中で改ページしないようにし、長い表は各ページに見出し行を繰り返す。文字色・背景色は印刷でも読めるパレットの値を使う（D10）。</li>
-<li><b>AI のみの図</b>（mermaid / svg / html）: iframe のまま印刷すると欠けたり 1 ページに収まらなかったりするので、印刷のときは描いた結果（SVG か画像）を本文に置き換えて出す。</li>
+<li><b>A print entry</b>: the menu has "Print / PDF", which reads all remaining blocks (batch reads, no N+1), stops virtual scrolling, draws everything and then opens printing, showing progress while loading.</li>
+<li><b>When browser printing (Ctrl+P) is used directly</b>: <code>beforeprint</code> cannot wait for async loading. Small papers (read in full from the start) print whole. For a large paper not fully loaded, the top of the print view says "Only part is included. Use Print / PDF in the menu" (never printing silently with parts missing).</li>
+<li><b>What is printed</b>: by default what is open (the current state); with <code>/latest</code> or <code>/v/{n}</code> open, that version. The top of the page carries the title, path, state (v3, published / draft) and when it was printed.</li>
+<li><b>Child papers</b>: paper blocks print as the child's title (without contents). Only when "print with subtree" is chosen are descendants printed in body order (collecting them is a background job, so a large tree is said to take time).</li>
+<li><b>Look</b>: no sidebar, editing presence or action buttons. No page breaks inside a block or a table row, and long tables repeat the header row on each page. Text and background colours use palette values readable in print (D10).</li>
+<li><b>AI-only diagrams</b> (mermaid / svg / html): printed as iframes they get cut off or do not fit a page, so printing replaces them with the drawn result (SVG or image) in the body.</li>
 </ul>
-<div class="rec"><b>決定: すべて入れる</b>。順番は (1) 開くときの重複読み（3 回 → 1 回）をなくす、(2) 購読を変更の記録にする、(3) 範囲読みと AI の目次、(4) 画面の仮想スクロール。(1)(2) はブロック数に関係なく効く。</div>
+<div class="rec"><b>Decided: everything</b>. In order: (1) remove the duplicate reads on open (3 → 1), (2) subscribe to change events, (3) range reads and the AI table of contents, (4) virtual scrolling in the UI. (1) and (2) help regardless of block count.</div>
 </div>
 
 <div class="decision" id="d-authz" style="border-left-color:var(--human)">
-<h3>D12. 規則がないワークスペースはログイン済み全員が使える（決定: A）</h3>
-<p>ロールを持たないので、規則は hecatoncheires と同じく <code>allow</code> の 2 値を返す（決定）。残るのは、<code>[authz]</code> を書かなかったワークスペースの既定。</p>
+<h3>D12. A workspace without a rule is open to everyone signed in (decided: A)</h3>
+<p>With no roles, rules return the two values of <code>allow</code>, as in hecatoncheires (decided). What remains is the default for a workspace without <code>[authz]</code>.</p>
 <ul>
-<li><b>A. ログイン済み全員が使える</b>: ログインできる人は全体設定（許可するメールのドメインなど）で絞られている前提。hecatoncheires と同じ。</li>
-<li><b>B. 誰も使えない</b>: 規則の書き忘れで全員に見えることがない。</li>
+<li><b>A. Everyone signed in</b>: who can sign in is already narrowed by the global configuration (allowed email domains and so on). As in hecatoncheires.</li>
+<li><b>B. No one</b>: forgetting a rule never exposes a workspace to everyone.</li>
 </ul>
-<div class="rec"><b>決定: A</b>。社内の知識を集める道具として、既定で開いているほうが使われる。閉じたい内容は private のペーパーか、規則のあるワークスペースに置く。起動時に「規則のないワークスペース」を一覧でログに出す。</div>
+<div class="rec"><b>Decided: A</b>. As a tool for gathering company knowledge, open by default gets used. Content to keep closed goes in private papers or a workspace with a rule. At startup, the workspaces without a rule are logged.</div>
 </div>
 
 <div class="decision" id="d-visibility" style="border-left-color:var(--human)">
-<h3>D18. 削除は作成者だけ、他の人はアーカイブ（決定）。private の招待は将来</h3>
-<h4>削除とアーカイブ</h4>
+<h3>D18. Only the creator deletes, others archive (decided). Inviting to private papers later</h3>
+<h4>Deleting and archiving</h4>
 <ul>
-<li><b>削除（ゴミ箱へ入れる・ゴミ箱から戻す・完全に消す）ができるのは、そのペーパーの作成者本人だけ</b>（AI が作ったペーパーなら代理元のユーザー。本人の代理の AI も含む）。</li>
-<li><b>他の人はアーカイブする</b>。アーカイブしたペーパーは、検索・一覧・サイドバーの最近開いたもの・AI の道案内から除かれる。URL では開け、木の中の位置もそのまま（親の本文のペーパーブロックは「アーカイブ済み」として薄く出す）。アーカイブを解くのは、そのペーパーを使える人なら誰でも。</li>
-<li><b>配下があるとき</b>: 削除は配下ごとなので、<b>配下がすべて自分の作ったペーパーのときだけ</b>削除できる。他の人のペーパーが含まれていれば、削除の代わりに配下ごとアーカイブする（他の人のペーパーを本人以外が消すことはない。配下の確認は<a href="#job">裏の処理</a>で行うので、削除を頼んだ時点では分からず、結果としてアーカイブになる）。</li>
-<li><b>親の本文でペーパーブロックを消す操作</b>: 子の作成者本人なら子を配下ごとゴミ箱へ。本人でなければ、ブロックは消さずに子を配下ごとアーカイブする（画面は「削除できるのは作成者だけです。アーカイブしますか」と確かめる）。</li>
-<li><b>作成者がいなくなったペーパー</b>: 誰も削除できない。アーカイブはできる。データはデプロイ側の管理コマンドでだけ消せる。</li>
-<li>ホームは削除もアーカイブもできない。</li>
+<li><b>Only the paper's creator may delete it (to the trash, restore from the trash, purge)</b> (for a paper made by AI, the user it acted for; AI acting for that user included).</li>
+<li><b>Others archive</b>. An archived paper is left out of search, lists, the sidebar's recently opened papers and AI's guidance. It still opens by URL and keeps its place in the tree (the paper block in the parent's body is shown faded as "archived"). Anyone who may use the paper may unarchive it.</li>
+<li><b>With a subtree</b>: deleting takes the subtree too, so it is possible <b>only when everything below was created by the same person</b>. If others' papers are included, the subtree is archived instead (no one but its creator ever deletes a paper. The subtree is checked by a <a href="#job">background job</a>, so this is not known when the delete is requested; the result is an archive).</li>
+<li><b>Removing a paper block from the parent's body</b>: for the child's creator, the child goes to the trash with its subtree. For anyone else, the block stays and the child is archived with its subtree (the UI asks "Only the creator can delete this. Archive it?").</li>
+<li><b>Papers whose creator is gone</b>: no one can delete them, but they can be archived. The data can be removed only by an administrative command on the deployment side.</li>
+<li>The home can be neither deleted nor archived.</li>
 </ul>
-<h4>private を誰が見られるか</h4>
+<h4>Who may see private papers</h4>
 <ul>
-<li>当面は作成者だけ。<b>将来、private のペーパーに人を招待（invite）できるようにする</b>。招待の単位（当面はユーザー）、招待された人ができること（読むだけか書けるか）、招待された人の画面のどこに出すか（private は木の外にあるので「共有された」一覧など）、招待した人がいなくなったときの扱いは、後で考える。</li>
+<li>Only the creator, for now. <b>Later, people may be invited to a private paper</b>. The unit of invitation (users for now), what invitees may do (read only or write), where invitees see it (private papers are outside the tree, so a "shared with me" list, say) and what happens when the inviter is gone are left for later.</li>
 </ul>
 </div>
 
 <div class="decision" id="d-job" style="border-left-color:var(--human)">
-<h3>D19. 配下すべてに及ぶ処理とワークスペースをまたぐ移動は裏の処理で進める（決定 2026-11-22）</h3>
-<p>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動は、配下の数に比例して書く。1 つのトランザクションでは、大きな木で Firestore の上限（10 MiB・270 秒）を必ず超える。</p>
+<h3>D19. Operations on whole subtrees and moves across workspaces run as background jobs (decided 2026-11-22)</h3>
+<p>Trashing, restoring and archiving with subtrees, and moving across workspaces, write in proportion to the size of the subtree. In one transaction, a large tree always exceeds Firestore's limits (10 MiB, 270 seconds).</p>
 <ul>
-<li><b>A. 同期のまま上限を置く</b>: 1 回で扱う配下を 500 などで打ち切り、超えたら分けてもらう。ワークスペースをまたぐ移動は 2 つのトランザクション（写してから消す）。</li>
-<li><b>B. 裏の処理にする</b>: 対象を小さなトランザクションの列に分け、どのインスタンスでも続きを進められるように進み具合を保存する。</li>
+<li><b>A. Stay synchronous with a limit</b>: cut the subtree handled at once at 500 or so and ask the writer to split beyond that. Moves across workspaces as two transactions (copy, then delete).</li>
+<li><b>B. Background jobs</b>: split the work into a series of small transactions and store progress so any instance can continue it.</li>
 </ul>
-<div class="rec"><b>決定: B</b>。配下の数は制限しない約束なので、上限で断るのは筋が違う。トランザクションの境界はワークスペースではなく量で決まる（Firestore のトランザクションは同じデータベースのどの文書も扱えるが、量の上限は変わらない）。リクエストは裏の処理を作ってすぐに応答し、結果はペーパーの状態として見える（裏の処理の状態を読む API や進み具合の表示は持たない、2026-11-22）。移動の途中で元への書き込みが失われないよう、元は書けなくする（ロックではなく、裏の処理が持つ印で、終われば外れる）。段と失敗時の扱いは<a href="#job">裏の処理</a>。</div>
+<div class="rec"><b>Decided: B</b>. Subtree size is promised to be unlimited, so refusing at a limit is the wrong answer. Transaction boundaries are set by volume, not by workspace (a Firestore transaction may touch any document in the same database, but the volume limits stay). Requests create the job and answer at once, and the result is visible as paper state (there is no API to read a job's state and no progress display, 2026-11-22). So no write to the originals is lost during a move, the originals become read-only (not a lock, but a mark the job holds and clears when it finishes). Phases and failure handling are in <a href="#job">Background jobs</a>.</div>
 </div>
 
 <div class="decision" id="d-removed" style="border-left-color:var(--human)">
-<h3>D13. 設定から消えたワークスペースのデータは残して見えなくする（決定: A）</h3>
-<p>ワークスペースは設定から外せるが、ペーパーは保存先に残る。id を変えた場合も、古い id のデータが取り残される。</p>
+<h3>D13. Data of a workspace removed from the configuration stays but is hidden (decided: A)</h3>
+<p>A workspace can be removed from the configuration, but its papers remain in storage. Changing an id also leaves the old id's data behind.</p>
 <ul>
-<li><b>A. 残して見えなくする</b>: データは消さず、どの主体からも見えない。設定に戻せば元どおり見える。起動時に「設定にないワークスペースのデータがある」と警告する。</li>
-<li><b>B. 管理コマンドで消す・移す</b>: A に加えて、<code>papers workspace purge</code>（消す）と <code>papers workspace rename</code>（id を付け替える）を用意する。</li>
+<li><b>A. Keep and hide</b>: the data is not deleted and is visible to no principal. Putting it back in the configuration shows it again. At startup, a warning says "there is data of a workspace not in the configuration".</li>
+<li><b>B. Delete or move by an administrative command</b>: in addition to A, provide <code>papers workspace purge</code> (delete) and <code>papers workspace rename</code> (change the id).</li>
 </ul>
-<div class="rec"><b>決定: A</b>。設定の書き間違い 1 つでデータが消えないことを優先する。データは消さず、どの主体からも見えない。設定に戻せば元どおり見える。起動時に「設定にないワークスペースのデータがある」と警告する。消す・付け替える管理コマンド（B）は、必要になってから検討する。</div>
+<div class="rec"><b>Decided: A</b>. Data must never be lost to a single typo in the configuration. The data is not deleted and is visible to no principal; putting it back in the configuration shows it again. At startup, a warning says "there is data of a workspace not in the configuration". Administrative commands to delete or rename (B) are considered when needed.</div>
 </div>
 
 <div class="decision" id="d-groups" style="border-left-color:var(--human)">
-<h3>D14. グループは一旦持たない（決定）</h3>
-<p>ユーザーのグループという概念を当面なくす。使える人の規則（Rego）は、ユーザーの ID・メール・メールのドメインで書く。</p>
+<h3>D14. No groups for now (decided)</h3>
+<p>The concept of user groups is dropped for now. Rules for who may use a workspace (Rego) are written with user IDs, emails and email domains.</p>
 <ul>
-<li>今の保存先のグループ（<code>Group</code>）と、グループ管理の API・画面はなくす。</li>
-<li>必要になったら、組織の正本（Google Workspace のグループなど、IdP）から取り込む形で改めて検討する。papers の中でグループを管理する形には戻さない。</li>
+<li>The stored groups (<code>Group</code>) and the group management API and screens are removed.</li>
+<li>If needed, groups are reconsidered as imported from the organization's source of truth (Google Workspace groups and so on, the IdP). Managing groups inside papers does not come back.</li>
 </ul>
 </div>
 
 </section>
 
 <section>
-<h2>決まったら変わるところ</h2>
+<h2>What changes once decided</h2>
 <div class="scroll"><table>
-<thead><tr><th>決めること</th><th>モデル</th><th>操作・API</th><th>画面</th></tr></thead>
+<thead><tr><th>Decision</th><th>Model</th><th>Operations and API</th><th>UI</th></tr></thead>
 <tbody>
-<tr><td>D1 タイトル（決定）</td><td>なし（<code>TitleVersion</code> は足さない）</td><td><code>set_title</code> の変更に前後の値。版と差分にタイトル</td><td>履歴でのタイトル変更の表示、値を選んで戻す</td></tr>
-<tr><td>編集中の印（D3 で決定）</td><td>なし（保存しない）</td><td>画面からの「編集中」の知らせ（HTTP）、変更フィードでの配信</td><td>「誰が編集中か」の表示、行・列を消す前の知らせ</td></tr>
-<tr><td>D2-B / D3（決定） 表</td><td>表の属性に行・列の (ID, キー)、セルは (行 ID, 列 ID)</td><td>行・列の挿入・削除・移動の操作。削除は元の版なし</td><td>途中への行・列の挿入、並び替え</td></tr>
-<tr><td>D4-A ゴミ箱（決定）</td><td><code>Paper.DeletedAt</code>・<code>DeletedWith</code></td><td>配下ごとの削除・復元、30 日後の完全削除の処理</td><td>ゴミ箱、削除前の件数の確認</td></tr>
-<tr><td>D6-B 更新時刻（決定）</td><td>なし（<code>UpdatedAt</code> のまま）</td><td>API の説明に「最大 1 分遅れる」</td><td>なし</td></tr>
-<tr><td>D7-B 個人用トークン（決定）</td><td>なし</td><td>なし</td><td>「API 経由」の表示</td></tr>
-<tr><td>D8-A 添付（決定）</td><td><code>Attachment</code>、画像ブロックの <code>attachment_id</code></td><td>アップロード・取得（権限確認と署名付き URL）、MCP からの添付。中身の置き場所の口（Cloud Storage / メモリ / ファイルシステム）</td><td>画像の貼り付け・ドロップ</td></tr>
-<tr><td>D10-A 装飾（決定）</td><td>なし（本文は文字列のまま。記法を足す）</td><td>記法の解析・正規化・検証（パレット）、平文化</td><td>D11 のリッチ編集、色の選択</td></tr>
-<tr><td>D11-A リッチ編集（決定）</td><td>なし</td><td>なし</td><td>ブロックごとのエディタ部品</td></tr>
-<tr><td>ワークスペースを設定で定義（決定）</td><td><code>Workspace</code> を保存先から外し、設定の読み込みにする。ID は UUID から設定の id に</td><td>ワークスペースの作成・更新 API を廃止。MCP の guide と結果に description を載せる</td><td>ワークスペースの作成・メンバー編集の画面を廃止</td></tr>
-<tr><td>ID の形式（決定）</td><td>すべての ID を UUID v4 の base62・22 文字に</td><td>ID の形式の検査。既存データの移行（作り直し）</td><td>URL が短くなる</td></tr>
-<tr><td>ブロック ID はサーバーが発行（決定）</td><td>なし</td><td><code>insert</code> の <code>id</code> を廃止し <code>ref</code> に。<code>after</code> で <code>ref:</code> を受ける。応答に対応表</td><td>仮のキーでの先出しと、応答での置き換え</td></tr>
-<tr><td>D15 今の状態と版（決定）</td><td>commit・変更・ブロックの版を廃止。<code>Block.Version</code> → 内部の <code>Rev</code>。<code>Version</code>（版）と <code>BlockSnapshot</code> を追加。<code>Paper.VersionNumber</code></td><td>元の版 → 元のリビジョン。ブロック単位の <code>restore</code> を廃止し、<code>save_version</code>と <code>restore_version</code>。変更フィードは短命の <code>Event</code></td><td>「保存」ボタン、版の一覧・表示・差分・復元</td></tr>
-<tr><td>D16-A 1:N（決定）</td><td>変更なし</td><td>なし</td><td>なし</td></tr>
-<tr><td>D17 大きなペーパー（決定）</td><td>1 ペーパーのブロック数の上限</td><td>ブロックの範囲読み（カーソル）、MCP の目次と範囲読み、変更フィードを変更の記録（<code>Event</code>）に。一括取得の口（決定）と、読み取り回数を数える契約テスト</td><td>仮想スクロール、範囲の追加読み込み、検索結果からの途中読み</td></tr>
-<tr><td>ロールをなくし公開範囲に（決定）</td><td><code>Role</code>・<code>RoleBinding</code>・<code>Subject</code>・<code>Paper.Access</code> を廃止。<code>Paper.Visibility</code> を追加</td><td>アクセス設定の API を廃止し、公開範囲の変更に。規則は <code>allow</code> を返す Rego。トークンは読み取り用・書き込み用とワークスペースの制限だけ</td><td>共有の画面を、public / private の切り替えに</td></tr>
-<tr><td>D12-A 規則がないとき（決定）</td><td>なし</td><td>規則がなければ全員に allow。起動時に規則のないワークスペースをログに出す</td><td>なし</td></tr>
-<tr><td>D18-A private と削除</td><td>なし</td><td>private は作成者だけ。public の削除は誰でも（ゴミ箱つき）</td><td>private の印</td></tr>
-<tr><td>ペーパーの入れ子（決定）</td><td><code>Paper.ParentID</code>、ブロックの種類 <code>paper</code>、ワークスペースの記録 <code>HomePaperID</code></td><td><code>insert</code> の <code>paper</code>、<code>move_paper</code>、パスでの親の指定、「この配下で」の範囲。起動時のホーム作成。インスタンスごとの親の対応表</td><td>ペーパーブロックの表示と作成、移動、パンくず</td></tr>
-<tr><td>ワークスペースをまたぐ移動（決定）</td><td>転送の記録（元の ID → 新しい場所）</td><td>写して消す裏の処理、古い URL の転送</td><td>移動先の選択、進み具合、見える人が変わる確認</td></tr>
-<tr><td>D19 裏の処理（決定）</td><td><code>Job</code>・<code>JobItem</code>、<code>Paper.JobID</code></td><td>配下ごとのゴミ箱・戻す・アーカイブと、ワークスペースをまたぐ移動を裏の処理に。期限切れの引き継ぎ。1 回で扱う配下の上限を廃止。移動した元を開くと移動先へ案内</td><td>変更の配信で読み直す</td></tr>
-<tr><td>版とアーカイブ（決定）</td><td><code>Paper.VersionNumber</code>・<code>ArchivedAt</code></td><td><code>archive</code> の操作、<code>at</code> での読み取り</td><td><code>/latest</code>・<code>/v/{番号}</code>、「v3 から変更あり」の表示</td></tr>
-<tr><td>private は木の外（決定）</td><td>なし（<code>ParentID</code> が空）</td><td><code>set_visibility</code> で親に置く・外す</td><td>サイドバーの自分だけの一覧</td></tr>
-<tr><td>サイドバー（決定）</td><td><code>Pin</code>、最近開いたペーパーの記録</td><td>ピンの追加・並べ替え</td><td>お気に入りとその配下、最近開いたもの、ホーム</td></tr>
-<tr><td>D13-A 消えたワークスペース（決定）</td><td>なし</td><td>起動時の警告</td><td>なし</td></tr>
-<tr><td>D14 グループなし（決定）</td><td><code>Group</code> を廃止。Rego の入力からグループを外す</td><td>グループ管理 API の廃止</td><td>グループ管理画面の廃止</td></tr>
-<tr><td>システム管理者なし（決定）</td><td><code>Principal.SystemAdmin</code> を外す</td><td>管理者だけの API と判定を廃止。管理者のメールを指定する起動時の設定（<code>AdminEmails</code>）を廃止</td><td>管理者向けの画面を廃止</td></tr>
+<tr><td>D1 titles (decided)</td><td>none (no <code>TitleVersion</code>)</td><td>Before and after values for <code>set_title</code> changes; titles in versions and diffs</td><td>Title changes shown in history; choose a value to restore</td></tr>
+<tr><td>Editing presence (decided in D3)</td><td>none (not stored)</td><td>"Editing" notices from the UI (HTTP), delivered through the change feed</td><td>"Who is editing" shown; notice before deleting rows or columns</td></tr>
+<tr><td>D2-B / D3 (decided) tables</td><td>(ID, key) for rows and columns in table props; cells are (row ID, column ID)</td><td>Ops to insert, delete and move rows and columns; deleting needs no base revision</td><td>Insert rows and columns in the middle, reorder</td></tr>
+<tr><td>D4-A trash (decided)</td><td><code>Paper.DeletedAt</code>, <code>DeletedWith</code></td><td>Delete and restore with the subtree; purge after 30 days</td><td>Trash; confirm the count before deleting</td></tr>
+<tr><td>D6-B update times (decided)</td><td>none (stays <code>UpdatedAt</code>)</td><td>"May lag by up to a minute" in the API documentation</td><td>none</td></tr>
+<tr><td>D7-B personal tokens (decided)</td><td>none</td><td>none</td><td>"via API" shown</td></tr>
+<tr><td>D8-A attachments (decided)</td><td><code>Attachment</code>, image blocks' <code>attachment_id</code></td><td>Upload and fetch (access check and signed URLs), attachments from MCP; a port for where bytes live (Cloud Storage / memory / file system)</td><td>Paste and drop images</td></tr>
+<tr><td>D10-A styling (decided)</td><td>none (text stays a string; markup added)</td><td>Parsing, normalizing and validating markup (palette); plain text</td><td>D11 rich editing; choosing colours</td></tr>
+<tr><td>D11-A rich editing (decided)</td><td>none</td><td>none</td><td>An editor component per block</td></tr>
+<tr><td>Workspaces defined in configuration (decided)</td><td><code>Workspace</code> leaves storage and is read from configuration; IDs change from UUIDs to the configured id</td><td>Workspace create and update APIs removed; MCP's guide and results carry the description</td><td>Screens to create workspaces and edit members removed</td></tr>
+<tr><td>ID format (decided)</td><td>Every ID becomes a 22-character base62 UUID v4</td><td>ID format checks; existing data migrated (rebuilt)</td><td>Shorter URLs</td></tr>
+<tr><td>Block IDs issued by the server (decided)</td><td>none</td><td><code>insert</code>'s <code>id</code> replaced by <code>ref</code>; <code>after</code> accepts <code>ref:</code>; the answer carries the mapping</td><td>Show first under a temporary key, swap in the answer's ID</td></tr>
+<tr><td>D15 current state and versions (decided)</td><td>Commits, changes and per-block versions removed. <code>Block.Version</code> → internal <code>Rev</code>. <code>Version</code> and <code>BlockSnapshot</code> added. <code>Paper.VersionNumber</code></td><td>Base version → base revision. Per-block <code>restore</code> removed; <code>save_version</code> and <code>restore_version</code>. The change feed is the short-lived <code>Event</code></td><td>"Save" button; version list, view, diff and restore</td></tr>
+<tr><td>D16-A 1:N (decided)</td><td>no change</td><td>none</td><td>none</td></tr>
+<tr><td>D17 large papers (decided)</td><td>A block limit per paper</td><td>Range reads of blocks (cursor); MCP table of contents and range reads; the change feed becomes change events (<code>Event</code>). Batch-read ports (decided) and contract tests counting reads</td><td>Virtual scrolling, loading more ranges, reading from the middle via search results</td></tr>
+<tr><td>No roles; visibility instead (decided)</td><td><code>Role</code>, <code>RoleBinding</code>, <code>Subject</code>, <code>Paper.Access</code> removed; <code>Paper.Visibility</code> added</td><td>Access-setting APIs removed in favour of changing visibility. Rules are Rego returning <code>allow</code>. Tokens only carry read / write and a workspace limit</td><td>The sharing screen becomes a public / private switch</td></tr>
+<tr><td>D12-A no rule (decided)</td><td>none</td><td>No rule means allow for everyone; workspaces without a rule are logged at startup</td><td>none</td></tr>
+<tr><td>D18 private papers and deleting (decided)</td><td>none</td><td>Private papers for the creator only. Only the creator deletes (with the trash); others archive</td><td>Private mark; "archive instead?" for others</td></tr>
+<tr><td>Nested papers (decided)</td><td><code>Paper.ParentID</code>, the <code>paper</code> block type, <code>HomePaperID</code> in the workspace record</td><td><code>insert</code> of <code>paper</code>, <code>move_paper</code>, naming a parent by path, "under here" scopes. Home created at startup. A per-instance parent map</td><td>Show and create paper blocks, move, breadcrumbs</td></tr>
+<tr><td>Moves across workspaces (decided)</td><td>Forwards (old ID → new place)</td><td>A background job that copies and deletes; forwarding old URLs</td><td>Choose the target; confirm that who can see it changes</td></tr>
+<tr><td>D19 background jobs (decided)</td><td><code>Job</code>, <code>JobItem</code>, <code>Paper.JobID</code></td><td>Trashing, restoring and archiving subtrees and moving across workspaces become jobs; expired leases are taken over; the limit on subtree size per request removed; opening a moved original leads to the new place</td><td>Read again on change events</td></tr>
+<tr><td>Versions and archiving (decided)</td><td><code>Paper.VersionNumber</code>, <code>ArchivedAt</code></td><td>The <code>archive</code> op; reads with <code>at</code></td><td><code>/latest</code>, <code>/v/{n}</code>, "changed since v3"</td></tr>
+<tr><td>Private papers outside the tree (decided)</td><td>none (<code>ParentID</code> empty)</td><td><code>set_visibility</code> places under or removes from a parent</td><td>The personal list in the sidebar</td></tr>
+<tr><td>Sidebar (decided)</td><td><code>Pin</code>, a record of recently opened papers</td><td>Add and reorder pins</td><td>Pins and what is under them, recently opened, home</td></tr>
+<tr><td>D13-A removed workspaces (decided)</td><td>none</td><td>Warning at startup</td><td>none</td></tr>
+<tr><td>D14 no groups (decided)</td><td><code>Group</code> removed; groups removed from the Rego input</td><td>Group management APIs removed</td><td>Group management screens removed</td></tr>
+<tr><td>No system administrators (decided)</td><td><code>Principal.SystemAdmin</code> removed</td><td>Administrator-only APIs and checks removed; the startup setting naming administrator emails (<code>AdminEmails</code>) removed</td><td>Administrator screens removed</td></tr>
 </tbody></table></div>
 </section>
 </article>
