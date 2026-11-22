@@ -13,8 +13,8 @@ a **version** exists only when someone saves one. There are no locks: update
 and delete carry the block revision (`rev`) they are based on, and a stale
 base whose contents changed is a conflict (409) that the writer resolves or
 overrides with `force`. AI agents use the REST API and the MCP endpoint.
-Read `docs/model.html` (the source of truth) before changing the model, and
-`docs/design.html` before changing the write path or the realtime protocol.
+Read `docs/model.md` (the source of truth) before changing the model, and
+`docs/design.md` before changing the write path or the realtime protocol.
 
 ## Commands
 
@@ -33,18 +33,18 @@ Read `docs/model.html` (the source of truth) before changing the model, and
 - `pkg/domain/model/` – entities, IDs (`id.go`, UUID v4 in base62), visibility and access (`principal.go`), versions, fractional order keys (`order.go`)
 - `pkg/domain/markup/` – the inline markup of block text (Markdown + `[text]{.colour}`); its TypeScript twin is `frontend/src/markup/`, and both run `testdata/markup/cases.json`
 - `pkg/domain/interfaces/` – ports: `Repository` (incl. `Watch`), `Tx` (one workspace), `Workspaces`, `AttachmentStore`, `IdentityProvider`
-- `pkg/repository/firestore/` – production backend on a Firestore **Enterprise** database (schema: `docs/design.html#schema`). Enterprise creates no index automatically and scans when a query has none, so every new query must add its index to `RequiredIndexes` in `indexes.go`; `pkg/repository/memory/` – dev/tests. Contract tests live in `pkg/repository/*_test.go` and run against both (Firestore when `TEST_FIRESTORE_PROJECT_ID` is set, see `task test:firestore`; search needs a real Enterprise database and runs only with `TEST_FIRESTORE_ENTERPRISE`)
+- `pkg/repository/firestore/` – production backend on a Firestore **Enterprise** database (schema: `docs/design.md#firestore`). Enterprise creates no index automatically and scans when a query has none, so every new query must add its index to `RequiredIndexes` in `indexes.go`; `pkg/repository/memory/` – dev/tests. Contract tests live in `pkg/repository/*_test.go` and run against both (Firestore when `TEST_FIRESTORE_PROJECT_ID` is set, see `task test:firestore`; search needs a real Enterprise database and runs only with `TEST_FIRESTORE_ENTERPRISE`)
 - `pkg/service/google/` – Google OIDC; `pkg/service/workspace/` – workspace configuration and Rego; `pkg/service/attachment/` – image stores (Cloud Storage, directory, memory)
 - `pkg/usecase/` – application logic; every method takes the principal and enforces access (`ops.go` batches and conflicts, `version.go`, `tree.go`, `read.go`)
 - `pkg/usecase/markdown/` – Markdown <-> blocks
 - `frontend/` – React + Vite + TypeScript, embedded via `frontend/static.go`
 
-## Design documents (MANDATORY)
+## Documents (MANDATORY)
 
-- Every design document in this project is written as a **self-contained HTML page** and published as a claude.ai **artifact**. Never write designs as Markdown.
-- `docs/model.html` is the source of truth for the model and concepts (terms, entities and relations, invariants, access, storage layout, operations, conflict rules, versions). When another document or the current code disagrees with it, `docs/model.html` wins; update it first when the model changes.
-- `docs/design.html` covers how the model is implemented (write path, versions, tree, feed, auth, API, Firestore layout, search, deployment, scale). Update it (and republish the artifact) whenever the architecture changes. New topic-specific designs go in `docs/<topic>.html` and are published the same way.
-- Follow the artifact page rules: one HTML file, inline CSS/JS, diagrams as inline SVG (no Mermaid), light and dark themes, readable on phones. Put decisions first, with dates, and keep an "open questions" section.
+- Documents in the repository are **Markdown only**, in English. Diagrams are Mermaid code blocks (or plain text) so GitHub renders them; no HTML pages, no images of diagrams.
+- Designs under discussion are shown as specs on claude.ai, not committed. Only what was decided goes into `docs/`.
+- `docs/model.md` is the source of truth for the model and concepts (terms, entities and relations, invariants, access, storage layout, operations, conflict rules, versions). When another document or the current code disagrees with it, `docs/model.md` wins; update it first when the model changes.
+- `docs/design.md` covers how the model is implemented (write path, versions, tree, jobs, feed, auth, API, Firestore layout, search, deployment, testing, scale); update it whenever the architecture changes. `docs/codebase.md` is a map of the code; keep it in step with the layout.
 
 ## Rules (inherited from hecatoncheires)
 
@@ -62,7 +62,7 @@ Read `docs/model.html` (the source of truth) before changing the model, and
 - IDs are always issued by the server; new blocks, rows and columns are referenced within a batch by `ref`.
 - Search goes through `Repository.Search`; repositories maintain the search entries in the same transaction as the blocks. Never search by listing papers or blocks in the use case layer.
 - Realtime fan-out comes from the storage change feed (`Repository.Watch`, the short-lived `events` collection). Do not add an application-level pub/sub. Events carry resulting state and must stay idempotent to apply.
-- Never write the paper record on every write (Firestore sustains about one write per second per document); content lives on blocks. See `docs/design.html#firestore`.
+- Never write the paper record on every write (Firestore sustains about one write per second per document); content lives on blocks. See `docs/design.md#firestore`.
 - Read in batches (`GetPapers`, range reads); never one read per item in a loop. Use-case tests count reads.
 
 ### Repository write discipline

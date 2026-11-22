@@ -1,5 +1,5 @@
 // Mirrors of the Go JSON shapes (pkg/domain/model, pkg/usecase,
-// pkg/controller/http). docs/model.html is the canonical description.
+// pkg/controller/http). docs/model.md is the canonical description.
 
 export type ActorKind = 'human' | 'agent' | 'system'
 

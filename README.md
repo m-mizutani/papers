@@ -19,10 +19,9 @@ and rich blocks that AI writes (Mermaid diagrams, SVG and sandboxed HTML).
 - Web UI (React) with live updates and presence over WebSocket; REST API and
   an MCP endpoint (`/mcp`) for AI agents.
 
-[docs/model.html](docs/model.html) is the source of truth for the model.
-[docs/design.html](docs/design.html) covers the architecture and the Firestore
-layout, [docs/codebase.html](docs/codebase.html) is a tour of the code (all
-also published as claude.ai artifacts).
+[docs/model.md](docs/model.md) is the source of truth for the model.
+[docs/design.md](docs/design.md) covers the architecture and the Firestore
+layout, and [docs/codebase.md](docs/codebase.md) is a tour of the code.
 
 ## Run locally
 

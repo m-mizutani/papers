@@ -101,7 +101,7 @@ function lineKey(lines: TableLine[], after: string | undefined, self = ''): stri
   return keyBetween(lo, hi === lo ? '' : hi)
 }
 
-/** Applies a batch the way pkg/usecase does (see docs/model.html). */
+/** Applies a batch the way pkg/usecase does (see docs/model.md). */
 export function apply(d: PaperData, actor: Actor, ops: Op[], force = false): BatchResult {
   const staged = new Map([...d.blocks].map(([k, v]) => [k, clone(v)]))
   const conflicts: Conflict[] = []

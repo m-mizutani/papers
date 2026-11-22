@@ -1,6 +1,6 @@
 // Package firestore implements interfaces.Repository on Cloud Firestore.
 //
-// Layout (see docs/design.html for the rationale):
+// Layout (see docs/design.md, "Firestore", for the rationale):
 //
 //	users/{userID}
 //	users/{userID}/pins/{wsID}_{paperID}
