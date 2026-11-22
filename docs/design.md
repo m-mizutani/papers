@@ -172,7 +172,16 @@ Images only (PNG, JPEG, GIF, WebP; up to 20 MiB). An attachment belongs to one p
 - **Go**: unit and use-case tests on the memory repository (`go test -race ./...`), and the repository contract tests on the Firestore emulator.
 - **Frontend**: ESLint, Vitest unit tests, and the type-checked build of the app and the demo.
 - **End to end**: Playwright tests in `frontend/e2e/` drive the built server (memory storage, sign-in off, the example workspaces) in Chromium, one test per basic use case: workspaces and navigation, editing and formatting, block types, tables, images, child papers, moves within and across workspaces, trash and restore, archive, private papers, pins, search, versions, live updates, conflicts, API tokens and agents, Markdown export and printing. `task test:e2e` runs them locally.
-- **CI** (`.github/workflows/ci.yml`) runs all of these on every pull request and also fails when `go.mod`/`go.sum` are not tidy.
+- **CI** runs one workflow per concern on every pull request, so each shows as its own check:
+
+| Workflow | Jobs |
+|---|---|
+| `go-test.yml` | `go test -race ./...` on the memory backend; repository contract tests on the Firestore emulator |
+| `ui-test.yml` | Vitest |
+| `e2e.yml` | Playwright against the built server |
+| `lint.yml` | golangci-lint (`.golangci.yml`), go vet, go mod tidy, ESLint, TypeScript (app and e2e) |
+| `security.yml` | govulncheck, gosec, Trivy (dependencies and secrets), pnpm audit; also weekly, since advisories appear without code changes |
+| `build.yml` | UI (app and demo) and the server binary; the Docker image |
 
 ## Scale
 
