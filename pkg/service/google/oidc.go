@@ -21,7 +21,8 @@ import (
 	"github.com/m-mizutani/papers/pkg/utils/safe"
 )
 
-const (
+// Public Google endpoints, not credentials.
+const ( // #nosec G101
 	defaultAuthEndpoint  = "https://accounts.google.com/o/oauth2/v2/auth"
 	defaultTokenEndpoint = "https://oauth2.googleapis.com/token"
 	defaultJWKSEndpoint  = "https://www.googleapis.com/oauth2/v3/certs"

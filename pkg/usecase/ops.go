@@ -711,14 +711,6 @@ func (a *applier) dropChild(b *model.Block) (bool, error) {
 	return false, nil
 }
 
-func (a *applier) putOther(q *model.Paper) error {
-	if err := a.tx.PutPaper(q); err != nil {
-		return goerr.Wrap(err, "failed to update paper", goerr.V("paper_id", q.ID))
-	}
-	a.others[q.ID] = q
-	return nil
-}
-
 // move changes only the position, so it never conflicts: the last writer
 // wins on order. Moving a block someone else deleted is a no-op.
 func (a *applier) move(op Op) error {

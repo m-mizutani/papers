@@ -486,7 +486,8 @@ func (s *Server) handleMarkdown(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, md)
+	// text/markdown with nosniff (server.go), so browsers never render it as HTML
+	_, _ = io.WriteString(w, md) // #nosec G705
 }
 
 // handleUpload takes the image as the raw request body; its Content-Type
@@ -506,7 +507,7 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c.URL != "" {
-		http.Redirect(w, r, c.URL, http.StatusFound)
+		http.Redirect(w, r, c.URL, http.StatusFound) // #nosec G710 -- a signed URL issued by our AttachmentStore
 		return
 	}
 	defer safe.Close(r.Context(), c.Body)

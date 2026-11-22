@@ -493,7 +493,7 @@ func escapeText(sb *strings.Builder, s string, _, _ bool) {
 				sb.WriteByte('\\')
 			}
 		case '_':
-			if !(isAlnum(runeBefore(s, i)) && isAlnum(runeAt(s, i+1))) {
+			if !isAlnum(runeBefore(s, i)) || !isAlnum(runeAt(s, i+1)) {
 				sb.WriteByte('\\')
 			}
 		}

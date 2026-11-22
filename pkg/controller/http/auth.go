@@ -56,7 +56,8 @@ func randomHex(n int) (string, error) {
 }
 
 func (s *Server) cookie(name, value string, maxAge time.Duration) *http.Cookie {
-	c := &http.Cookie{
+	// Secure follows --base-url: false only for plain-http local development.
+	c := &http.Cookie{ // #nosec G124
 		Name: name, Value: value, Path: "/", HttpOnly: true,
 		Secure: s.secureCookie, SameSite: http.SameSiteLaxMode,
 	}
@@ -74,7 +75,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		returnTo = "/"
 	}
 	if s.auth.IsNoAuthn() {
-		http.Redirect(w, r, returnTo, http.StatusFound)
+		http.Redirect(w, r, returnTo, http.StatusFound) // #nosec G710 -- validateReturnTo allows same-origin paths only
 		return
 	}
 	state, err := randomHex(16)
@@ -128,7 +129,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(returnToCookie); err == nil && validateReturnTo(c.Value) {
 		target = c.Value
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- validateReturnTo allows same-origin paths only
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

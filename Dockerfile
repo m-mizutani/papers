@@ -5,6 +5,8 @@ RUN corepack enable
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
+# shared test cases, read by the type-checked markup tests
+COPY testdata/markup/ /app/testdata/markup/
 RUN pnpm run build
 
 # Go build stage

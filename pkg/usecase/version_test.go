@@ -61,7 +61,7 @@ func TestVersions(t *testing.T) {
 
 	// restore v1: the deleted block comes back with its ID, the new one goes
 	e.apply(t, alice, wsA, p.ID, para("unsaved"))
-	res = gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, p.ID, 1)).NoError(t)
+	gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, p.ID, 1)).NoError(t)
 	blocks := e.blocks(t, alice, wsA, p.ID)
 	gt.A(t, blocks).Length(2)
 	gt.Equal(t, blocks[0].ID, one.ID)
@@ -133,7 +133,7 @@ func TestRestoreVersionAndChildren(t *testing.T) {
 	gt.True(t, e.paper(t, wsA, newer.ID).IsTrashed())
 
 	// bob restoring brings his trashed child back
-	res = gt.R1(e.uc.RestoreVersion(ctx, bob, wsA, parent.ID, 1)).NoError(t)
+	gt.R1(e.uc.RestoreVersion(ctx, bob, wsA, parent.ID, 1)).NoError(t)
 	gt.False(t, e.paper(t, wsA, bobs.ID).IsTrashed())
 	gt.Equal(t, paperBlocks(t, e, alice, wsA, parent.ID), []model.PaperID{stays.ID, bobs.ID})
 }

@@ -234,7 +234,7 @@ func TestTables(t *testing.T) {
 
 	// deleting the table removes its cells
 	cur := e.blocks(t, alice, wsA, p.ID)[0]
-	res = e.apply(t, alice, wsA, p.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: cur.ID, BaseRev: cur.Rev})
+	e.apply(t, alice, wsA, p.ID, usecase.Op{Kind: usecase.OpDelete, BlockID: cur.ID, BaseRev: cur.Rev})
 	gt.A(t, e.blocks(t, alice, wsA, p.ID)).Length(0)
 }
 

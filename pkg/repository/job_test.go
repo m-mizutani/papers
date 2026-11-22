@@ -20,9 +20,9 @@ func jobIn(ws model.WorkspaceID, paper model.PaperID, lease time.Time) *model.Jo
 		RootDone: true, With: model.NewPaperID(),
 		Target: &model.JobTarget{WorkspaceID: "other", ParentID: model.NewPaperID(), After: &after},
 		State:  model.JobRunning, Phase: model.PhaseCopy, Done: 3, Total: 9, Foreign: true,
-		Result:    &model.JobResult{Trashed: true, Skipped: []model.PaperID{model.NewPaperID()}, CopyID: model.NewPaperID()},
-		Error:     "boom", ErrorCode: "internal", Step: 7, Attempts: 2, RetryAt: now.Add(time.Second),
-		Runner:    "runner-1", LeaseUntil: lease,
+		Result: &model.JobResult{Trashed: true, Skipped: []model.PaperID{model.NewPaperID()}, CopyID: model.NewPaperID()},
+		Error:  "boom", ErrorCode: "internal", Step: 7, Attempts: 2, RetryAt: now.Add(time.Second),
+		Runner: "runner-1", LeaseUntil: lease,
 		CreatedBy: humanActor(model.NewUserID()), CreatedAt: now, UpdatedAt: now, ExpireAt: now.Add(model.JobMaxAge),
 	}
 }

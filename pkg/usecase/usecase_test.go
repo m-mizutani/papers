@@ -153,16 +153,6 @@ func para(content string) usecase.Op {
 	return usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockParagraph), Content: ptr(content)}
 }
 
-func top(blocks []*model.Block) []*model.Block {
-	var out []*model.Block
-	for _, b := range blocks {
-		if b.ParentID == "" {
-			out = append(out, b)
-		}
-	}
-	return out
-}
-
 // counting counts reads of papers and blocks, to pin down that reads are
 // batched rather than one per item.
 type counting struct {
