@@ -1,0 +1,7 @@
+# No [authz]: every signed-in user may use this workspace (a warning is
+# logged at startup).
+[workspace]
+id = "product"
+name = "Product Notes"
+description = "Ideas, decisions and their reasons."
+color = "#2350c8"

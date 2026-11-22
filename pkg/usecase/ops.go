@@ -1,0 +1,1192 @@
+package usecase
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/m-mizutani/goerr/v2"
+
+	"github.com/m-mizutani/papers/pkg/domain/interfaces"
+	"github.com/m-mizutani/papers/pkg/domain/markup"
+	"github.com/m-mizutani/papers/pkg/domain/model"
+	"github.com/m-mizutani/papers/pkg/usecase/markdown"
+)
+
+// OpKind is the kind of a requested operation.
+type OpKind string
+
+const (
+	OpInsert         OpKind = "insert"
+	OpUpdate         OpKind = "update"
+	OpDelete         OpKind = "delete"
+	OpMove           OpKind = "move"
+	OpSetTitle       OpKind = "set_title"
+	OpInsertMarkdown OpKind = "insert_markdown"
+
+	OpInsertRow OpKind = "insert_row"
+	OpDeleteRow OpKind = "delete_row"
+	OpMoveRow   OpKind = "move_row"
+	OpInsertCol OpKind = "insert_col"
+	OpDeleteCol OpKind = "delete_col"
+	OpMoveCol   OpKind = "move_col"
+
+	// Paper-level operations. Each must be the only operation of its
+	// batch.
+	OpMovePaper      OpKind = "move_paper"
+	OpSetVisibility  OpKind = "set_visibility"
+	OpSaveVersion    OpKind = "save_version"
+	OpRestoreVersion OpKind = "restore_version"
+	OpArchive        OpKind = "archive"
+	OpUnarchive      OpKind = "unarchive"
+)
+
+func (k OpKind) paperLevel() bool {
+	switch k {
+	case OpMovePaper, OpSetVisibility, OpSaveVersion, OpRestoreVersion, OpArchive, OpUnarchive:
+		return true
+	}
+	return false
+}
+
+// RefPrefix marks a reference to a block or table line created earlier in
+// the same batch: after: "ref:n1" points at the insert with ref "n1".
+const RefPrefix = "ref:"
+
+// Op is one requested operation.
+//
+// Positioning (insert, move, insert_markdown, and the row / column ops)
+// uses After: nil appends at the end, "" inserts at the top, and an ID or
+// "ref:<name>" inserts right after that block or line.
+type Op struct {
+	Kind    OpKind            `json:"op"`
+	BlockID model.BlockID     `json:"block_id,omitempty"`
+	Ref     string            `json:"ref,omitempty"`
+	Type    *model.BlockType  `json:"type,omitempty"`
+	Content *string           `json:"content,omitempty"`
+	Props   *model.BlockProps `json:"props,omitempty"`
+	After   *string           `json:"after,omitempty"`
+	// BaseRev is the revision of the block the writer based the op on.
+	// Required for update and delete of an existing block.
+	BaseRev  int64   `json:"base_rev,omitempty"`
+	Title    *string `json:"title,omitempty"`
+	Markdown *string `json:"markdown,omitempty"`
+
+	// Cells fills a new table, row by row. Without cells, Rows and Cols
+	// give its size (default 2 x 2).
+	Cells [][]string `json:"cells,omitempty"`
+	Rows  int        `json:"rows,omitempty"`
+	Cols  int        `json:"cols,omitempty"`
+	// LineID is the row or column of a row / column op; Values fill the
+	// cells of a new row or column.
+	LineID model.LineID `json:"line_id,omitempty"`
+	Values []string     `json:"values,omitempty"`
+
+	// Parent is the new parent of move_paper and set_visibility (public):
+	// a paper ID or a path of titles from the home ("Runbooks/DB").
+	Parent string `json:"parent,omitempty"`
+	// Workspace moves the paper to another workspace (move_paper).
+	Workspace  model.WorkspaceID `json:"workspace,omitempty"`
+	Visibility model.Visibility  `json:"visibility,omitempty"`
+	Note       string            `json:"note,omitempty"`
+	Version    int               `json:"version,omitempty"`
+	// Subtree applies archive / unarchive to every paper under this one.
+	Subtree bool `json:"subtree,omitempty"`
+}
+
+type BatchInput struct {
+	Ops []Op
+	// Force writes over contents someone else changed since the op's base
+	// revision, instead of failing with a ConflictError.
+	Force bool
+}
+
+// Conflict is one op based on an older revision of a block whose contents
+// someone else has changed since.
+type Conflict struct {
+	BlockID model.BlockID `json:"block_id"`
+	BaseRev int64         `json:"base_rev"`
+	// Current is the block as it is now; nil when it has been deleted.
+	Current *model.Block `json:"current"`
+}
+
+// ConflictError reports every conflicting op of a batch; nothing was
+// written. It matches model.ErrConflict.
+type ConflictError struct {
+	Conflicts []Conflict
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("%d block(s) changed since the base revision", len(e.Conflicts))
+}
+
+func (e *ConflictError) Is(target error) bool { return target == model.ErrConflict }
+
+var errConflictRecorded = errors.New("conflict recorded")
+
+// Editing tells the writer that someone was editing a block the batch
+// removed (a cell of a deleted row or column, D3).
+type Editing struct {
+	BlockID model.BlockID `json:"block_id"`
+	Actor   model.Actor   `json:"actor"`
+}
+
+// NotRestored is a child paper a version restore did not bring back.
+type NotRestored struct {
+	PaperID model.PaperID `json:"paper_id"`
+	// Reason is "moved" (it lives under another parent now), "trashed"
+	// (in the trash and not the caller's) or "missing".
+	Reason string `json:"reason"`
+}
+
+type BatchResult struct {
+	Paper *model.Paper `json:"paper"`
+	// Blocks are the resulting states of inserted / updated / moved blocks,
+	// and Deleted the IDs of removed blocks.
+	Blocks  []*model.Block  `json:"blocks"`
+	Deleted []model.BlockID `json:"deleted"`
+	// Refs maps each ref of the batch to the ID issued for it.
+	Refs    map[string]string `json:"refs"`
+	Editing []Editing         `json:"editing,omitempty"`
+	// Version is the version a save_version created.
+	Version     *model.Version `json:"version,omitempty"`
+	NotRestored []NotRestored  `json:"not_restored,omitempty"`
+}
+
+type applier struct {
+	u     *UseCases
+	ctx   context.Context
+	tx    interfaces.Tx
+	p     *model.Principal
+	paper *model.Paper
+	actor model.Actor
+	now   time.Time
+	force bool
+
+	// orig holds each pre-existing block as it was before this batch, so
+	// that several ops on one block are all checked against the same base.
+	orig    map[model.BlockID]*model.Block
+	created map[model.BlockID]bool
+	// touched is the final state per block for the result: nil = deleted.
+	touched map[model.BlockID]*model.Block
+	order   []model.BlockID
+	refs    map[string]string
+
+	conflicts []Conflict
+	result    *BatchResult
+
+	paperChanged bool
+	titleChanged bool
+	// others are other papers this batch writes (children).
+	others map[model.PaperID]*model.Paper
+	// jobs are background jobs the batch stores; they run after it.
+	jobs []*model.Job
+
+	bytes      map[model.BlockID]int
+	totalBytes int
+	inserted   bool
+	presence   []*model.Event
+	// unbounded lifts the per-batch limits (version restore).
+	unbounded bool
+}
+
+func (a *applier) touch(b *model.Block) {
+	if _, seen := a.touched[b.ID]; !seen {
+		a.order = append(a.order, b.ID)
+	}
+	a.touched[b.ID] = b.Clone()
+}
+
+func (a *applier) put(b *model.Block) error {
+	if a.unbounded {
+		if err := a.tx.PutBlock(b); err != nil {
+			return goerr.Wrap(err, "failed to put block", goerr.V("block_id", b.ID))
+		}
+		a.touch(b)
+		return nil
+	}
+	if _, seen := a.touched[b.ID]; !seen && len(a.touched) >= MaxBlocksPerBatch {
+		return goerr.Wrap(model.ErrInvalidArgument, "the batch changes too many blocks; split it", goerr.V("max", MaxBlocksPerBatch))
+	}
+	total := a.totalBytes - a.bytes[b.ID] + len(b.Content)
+	if total > MaxBatchBytes {
+		return goerr.Wrap(model.ErrInvalidArgument, "the batch writes too much content; split it", goerr.V("bytes", total), goerr.V("max", MaxBatchBytes))
+	}
+	a.bytes[b.ID], a.totalBytes = len(b.Content), total
+	if err := a.tx.PutBlock(b); err != nil {
+		return goerr.Wrap(err, "failed to put block", goerr.V("block_id", b.ID))
+	}
+	a.touch(b)
+	return nil
+}
+
+func (a *applier) remove(b *model.Block) error {
+	if _, seen := a.touched[b.ID]; !seen && !a.unbounded && len(a.touched) >= MaxBlocksPerBatch {
+		return goerr.Wrap(model.ErrInvalidArgument, "the batch changes too many blocks; split it", goerr.V("max", MaxBlocksPerBatch))
+	}
+	if err := a.tx.DeleteBlock(a.paper.ID, b.ID); err != nil {
+		return goerr.Wrap(err, "failed to delete block", goerr.V("block_id", b.ID))
+	}
+	if _, seen := a.touched[b.ID]; !seen {
+		a.order = append(a.order, b.ID)
+	}
+	a.touched[b.ID] = nil
+	return nil
+}
+
+// resolve turns an After value into a block ID ("" stays "").
+func (a *applier) resolve(after string) (string, error) {
+	if name, ok := strings.CutPrefix(after, RefPrefix); ok {
+		id, ok := a.refs[name]
+		if !ok {
+			return "", goerr.Wrap(model.ErrInvalidArgument, "unknown ref", goerr.V("ref", name))
+		}
+		return id, nil
+	}
+	return after, nil
+}
+
+func (a *applier) addRef(name, id string) error {
+	if name == "" {
+		return nil
+	}
+	if strings.HasPrefix(name, RefPrefix) || len(name) > 64 {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid ref", goerr.V("ref", name))
+	}
+	if _, dup := a.refs[name]; dup {
+		return goerr.Wrap(model.ErrInvalidArgument, "ref is used twice", goerr.V("ref", name))
+	}
+	a.refs[name] = id
+	return nil
+}
+
+// orderAfter computes the order key for a top-level block placed per after.
+// self is the block being moved, if any; it is skipped as a neighbour.
+func (a *applier) orderAfter(after *string, self model.BlockID) (string, error) {
+	pid := a.paper.ID
+	next := func(order string) (*model.Block, error) {
+		for {
+			b, err := a.tx.FirstAfter(pid, "", order)
+			if err != nil {
+				return nil, goerr.Wrap(err, "failed to find next block")
+			}
+			if b == nil || b.ID != self {
+				return b, nil
+			}
+			order = b.Order
+		}
+	}
+	upper := func(b *model.Block) string {
+		if b == nil {
+			return ""
+		}
+		return b.Order
+	}
+	if after == nil {
+		last, err := a.tx.Last(pid, "")
+		if err != nil {
+			return "", goerr.Wrap(err, "failed to find last block")
+		}
+		if last != nil && last.ID == self {
+			children, err := a.tx.Children(pid, "")
+			if err != nil {
+				return "", goerr.Wrap(err, "failed to list blocks")
+			}
+			last = nil
+			for _, c := range children {
+				if c.ID != self {
+					last = c
+				}
+			}
+		}
+		return model.KeyBetween(upper(last), "")
+	}
+	target, err := a.resolve(*after)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		first, err := next("")
+		if err != nil {
+			return "", err
+		}
+		return model.KeyBetween("", upper(first))
+	}
+	if target == string(self) {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "cannot place a block after itself")
+	}
+	anchor, err := a.tx.GetBlock(pid, model.BlockID(target))
+	if err != nil || anchor.ParentID != "" {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "anchor block not found among top-level blocks", goerr.V("after", *after))
+	}
+	following, err := next(anchor.Order)
+	if err != nil {
+		return "", err
+	}
+	return model.KeyBetween(anchor.Order, upper(following))
+}
+
+func (a *applier) newBlock(t model.BlockType, content string, props model.BlockProps, parent model.BlockID, order string) *model.Block {
+	return &model.Block{
+		ID: model.NewBlockID(), WorkspaceID: a.paper.WorkspaceID, PaperID: a.paper.ID, ParentID: parent,
+		Order: order, Type: t, Content: content, Props: props.Normalize(t), Rev: 1,
+		CreatedBy: a.actor, CreatedAt: a.now, UpdatedBy: a.actor, UpdatedAt: a.now,
+	}
+}
+
+// normalizeContent canonicalises inline markup (D10) and rejects what the
+// markup does not allow.
+func normalizeContent(t model.BlockType, content string) (string, error) {
+	if !t.UsesMarkup() {
+		return content, nil
+	}
+	out, err := markup.Normalize(content)
+	if err != nil {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "invalid inline markup", goerr.V("cause", err.Error()))
+	}
+	return out, nil
+}
+
+// checkImage requires an attached image to belong to this paper.
+func (a *applier) checkImage(props model.BlockProps) error {
+	if props.AttachmentID == "" {
+		return nil
+	}
+	if !model.ValidID(string(props.AttachmentID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid attachment id")
+	}
+	if _, err := a.u.repo.GetAttachment(a.ctx, a.paper.WorkspaceID, a.paper.ID, props.AttachmentID); err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			return goerr.Wrap(model.ErrInvalidArgument, "the attachment does not belong to this paper", goerr.V("attachment_id", props.AttachmentID))
+		}
+		return goerr.Wrap(err, "failed to check attachment")
+	}
+	return nil
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func (a *applier) insert(op Op) (model.BlockID, error) {
+	if op.Type == nil {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "insert requires type")
+	}
+	t := *op.Type
+	if err := t.Validate(); err != nil {
+		return "", err
+	}
+	if t.RequiredParent() != "" {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "table cells are created with rows and columns", goerr.V("type", t))
+	}
+	order, err := a.orderAfter(op.After, "")
+	if err != nil {
+		return "", err
+	}
+	content := ""
+	if op.Content != nil {
+		content = *op.Content
+	}
+	if content, err = normalizeContent(t, content); err != nil {
+		return "", err
+	}
+	props := model.BlockProps{}
+	if op.Props != nil {
+		props = *op.Props
+	}
+	if t == model.BlockHeading && props.Level == 0 {
+		props.Level = 1
+	}
+	// Server-issued identities only: lines, child papers and attachments
+	// the client names are ignored or checked.
+	props.Rows, props.Cols, props.PaperID = nil, nil, ""
+	if t == model.BlockImage {
+		if err := a.checkImage(props); err != nil {
+			return "", err
+		}
+	}
+
+	var child *model.Paper
+	if t == model.BlockPaper {
+		if a.paper.IsPrivate() {
+			return "", goerr.Wrap(model.ErrInvalidArgument, "a private paper has no child papers")
+		}
+		title := ""
+		if op.Title != nil {
+			title = strings.TrimSpace(*op.Title)
+		}
+		if err := model.ValidateTitle(title); err != nil {
+			return "", err
+		}
+		child = &model.Paper{
+			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Title: title, ParentID: a.paper.ID,
+			Visibility: model.VisibilityPublic,
+			CreatedBy:  a.actor, CreatedAt: a.now, UpdatedBy: a.actor, UpdatedAt: a.now,
+		}
+		props.PaperID = child.ID
+	}
+
+	var grid [][]string
+	if t == model.BlockTable {
+		grid, err = tableGrid(op)
+		if err != nil {
+			return "", err
+		}
+		key := ""
+		for range grid[0] {
+			if key, err = model.KeyBetween(key, ""); err != nil {
+				return "", err
+			}
+			props.Cols = append(props.Cols, model.TableLine{ID: model.NewLineID(), Order: key})
+		}
+		key = ""
+		for range grid {
+			if key, err = model.KeyBetween(key, ""); err != nil {
+				return "", err
+			}
+			props.Rows = append(props.Rows, model.TableLine{ID: model.NewLineID(), Order: key})
+		}
+	}
+
+	b := a.newBlock(t, content, props, "", order)
+	if err := a.addRef(op.Ref, string(b.ID)); err != nil {
+		return "", err
+	}
+	if child != nil {
+		if err := a.tx.PutPaper(child); err != nil {
+			return "", goerr.Wrap(err, "failed to create child paper")
+		}
+		a.others[child.ID] = child
+	}
+	if err := a.put(b); err != nil {
+		return "", err
+	}
+	a.created[b.ID] = true
+	a.inserted = true
+	for r, row := range props.Rows {
+		for c, col := range props.Cols {
+			if err := a.newCell(b, row.ID, col.ID, grid[r][c]); err != nil {
+				return "", err
+			}
+		}
+	}
+	return b.ID, nil
+}
+
+func tableGrid(op Op) ([][]string, error) {
+	grid := op.Cells
+	if len(grid) == 0 {
+		rows, cols := op.Rows, op.Cols
+		if rows == 0 {
+			rows = 2
+		}
+		if cols == 0 {
+			cols = 2
+		}
+		grid = make([][]string, rows)
+		for i := range grid {
+			grid[i] = make([]string, cols)
+		}
+	}
+	cols := 0
+	for _, r := range grid {
+		cols = max(cols, len(r))
+	}
+	if len(grid) > model.MaxTableRows || cols > model.MaxTableCols || cols == 0 {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "table size out of range", goerr.V("rows", len(grid)), goerr.V("cols", cols))
+	}
+	out := make([][]string, len(grid))
+	for i, r := range grid {
+		out[i] = make([]string, cols)
+		copy(out[i], r)
+	}
+	return out, nil
+}
+
+// cellOrder is the fixed order key of table cells; cells are placed by
+// their row and column, so their sibling order is irrelevant.
+const cellOrder = "V"
+
+func (a *applier) newCell(table *model.Block, row, col model.LineID, content string) error {
+	content, err := normalizeContent(model.BlockTableCell, content)
+	if err != nil {
+		return err
+	}
+	cell := a.newBlock(model.BlockTableCell, content, model.BlockProps{RowID: row, ColID: col}, table.ID, cellOrder)
+	if err := a.put(cell); err != nil {
+		return err
+	}
+	a.created[cell.ID] = true
+	a.inserted = true
+	return nil
+}
+
+// get reads a block as it is now in the batch, remembering the pre-batch
+// state of blocks read for the first time.
+func (a *applier) get(id model.BlockID) (*model.Block, error) {
+	if !model.ValidID(string(id)) {
+		// A malformed ID is treated like one that does not exist.
+		return nil, goerr.Wrap(model.ErrNotFound, "block not found", goerr.V("block_id", id))
+	}
+	b, err := a.tx.GetBlock(a.paper.ID, id)
+	if err != nil {
+		return nil, err
+	}
+	if !a.created[id] {
+		if _, ok := a.orig[id]; !ok {
+			a.orig[id] = b.Clone()
+		}
+	}
+	return b, nil
+}
+
+// existing loads the block an op edits. A block that is not there was
+// deleted by someone else (a conflict for update, nothing to do for delete
+// and move), unless this batch deleted it, which is an invalid argument.
+func (a *applier) existing(id model.BlockID, base int64) (*model.Block, error) {
+	if id == "" {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "block_id is required")
+	}
+	b, err := a.get(id)
+	if err == nil {
+		return b, nil
+	}
+	if !errors.Is(err, model.ErrNotFound) {
+		return nil, err
+	}
+	if _, mine := a.touched[id]; mine {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "block was deleted earlier in this batch", goerr.V("block_id", id))
+	}
+	a.conflicts = append(a.conflicts, Conflict{BlockID: id, BaseRev: base})
+	return nil, errConflictRecorded
+}
+
+// checkBase applies the revision rules (docs/model.md, "Base revisions and conflicts").
+func (a *applier) checkBase(id model.BlockID, base int64) error {
+	if a.created[id] {
+		return nil
+	}
+	orig := a.orig[id]
+	if base <= 0 || base > orig.Rev {
+		return goerr.Wrap(model.ErrInvalidArgument, "base_rev is missing or newer than the block", goerr.V("block_id", id), goerr.V("base_rev", base), goerr.V("rev", orig.Rev))
+	}
+	if base == orig.Rev || a.force {
+		return nil
+	}
+	a.conflicts = append(a.conflicts, Conflict{BlockID: id, BaseRev: base, Current: orig.Clone()})
+	return errConflictRecorded
+}
+
+// bump records a content change: the revision goes one past the pre-batch
+// revision (a block created in this batch stays at 1).
+func (a *applier) bump(b *model.Block) {
+	if !a.created[b.ID] {
+		b.Rev = a.orig[b.ID].Rev + 1
+	}
+	b.UpdatedBy, b.UpdatedAt = a.actor, a.now
+}
+
+func (a *applier) update(op Op) error {
+	before, err := a.existing(op.BlockID, op.BaseRev)
+	if err != nil {
+		return err
+	}
+	if err := a.checkBase(before.ID, op.BaseRev); err != nil {
+		return err
+	}
+	if before.Type == model.BlockPaper {
+		return goerr.Wrap(model.ErrInvalidArgument, "a paper block has nothing to update; move or delete it", goerr.V("block_id", before.ID))
+	}
+	b := before.Clone()
+	if op.Type != nil && *op.Type != b.Type {
+		nt := *op.Type
+		if err := nt.Validate(); err != nil {
+			return err
+		}
+		if b.Type == model.BlockTableCell || nt.RequiredParent() != "" || nt == model.BlockTable || nt == model.BlockPaper {
+			return goerr.Wrap(model.ErrInvalidArgument, "this type change is not possible; insert a new block instead", goerr.V("block_id", b.ID), goerr.V("type", nt))
+		}
+		if b.Type == model.BlockTable {
+			if err := a.deleteCells(b, nil); err != nil {
+				return err
+			}
+		}
+		b.Type = nt
+		if b.Type == model.BlockHeading && b.Props.Level == 0 && (op.Props == nil || op.Props.Level == 0) {
+			b.Props.Level = 1
+		}
+	}
+	if op.Content != nil {
+		b.Content = *op.Content
+	}
+	if b.Content, err = normalizeContent(b.Type, b.Content); err != nil {
+		return err
+	}
+	if op.Props != nil {
+		props := *op.Props
+		// Rows, columns and cell positions change only through the row
+		// and column ops.
+		props.Rows, props.Cols = before.Props.Rows, before.Props.Cols
+		props.RowID, props.ColID = before.Props.RowID, before.Props.ColID
+		b.Props = props
+	}
+	if b.Type == model.BlockTable && before.Type == model.BlockTable {
+		b.Props.Rows, b.Props.Cols = before.Props.Rows, before.Props.Cols
+	}
+	b.Props = b.Props.Normalize(b.Type)
+	if b.Type == model.BlockDivider || b.Type == model.BlockTable {
+		b.Content = ""
+	}
+	if b.Type == model.BlockImage && b.Props.AttachmentID != before.Props.AttachmentID {
+		if err := a.checkImage(b.Props); err != nil {
+			return err
+		}
+	}
+	if model.SameContents(b, before) {
+		return nil
+	}
+	a.bump(b)
+	return a.put(b)
+}
+
+func (a *applier) delete(op Op) error {
+	b, err := a.existing(op.BlockID, op.BaseRev)
+	if errors.Is(err, errConflictRecorded) {
+		// Someone else already deleted it: the delete is done.
+		a.conflicts = a.conflicts[:len(a.conflicts)-1]
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if b.Type == model.BlockTableCell {
+		return goerr.Wrap(model.ErrInvalidArgument, "table cells are removed with their row or column", goerr.V("block_id", b.ID))
+	}
+	if err := a.checkBase(b.ID, op.BaseRev); err != nil {
+		return err
+	}
+	if b.Type == model.BlockTable {
+		if err := a.deleteCells(b, nil); err != nil {
+			return err
+		}
+	}
+	if b.Type == model.BlockPaper {
+		gone, err := a.dropChild(b)
+		if err != nil {
+			return err
+		}
+		if !gone {
+			return nil // a drop job removes the block or archives the child
+		}
+	}
+	return a.remove(b)
+}
+
+// dropChild handles deleting the paper block of a child. A block whose
+// child is gone or lives elsewhere is simply removed (true). Otherwise a
+// drop job takes over (false): it sends the child to the trash with
+// everything under it and removes the block when all of it is the caller's,
+// and archives the child with everything under it otherwise.
+func (a *applier) dropChild(b *model.Block) (bool, error) {
+	child, err := a.tx.GetPaper(b.Props.PaperID)
+	if errors.Is(err, model.ErrNotFound) {
+		return true, nil // a dangling block
+	}
+	if err != nil {
+		return false, goerr.Wrap(err, "failed to get child paper", goerr.V("paper_id", b.Props.PaperID))
+	}
+	if child.ParentID != a.paper.ID || child.IsTrashed() {
+		return true, nil // it lives elsewhere now
+	}
+	if child.IsBusy() {
+		return false, busy(child)
+	}
+	j := a.u.newJob(a.p, a.paper.WorkspaceID, model.JobDrop, child.ID, a.now)
+	j.BlockID = b.ID
+	if err := a.tx.PutJob(j); err != nil {
+		return false, goerr.Wrap(err, "failed to store job")
+	}
+	a.jobs = append(a.jobs, j)
+	return false, nil
+}
+
+// move changes only the position, so it never conflicts: the last writer
+// wins on order. Moving a block someone else deleted is a no-op.
+func (a *applier) move(op Op) error {
+	before, err := a.existing(op.BlockID, op.BaseRev)
+	if errors.Is(err, errConflictRecorded) {
+		a.conflicts = a.conflicts[:len(a.conflicts)-1]
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if before.ParentID != "" {
+		return goerr.Wrap(model.ErrInvalidArgument, "only top-level blocks can be moved", goerr.V("block_id", before.ID))
+	}
+	order, err := a.orderAfter(op.After, before.ID)
+	if err != nil {
+		return err
+	}
+	if order == before.Order {
+		return nil
+	}
+	b := before.Clone()
+	b.Order = order
+	return a.put(b)
+}
+
+func (a *applier) setTitle(op Op) error {
+	if op.Title == nil {
+		return goerr.Wrap(model.ErrInvalidArgument, "set_title requires title")
+	}
+	title := strings.TrimSpace(*op.Title)
+	if err := model.ValidateTitle(title); err != nil {
+		return err
+	}
+	if title == a.paper.Title {
+		return nil
+	}
+	a.paper.Title = title
+	a.titleChanged, a.paperChanged = true, true
+	return nil
+}
+
+func (a *applier) insertMarkdown(op Op) error {
+	if op.Markdown == nil {
+		return goerr.Wrap(model.ErrInvalidArgument, "insert_markdown requires markdown")
+	}
+	after := op.After
+	for _, d := range markdown.Parse(*op.Markdown) {
+		in := Op{Kind: OpInsert, Type: ptr(d.Type), Content: ptr(d.Content), Props: ptr(d.Props), After: after, Cells: d.Cells}
+		if d.Type == model.BlockImage && strings.HasPrefix(d.Props.URL, "attachment:") {
+			in.Props.AttachmentID = model.AttachmentID(strings.TrimPrefix(d.Props.URL, "attachment:"))
+			in.Props.URL = ""
+		}
+		id, err := a.insert(in)
+		if err != nil {
+			return err
+		}
+		after = ptr(string(id))
+	}
+	return nil
+}
+
+// --- tables
+
+func (a *applier) table(op Op) (*model.Block, error) {
+	if op.BlockID == "" {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "block_id is required")
+	}
+	b, err := a.get(op.BlockID)
+	if errors.Is(err, model.ErrNotFound) {
+		if _, mine := a.touched[op.BlockID]; mine {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "table was deleted earlier in this batch", goerr.V("block_id", op.BlockID))
+		}
+		a.conflicts = append(a.conflicts, Conflict{BlockID: op.BlockID})
+		return nil, errConflictRecorded
+	}
+	if err != nil {
+		return nil, err
+	}
+	if b.Type != model.BlockTable {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "the block is not a table", goerr.V("block_id", b.ID))
+	}
+	return b, nil
+}
+
+func sortLines(lines []model.TableLine) {
+	slices.SortFunc(lines, func(x, y model.TableLine) int {
+		if c := strings.Compare(x.Order, y.Order); c != 0 {
+			return c
+		}
+		return strings.Compare(string(x.ID), string(y.ID))
+	})
+}
+
+func lineKeyAfter(lines []model.TableLine, after *string, self model.LineID, resolve func(string) (string, error)) (string, error) {
+	sorted := slices.Clone(lines)
+	sorted = slices.DeleteFunc(sorted, func(l model.TableLine) bool { return l.ID == self })
+	slices.SortFunc(sorted, func(x, y model.TableLine) int { return strings.Compare(x.Order+string(x.ID), y.Order+string(y.ID)) })
+	if after == nil {
+		lo := ""
+		if len(sorted) > 0 {
+			lo = sorted[len(sorted)-1].Order
+		}
+		return model.KeyBetween(lo, "")
+	}
+	target, err := resolve(*after)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		hi := ""
+		if len(sorted) > 0 {
+			hi = sorted[0].Order
+		}
+		return model.KeyBetween("", hi)
+	}
+	for i, l := range sorted {
+		if string(l.ID) == target {
+			hi := ""
+			if i+1 < len(sorted) {
+				hi = sorted[i+1].Order
+			}
+			if hi == l.Order {
+				// equal keys (ordered by ID): make room after this one
+				hi = ""
+			}
+			return model.KeyBetween(l.Order, hi)
+		}
+	}
+	return "", goerr.Wrap(model.ErrInvalidArgument, "anchor row or column not found", goerr.V("after", *after))
+}
+
+func (a *applier) insertLine(op Op, isRow bool) error {
+	t, err := a.table(op)
+	if err != nil {
+		return err
+	}
+	b := t.Clone()
+	lines, others := &b.Props.Rows, b.Props.Cols
+	if !isRow {
+		lines, others = &b.Props.Cols, b.Props.Rows
+	}
+	key, err := lineKeyAfter(*lines, op.After, "", a.resolve)
+	if err != nil {
+		return err
+	}
+	line := model.TableLine{ID: model.NewLineID(), Order: key}
+	if err := a.addRef(op.Ref, string(line.ID)); err != nil {
+		return err
+	}
+	*lines = append(*lines, line)
+	sortLines(*lines)
+	a.bump(b)
+	if err := a.put(b); err != nil {
+		return err
+	}
+	ordered := slices.Clone(others)
+	slices.SortFunc(ordered, func(x, y model.TableLine) int { return strings.Compare(x.Order+string(x.ID), y.Order+string(y.ID)) })
+	for i, o := range ordered {
+		v := ""
+		if i < len(op.Values) {
+			v = op.Values[i]
+		}
+		row, col := line.ID, o.ID
+		if !isRow {
+			row, col = o.ID, line.ID
+		}
+		if err := a.newCell(b, row, col, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *applier) lineID(op Op) (model.LineID, error) {
+	id, err := a.resolve(string(op.LineID))
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "line_id is required")
+	}
+	return model.LineID(id), nil
+}
+
+func (a *applier) deleteLine(op Op, isRow bool) error {
+	t, err := a.table(op)
+	if errors.Is(err, errConflictRecorded) {
+		a.conflicts = a.conflicts[:len(a.conflicts)-1]
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	id, err := a.lineID(op)
+	if err != nil {
+		return err
+	}
+	b := t.Clone()
+	lines := &b.Props.Rows
+	if !isRow {
+		lines = &b.Props.Cols
+	}
+	n := len(*lines)
+	*lines = slices.DeleteFunc(*lines, func(l model.TableLine) bool { return l.ID == id })
+	if len(*lines) == n {
+		return nil // already gone
+	}
+	if len(*lines) == 0 {
+		return goerr.Wrap(model.ErrInvalidArgument, "a table keeps at least one row and one column; delete the table instead")
+	}
+	a.bump(b)
+	if err := a.put(b); err != nil {
+		return err
+	}
+	// D3: no base revisions; tell the writer who is editing the cells.
+	return a.deleteCells(t, func(c *model.Block) bool {
+		if isRow {
+			return c.Props.RowID == id
+		}
+		return c.Props.ColID == id
+	})
+}
+
+func (a *applier) moveLine(op Op, isRow bool) error {
+	t, err := a.table(op)
+	if errors.Is(err, errConflictRecorded) {
+		a.conflicts = a.conflicts[:len(a.conflicts)-1]
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	id, err := a.lineID(op)
+	if err != nil {
+		return err
+	}
+	b := t.Clone()
+	lines := b.Props.Rows
+	if !isRow {
+		lines = b.Props.Cols
+	}
+	idx := slices.IndexFunc(lines, func(l model.TableLine) bool { return l.ID == id })
+	if idx < 0 {
+		return nil // deleted meanwhile: nothing to move
+	}
+	key, err := lineKeyAfter(lines, op.After, id, a.resolve)
+	if err != nil {
+		return err
+	}
+	if key == lines[idx].Order {
+		return nil
+	}
+	lines[idx].Order = key
+	sortLines(lines)
+	a.bump(b)
+	return a.put(b)
+}
+
+// deleteCells removes the cells of a table that match keep (all if nil)
+// and reports who was editing them.
+func (a *applier) deleteCells(table *model.Block, match func(*model.Block) bool) error {
+	cells, err := a.tx.Children(a.paper.ID, table.ID)
+	if err != nil {
+		return goerr.Wrap(err, "failed to list table cells")
+	}
+	for _, c := range cells {
+		if match != nil && !match(c) {
+			continue
+		}
+		if match != nil {
+			if err := a.noteEditing(c.ID); err != nil {
+				return err
+			}
+		}
+		if err := a.remove(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *applier) noteEditing(id model.BlockID) error {
+	if a.presence == nil {
+		evs, err := a.u.repo.ListEvents(a.ctx, a.paper.WorkspaceID, a.paper.ID, a.now.Add(-model.PresenceTTL))
+		if err != nil {
+			return goerr.Wrap(err, "failed to read presence")
+		}
+		a.presence = append([]*model.Event{}, evs...)
+	}
+	latest := map[model.UserID]*model.Presence{}
+	for _, ev := range a.presence {
+		if ev.Type == model.EventPresence && ev.Presence != nil {
+			latest[ev.Presence.Actor.UserID] = ev.Presence
+		}
+	}
+	for uid, pr := range latest {
+		if pr.BlockID == id && !pr.Leaving && pr.Until.After(a.now) && uid != a.p.User.ID {
+			a.result.Editing = append(a.result.Editing, Editing{BlockID: id, Actor: pr.Actor})
+		}
+	}
+	return nil
+}
+
+func (a *applier) apply(op Op) error {
+	switch op.Kind {
+	case OpInsert:
+		_, err := a.insert(op)
+		return err
+	case OpUpdate:
+		return a.update(op)
+	case OpDelete:
+		return a.delete(op)
+	case OpMove:
+		return a.move(op)
+	case OpSetTitle:
+		return a.setTitle(op)
+	case OpInsertMarkdown:
+		return a.insertMarkdown(op)
+	case OpInsertRow:
+		return a.insertLine(op, true)
+	case OpInsertCol:
+		return a.insertLine(op, false)
+	case OpDeleteRow:
+		return a.deleteLine(op, true)
+	case OpDeleteCol:
+		return a.deleteLine(op, false)
+	case OpMoveRow:
+		return a.moveLine(op, true)
+	case OpMoveCol:
+		return a.moveLine(op, false)
+	default:
+		return goerr.Wrap(model.ErrInvalidArgument, "unknown op", goerr.V("op", op.Kind))
+	}
+}
+
+// finish writes the paper and the feed entries.
+func (a *applier) finish() error {
+	if a.inserted {
+		n, err := a.tx.CountBlocks(a.paper.ID)
+		if err != nil {
+			return goerr.Wrap(err, "failed to count blocks")
+		}
+		if n > model.MaxBlocksPerPaper {
+			return goerr.Wrap(model.ErrInvalidArgument, "the paper would have too many blocks", goerr.V("max", model.MaxBlocksPerPaper))
+		}
+	}
+	if len(a.order) > 0 && a.now.Sub(a.paper.UpdatedAt) >= a.u.cfg.PaperTouchInterval {
+		a.paperChanged = true
+	}
+	if a.paperChanged {
+		a.paper.UpdatedBy, a.paper.UpdatedAt = a.actor, a.now
+		if err := a.tx.PutPaper(a.paper); err != nil {
+			return goerr.Wrap(err, "failed to update paper")
+		}
+	}
+	ws, pid := a.paper.WorkspaceID, a.paper.ID
+	ev := func(e *model.Event) error {
+		e.WorkspaceID, e.At = ws, a.now
+		if e.PaperID == "" {
+			e.PaperID = pid
+		}
+		return a.tx.AddEvent(e)
+	}
+	for _, id := range a.order {
+		if b := a.touched[id]; b != nil {
+			a.result.Blocks = append(a.result.Blocks, b)
+			if err := ev(&model.Event{Type: model.EventBlockPut, Block: b}); err != nil {
+				return err
+			}
+		} else {
+			a.result.Deleted = append(a.result.Deleted, id)
+			if err := ev(&model.Event{Type: model.EventBlockDeleted, BlockID: id}); err != nil {
+				return err
+			}
+		}
+	}
+	if a.paperChanged {
+		if err := ev(&model.Event{Type: model.EventPaperUpdated, Paper: a.paper.Clone()}); err != nil {
+			return err
+		}
+	}
+	for _, q := range a.others {
+		if err := ev(&model.Event{Type: model.EventPaperUpdated, PaperID: q.ID, Paper: q.Clone()}); err != nil {
+			return err
+		}
+	}
+	a.result.Paper = a.paper
+	a.result.Refs = a.refs
+	return nil
+}
+
+// Apply runs a batch of operations on a paper atomically. An op based on an
+// older revision of a block whose contents someone else has changed since
+// fails the whole batch with a *ConflictError listing every such op, unless
+// in.Force is set. A paper-level op (move_paper, set_visibility,
+// save_version, restore_version, archive, unarchive) must be the only op of
+// its batch.
+func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.WorkspaceID, paperID model.PaperID, in BatchInput) (*BatchResult, error) {
+	if len(in.Ops) == 0 {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "no operations")
+	}
+	if len(in.Ops) > u.cfg.MaxOpsPerBatch {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "too many operations", goerr.V("count", len(in.Ops)), goerr.V("max", u.cfg.MaxOpsPerBatch))
+	}
+	for _, op := range in.Ops {
+		if op.Kind.paperLevel() {
+			if len(in.Ops) != 1 {
+				return nil, goerr.Wrap(model.ErrInvalidArgument, "a paper-level operation must be the only operation of its batch", goerr.V("op", op.Kind))
+			}
+			return u.applyPaperOp(ctx, p, wsID, paperID, op)
+		}
+	}
+	if _, _, err := u.writablePaper(ctx, p, wsID, paperID); err != nil {
+		return nil, err
+	}
+
+	now := u.now()
+	var result *BatchResult
+	var jobs []*model.Job
+	err := u.repo.RunTx(ctx, wsID, func(tx interfaces.Tx) error {
+		paper, err := tx.GetPaper(paperID)
+		if err != nil {
+			return goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", paperID))
+		}
+		if paper.IsBusy() {
+			return busy(paper)
+		}
+		a := &applier{
+			u: u, ctx: ctx, tx: tx, p: p, paper: paper, actor: p.Actor(), now: now, force: in.Force,
+			orig: map[model.BlockID]*model.Block{}, created: map[model.BlockID]bool{},
+			touched: map[model.BlockID]*model.Block{}, refs: map[string]string{},
+			others: map[model.PaperID]*model.Paper{}, bytes: map[model.BlockID]int{},
+			result: &BatchResult{},
+		}
+		for i, op := range in.Ops {
+			if err := a.apply(op); errors.Is(err, errConflictRecorded) {
+				continue
+			} else if err != nil {
+				return goerr.Wrap(err, fmt.Sprintf("op #%d (%s) failed", i, op.Kind), goerr.V("index", i))
+			}
+		}
+		if len(a.conflicts) > 0 {
+			return &ConflictError{Conflicts: a.conflicts}
+		}
+		if err := a.finish(); err != nil {
+			return err
+		}
+		result, jobs = a.result, a.jobs
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	u.kick(ctx, jobs)
+	return result, nil
+}
+
+func (u *UseCases) applyPaperOp(ctx context.Context, p *model.Principal, ws model.WorkspaceID, paper model.PaperID, op Op) (*BatchResult, error) {
+	switch op.Kind {
+	case OpMovePaper:
+		return u.MovePaper(ctx, p, ws, paper, MoveInput{Parent: op.Parent, After: op.After, Workspace: op.Workspace})
+	case OpSetVisibility:
+		return u.SetVisibility(ctx, p, ws, paper, VisibilityInput{Visibility: op.Visibility, Parent: op.Parent, After: op.After})
+	case OpSaveVersion:
+		v, err := u.SaveVersion(ctx, p, ws, paper, op.Note)
+		if err != nil {
+			return nil, err
+		}
+		return &BatchResult{Version: v, Refs: map[string]string{}}, nil
+	case OpRestoreVersion:
+		return u.RestoreVersion(ctx, p, ws, paper, op.Version)
+	case OpArchive:
+		return u.Archive(ctx, p, ws, paper, op.Subtree)
+	case OpUnarchive:
+		return u.Unarchive(ctx, p, ws, paper, op.Subtree)
+	}
+	return nil, goerr.Wrap(model.ErrInvalidArgument, "unknown op", goerr.V("op", op.Kind))
+}

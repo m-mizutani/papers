@@ -1,0 +1,67 @@
+# https://taskfile.dev
+version: "3"
+
+tasks:
+  build:frontend:
+    desc: Build the Web UI into frontend/dist (embedded by go:embed)
+    dir: frontend
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm build
+
+  build:
+    desc: Build the frontend and the papers binary
+    cmds:
+      - task: build:frontend
+      - go build -o papers .
+
+  dev:server:
+    desc: Run the server without authentication, with the in-memory repository and the example workspaces
+    cmds:
+      - go run . serve --no-authn --ws-origin localhost:5173 --config examples/config --global-config examples/global.toml
+
+  demo:
+    desc: Build the in-browser demo (no backend) into frontend/dist-demo
+    dir: frontend
+    cmds:
+      - pnpm build:demo
+
+  dev:frontend:
+    desc: Run the Vite dev server (proxies /api and /mcp to :8080)
+    dir: frontend
+    cmds:
+      - pnpm dev
+
+  test:
+    desc: Run Go and frontend tests
+    cmds:
+      - go vet ./...
+      - go test ./...
+      - task: test:frontend
+
+  test:firestore:
+    desc: Run the repository contract tests against a Firestore emulator in Docker (search tests need a real Enterprise database, see docs/design.md)
+    cmds:
+      - |
+        docker rm -f papers-firestore-emulator >/dev/null 2>&1 || true
+        docker run -d --name papers-firestore-emulator -p 28615:28615 \
+          google/cloud-sdk:emulators gcloud emulators firestore start --host-port=0.0.0.0:28615
+        trap 'docker rm -f papers-firestore-emulator >/dev/null 2>&1' EXIT
+        i=0
+        until curl -s http://127.0.0.1:28615/ >/dev/null 2>&1; do
+          i=$((i+1)); [ "$i" -ge 90 ] && { echo "emulator did not start" >&2; exit 1; }
+          sleep 1
+        done
+        FIRESTORE_EMULATOR_HOST=127.0.0.1:28615 TEST_FIRESTORE_PROJECT_ID=papers-test go test ./pkg/repository/... -count=1
+
+  test:frontend:
+    dir: frontend
+    cmds:
+      - pnpm lint
+      - pnpm test
+
+  test:e2e:
+    desc: Run the Playwright end-to-end tests against a freshly built server (in-memory storage, sign-in off)
+    cmds:
+      - task: build
+      - cd frontend && PAPERS_BIN=../papers pnpm test:e2e

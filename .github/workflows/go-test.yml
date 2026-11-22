@@ -1,0 +1,49 @@
+name: Go test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: go test (memory backend, race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+
+  firestore:
+    name: go test (Firestore emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Start the Firestore emulator
+        run: |
+          docker run -d --name firestore -p 28615:28615 \
+            google/cloud-sdk:emulators gcloud emulators firestore start --host-port=0.0.0.0:28615
+          for i in $(seq 1 120); do
+            curl -s http://127.0.0.1:28615/ >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "the emulator did not start" >&2
+          docker logs firestore
+          exit 1
+      - name: Repository contract tests
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:28615
+          TEST_FIRESTORE_PROJECT_ID: papers-test
+        run: go test ./pkg/repository/... -count=1

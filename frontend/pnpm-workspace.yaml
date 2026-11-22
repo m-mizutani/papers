@@ -1,0 +1,5 @@
+onlyBuiltDependencies:
+  - esbuild
+overrides:
+  # mermaid still pins an older lodash-es (CVE-2026-4800)
+  lodash-es: ">=4.18.0"
