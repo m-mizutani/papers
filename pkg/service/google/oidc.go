@@ -22,9 +22,9 @@ import (
 )
 
 // Public Google endpoints, not credentials.
-const ( // #nosec G101
+const (
 	defaultAuthEndpoint  = "https://accounts.google.com/o/oauth2/v2/auth"
-	defaultTokenEndpoint = "https://oauth2.googleapis.com/token"
+	defaultTokenEndpoint = "https://oauth2.googleapis.com/token" // #nosec G101 -- a public URL
 	defaultJWKSEndpoint  = "https://www.googleapis.com/oauth2/v3/certs"
 )
 
