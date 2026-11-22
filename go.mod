@@ -8,7 +8,7 @@ require (
 	github.com/coder/websocket v1.8.13
 	github.com/fatih/color v1.18.0
 	github.com/getsentry/sentry-go v0.34.1
-	github.com/go-chi/chi/v5 v5.2.2
+	github.com/go-chi/chi/v5 v5.4.0
 	github.com/google/uuid v1.6.0
 	github.com/lestrrat-go/jwx/v3 v3.4.0
 	github.com/m-mizutani/clog v0.2.1
