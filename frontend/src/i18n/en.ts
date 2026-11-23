@@ -306,4 +306,5 @@ export const en: Record<MsgKey, string> = {
   htmlFrameTitle: 'Contents of {title}',
   htmlLoadFailed: 'Could not load the contents.',
   openHtml: 'Open HTML in a new tab',
+  showLatest: 'Show the latest',
 }

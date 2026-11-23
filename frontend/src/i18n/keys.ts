@@ -305,6 +305,7 @@ export const keys = {
   htmlFrameTitle: 'htmlFrameTitle',
   htmlLoadFailed: 'htmlLoadFailed',
   openHtml: 'openHtml',
+  showLatest: 'showLatest',
 } as const
 
 export type MsgKey = keyof typeof keys

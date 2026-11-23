@@ -306,4 +306,5 @@ export const ja: Record<MsgKey, string> = {
   htmlFrameTitle: '{title} の内容',
   htmlLoadFailed: '内容を読み込めませんでした。',
   openHtml: 'HTML を新しいタブで開く',
+  showLatest: '最新に更新',
 }

@@ -1521,7 +1521,14 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     <span className="mdot" /><span>{t('editedBy', { name: actorName(paper.updated_by), when: ago(paper.updated_at) })}</span>
                   </div>
                 )}
-                {readOnlyVersion && shown && (
+                {readOnlyVersion && shown && isHTML && (
+                  <div className="banner ver">
+                    <span className="vmark"><span className="vdot" /><span className="vnum">v{shown.number}</span></span>
+                    <span className="sp" />
+                    <Link className="btn sm primary" to={base}>{t('showLatest')}</Link>
+                  </div>
+                )}
+                {readOnlyVersion && shown && !isHTML && (
                   <div className="banner ver">
                     <span className="vmark"><span className="vdot" /><span className="vnum">v{shown.number}</span></span>
                     <span className="sp"><b>{t('viewing', { n: shown.number })}</b> · {t('savedBy', { name: actorName(shown.created_by), when: ago(shown.created_at) })}{shown.note && <span className="muted" style={{ display: 'block' }}>{shown.note}</span>}</span>
