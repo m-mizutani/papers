@@ -87,12 +87,16 @@ type Op struct {
 
 	// Parent is the new parent of move_paper and set_visibility (public):
 	// a paper ID or a path of titles from the home ("Runbooks/DB").
+	// set_visibility without a parent leaves the paper unfiled.
 	Parent string `json:"parent,omitempty"`
 	// Workspace moves the paper to another workspace (move_paper).
-	Workspace  model.WorkspaceID `json:"workspace,omitempty"`
-	Visibility model.Visibility  `json:"visibility,omitempty"`
-	Note       string            `json:"note,omitempty"`
-	Version    int               `json:"version,omitempty"`
+	Workspace model.WorkspaceID `json:"workspace,omitempty"`
+	// Unfiled takes the paper out of the tree (move_paper, without parent
+	// and workspace; only for a paper without children).
+	Unfiled    bool             `json:"unfiled,omitempty"`
+	Visibility model.Visibility `json:"visibility,omitempty"`
+	Note       string           `json:"note,omitempty"`
+	Version    int              `json:"version,omitempty"`
 	// Subtree applies archive / unarchive to every paper under this one.
 	Subtree bool `json:"subtree,omitempty"`
 }
@@ -180,6 +184,9 @@ type applier struct {
 
 	paperChanged bool
 	titleChanged bool
+	// parentable caches, for this batch, whether the paper may have child
+	// papers (reading the workspace record once, not once per insert).
+	parentable *bool
 	// others are other papers this batch writes (children).
 	others map[model.PaperID]*model.Paper
 	// jobs are background jobs the batch stores; they run after it.
@@ -411,6 +418,16 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 	if t == model.BlockPaper {
 		if a.paper.IsPrivate() {
 			return "", goerr.Wrap(model.ErrInvalidArgument, "a private paper has no child papers")
+		}
+		if a.parentable == nil {
+			ok, err := a.u.canHaveChildren(a.ctx, a.paper)
+			if err != nil {
+				return "", err
+			}
+			a.parentable = &ok
+		}
+		if !*a.parentable {
+			return "", goerr.Wrap(model.ErrInvalidArgument, "an unfiled paper has no child papers; move it under a parent first", goerr.V("paper_id", a.paper.ID))
 		}
 		title := ""
 		if op.Title != nil {
@@ -1172,7 +1189,7 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 func (u *UseCases) applyPaperOp(ctx context.Context, p *model.Principal, ws model.WorkspaceID, paper model.PaperID, op Op) (*BatchResult, error) {
 	switch op.Kind {
 	case OpMovePaper:
-		return u.MovePaper(ctx, p, ws, paper, MoveInput{Parent: op.Parent, After: op.After, Workspace: op.Workspace})
+		return u.MovePaper(ctx, p, ws, paper, MoveInput{Parent: op.Parent, After: op.After, Workspace: op.Workspace, Unfiled: op.Unfiled})
 	case OpSetVisibility:
 		return u.SetVisibility(ctx, p, ws, paper, VisibilityInput{Visibility: op.Visibility, Parent: op.Parent, After: op.After})
 	case OpSaveVersion:

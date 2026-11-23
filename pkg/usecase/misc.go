@@ -22,8 +22,8 @@ import (
 // --- creating papers
 
 // CreateInput creates a paper. A public paper is placed under Parent (a
-// paper ID or a path; default: the home) as a paper block; a private one
-// stays out of the tree.
+// paper ID or a path) as a paper block, or is unfiled (no parent) when
+// Parent is empty; a private one stays out of the tree.
 type CreateInput struct {
 	Title      string
 	Visibility model.Visibility
@@ -32,8 +32,9 @@ type CreateInput struct {
 	Markdown   string
 }
 
-// CreatePaper creates a paper. For a public paper this is the insert of a
-// paper block into the parent (one batch), followed by the body when
+// CreatePaper creates a paper. For a public paper with a parent this is the
+// insert of a paper block into the parent (one batch); without a parent, and
+// for a private paper, only the paper is written. The body follows when
 // Markdown is given.
 func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model.WorkspaceID, in CreateInput) (*model.Paper, error) {
 	if _, err := u.writableWorkspace(ctx, p, ws); err != nil {
@@ -44,8 +45,24 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		return nil, err
 	}
 	var paper *model.Paper
-	switch in.Visibility {
-	case "", model.VisibilityPublic:
+	switch {
+	case in.Visibility != "" && in.Visibility.Validate() != nil:
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "visibility must be public or private")
+	case in.Visibility == model.VisibilityPrivate || strings.TrimSpace(in.Parent) == "":
+		vis := model.VisibilityPublic
+		if in.Visibility == model.VisibilityPrivate {
+			vis = model.VisibilityPrivate
+		}
+		now := u.now()
+		actor := p.Actor()
+		paper = &model.Paper{
+			ID: model.NewPaperID(), WorkspaceID: ws, Title: title, Visibility: vis,
+			CreatedBy: actor, CreatedAt: now, UpdatedBy: actor, UpdatedAt: now,
+		}
+		if err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(paper) }); err != nil {
+			return nil, goerr.Wrap(err, "failed to create paper")
+		}
+	default:
 		parent, err := u.parentFor(ctx, p, ws, in.Parent)
 		if err != nil {
 			return nil, err
@@ -61,18 +78,6 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 				}
 			}
 		}
-	case model.VisibilityPrivate:
-		now := u.now()
-		actor := p.Actor()
-		paper = &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: ws, Title: title, Visibility: model.VisibilityPrivate,
-			CreatedBy: actor, CreatedAt: now, UpdatedBy: actor, UpdatedAt: now,
-		}
-		if err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(paper) }); err != nil {
-			return nil, goerr.Wrap(err, "failed to create paper")
-		}
-	default:
-		return nil, goerr.Wrap(model.ErrInvalidArgument, "visibility must be public or private")
 	}
 	if paper == nil {
 		return nil, goerr.New("the new paper was not created")
@@ -85,7 +90,7 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 	return paper, nil
 }
 
-// --- pins and recents
+// --- favorites and recents
 
 func (u *UseCases) touchRecent(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) {
 	rec, err := u.repo.GetRecent(ctx, p.User.ID, ws)
@@ -102,20 +107,28 @@ func (u *UseCases) touchRecent(ctx context.Context, p *model.Principal, ws model
 	}
 }
 
-// Pin adds a paper to the caller's pins (at the end) or moves it after
-// another pin (after: a paper ID, "" for the top).
-func (u *UseCases) Pin(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID, after *string) error {
-	if _, _, err := u.paperFor(ctx, p, ws, id); err != nil {
+// Favorite adds a paper to the caller's favorites (at the end) or moves it
+// after another favorite (after: a paper ID, "" for the top). The home and
+// private papers cannot be favorites.
+func (u *UseCases) Favorite(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID, after *string) error {
+	_, paper, err := u.paperFor(ctx, p, ws, id)
+	if err != nil {
 		return err
 	}
-	pins, err := u.repo.ListPins(ctx, p.User.ID, ws)
-	if err != nil {
-		return goerr.Wrap(err, "failed to list pins")
+	if paper.IsPrivate() {
+		return goerr.Wrap(model.ErrInvalidArgument, "a private paper cannot be a favorite", goerr.V("paper_id", id))
 	}
-	var others []*model.Pin
-	for _, pin := range pins {
-		if pin.PaperID != id {
-			others = append(others, pin)
+	if err := u.checkNotHome(ctx, paper, "a favorite"); err != nil {
+		return err
+	}
+	favorites, err := u.repo.ListFavorites(ctx, p.User.ID, ws)
+	if err != nil {
+		return goerr.Wrap(err, "failed to list favorites")
+	}
+	var others []*model.Favorite
+	for _, f := range favorites {
+		if f.PaperID != id {
+			others = append(others, f)
 		}
 	}
 	lo, hi := "", ""
@@ -130,16 +143,16 @@ func (u *UseCases) Pin(ctx context.Context, p *model.Principal, ws model.Workspa
 		}
 	default:
 		found := false
-		for i, pin := range others {
-			if string(pin.PaperID) == *after {
-				lo, found = pin.Order, true
+		for i, f := range others {
+			if string(f.PaperID) == *after {
+				lo, found = f.Order, true
 				if i+1 < len(others) {
 					hi = others[i+1].Order
 				}
 			}
 		}
 		if !found {
-			return goerr.Wrap(model.ErrInvalidArgument, "anchor pin not found")
+			return goerr.Wrap(model.ErrInvalidArgument, "anchor favorite not found")
 		}
 	}
 	if lo == hi {
@@ -147,16 +160,17 @@ func (u *UseCases) Pin(ctx context.Context, p *model.Principal, ws model.Workspa
 	}
 	key, err := model.KeyBetween(lo, hi)
 	if err != nil {
-		return goerr.Wrap(err, "failed to order pin")
+		return goerr.Wrap(err, "failed to order favorite")
 	}
-	return u.repo.PutPin(ctx, &model.Pin{UserID: p.User.ID, WorkspaceID: ws, PaperID: id, Order: key})
+	return u.repo.PutFavorite(ctx, &model.Favorite{UserID: p.User.ID, WorkspaceID: ws, PaperID: id, Order: key})
 }
 
-func (u *UseCases) Unpin(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) error {
+// Unfavorite removes a paper from the caller's favorites.
+func (u *UseCases) Unfavorite(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) error {
 	if _, err := u.workspaceFor(ctx, p, ws); err != nil {
 		return err
 	}
-	return u.repo.DeletePin(ctx, p.User.ID, ws, id)
+	return u.repo.DeleteFavorite(ctx, p.User.ID, ws, id)
 }
 
 // --- presence

@@ -1,8 +1,12 @@
 package model
 
 import (
+	"maps"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/m-mizutani/goerr/v2"
 )
@@ -120,6 +124,10 @@ type BlockProps struct {
 
 	// rich blocks
 	Height int `json:"height,omitempty"`
+	// Fields holds the values of the elements an html or svg block marks
+	// with data-field="name". People change only these values; the markup
+	// itself stays as the agent wrote it.
+	Fields map[string]string `json:"fields,omitempty"`
 }
 
 const (
@@ -130,7 +138,17 @@ const (
 	MaxTableCells    = 2000
 	MaxContentLength = 256 * 1024
 	MaxRichHeight    = 4000
+	// MaxFields bounds the fields of one html or svg block, and
+	// MaxFieldValueLength the bytes of one value.
+	MaxFields           = 32
+	MaxFieldValueLength = 200
 )
+
+// fieldName is the form of a field name (the data-field attribute).
+var fieldName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// HasFields reports whether the type keeps props.fields.
+func (t BlockType) HasFields() bool { return t == BlockHTML || t == BlockSVG }
 
 // Normalize keeps only the props that belong to t.
 func (p BlockProps) Normalize(t BlockType) BlockProps {
@@ -157,7 +175,12 @@ func (p BlockProps) Normalize(t BlockType) BlockProps {
 		n.RowID, n.ColID = p.RowID, p.ColID
 	case BlockPaper:
 		n.PaperID = p.PaperID
-	case BlockHTML, BlockSVG, BlockMermaid:
+	case BlockHTML, BlockSVG:
+		n.Height = p.Height
+		if len(p.Fields) > 0 {
+			n.Fields = maps.Clone(p.Fields)
+		}
+	case BlockMermaid:
 		n.Height = p.Height
 	}
 	return n
@@ -170,7 +193,25 @@ func (p BlockProps) Equal(o BlockProps) bool {
 		p.AttachmentID == o.AttachmentID && slices.Equal(p.Rows, o.Rows) &&
 		slices.Equal(p.Cols, o.Cols) && p.HeaderRow == o.HeaderRow &&
 		p.RowID == o.RowID && p.ColID == o.ColID && p.PaperID == o.PaperID &&
-		p.Height == o.Height
+		p.Height == o.Height && maps.Equal(p.Fields, o.Fields)
+}
+
+func validFields(fields map[string]string) error {
+	if len(fields) > MaxFields {
+		return goerr.Wrap(ErrInvalidArgument, "too many fields", goerr.V("count", len(fields)), goerr.V("max", MaxFields))
+	}
+	for name, value := range fields {
+		if !fieldName.MatchString(name) {
+			return goerr.Wrap(ErrInvalidArgument, "invalid field name", goerr.V("name", name))
+		}
+		if len(value) > MaxFieldValueLength {
+			return goerr.Wrap(ErrInvalidArgument, "field value is too long", goerr.V("name", name), goerr.V("length", len(value)), goerr.V("max", MaxFieldValueLength))
+		}
+		if !utf8.ValidString(value) || strings.ContainsAny(value, "\n\r") {
+			return goerr.Wrap(ErrInvalidArgument, "field value must be one line of UTF-8 text", goerr.V("name", name))
+		}
+	}
+	return nil
 }
 
 func validLines(lines []TableLine, max int, what string) error {
@@ -225,6 +266,9 @@ func (p BlockProps) validate(t BlockType) error {
 	case BlockHTML, BlockSVG, BlockMermaid:
 		if p.Height < 0 || p.Height > MaxRichHeight {
 			return goerr.Wrap(ErrInvalidArgument, "height out of range", goerr.V("height", p.Height))
+		}
+		if t.HasFields() {
+			return validFields(p.Fields)
 		}
 	}
 	return nil
@@ -293,6 +337,7 @@ func (b *Block) Clone() *Block {
 	c := *b
 	c.Props.Rows = slices.Clone(b.Props.Rows)
 	c.Props.Cols = slices.Clone(b.Props.Cols)
+	c.Props.Fields = maps.Clone(b.Props.Fields)
 	return &c
 }
 

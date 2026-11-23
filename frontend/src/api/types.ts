@@ -29,6 +29,8 @@ export interface Workspace {
   language?: string
   group?: string
   home_paper_id: string
+  /** The paper the user opened last in this workspace, if it can still be shown. */
+  last_opened?: { paper_id: string; title: string; opened_at: string } | null
 }
 
 export interface WorkspaceGroup {
@@ -106,6 +108,8 @@ export interface BlockProps {
   col_id?: string
   paper_id?: string
   height?: number
+  /** Values of an AI-made html / svg block that people may edit in place (data-field). */
+  fields?: Record<string, string>
 }
 
 export interface Block {
@@ -214,6 +218,23 @@ export interface VersionView {
   version: VersionSummary
   paper: Paper
   blocks: Block[]
+  /** What restoring the version does with each child paper it has. */
+  children?: ChildOutcome[]
+}
+
+export interface ChildOutcome {
+  paper_id: string
+  /** Only for papers the caller may see. */
+  title?: string
+  outcome: 'kept' | 'from_trash' | 'moved' | 'trashed' | 'missing'
+}
+
+/** A paper I sent to the trash. */
+export interface TrashItem extends PaperRef {
+  deleted_at: string
+  purge_at: string
+  /** Papers that went to the trash with it. */
+  below: number
 }
 
 export interface PaperStatusInfo {
@@ -240,9 +261,27 @@ export interface Diff {
 
 export interface Sidebar {
   home: PaperRef | null
-  pins: PaperRef[]
+  favorites: PaperRef[]
   recent: PaperRef[]
-  private: PaperRef[]
+  /** The user's own unfiled and private papers, counted up to 100 (100 means 100 or more). */
+  unfiled_count: number
+}
+
+/** One row of the papers list. */
+export interface PaperListItem extends PaperRef {
+  created_at: string
+  updated_at: string
+  parent: { id: string; title: string } | null
+}
+
+export interface PaperListQuery {
+  place?: 'unfiled' | 'filed' | 'all'
+  creator?: 'me' | 'all'
+  visibility?: 'all' | 'public' | 'private'
+  archived?: boolean
+  sort?: 'updated' | 'created'
+  limit?: number
+  cursor?: string
 }
 
 export interface SearchHit {

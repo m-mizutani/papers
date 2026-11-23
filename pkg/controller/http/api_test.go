@@ -39,14 +39,23 @@ type batchResp struct {
 
 const ws = model.WorkspaceID("team")
 
+// homeOf reads the home paper of the workspace.
+func homeOf(c *client, ws model.WorkspaceID) model.PaperID {
+	var v struct {
+		HomePaperID model.PaperID `json:"home_paper_id"`
+	}
+	c.expect("GET", "/api/v1/workspaces/"+string(ws), nil, http.StatusOK, &v)
+	return v.HomePaperID
+}
+
 // setupPaper signs in alice and bob and has alice create a public paper
-// with a body.
+// with a body under the home.
 func setupPaper(t *testing.T, ts *testServer) (*client, *client, model.WorkspaceID, model.PaperID) {
 	t.Helper()
 	alice := ts.login("alice@example.com")
 	bob := ts.login("bob@example.com")
 	var p model.Paper
-	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Runbook", "markdown": "# Steps\n\n1. check\n2. fix"}, http.StatusCreated, &p)
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Runbook", "parent": string(homeOf(alice, ws)), "markdown": "# Steps\n\n1. check\n2. fix"}, http.StatusCreated, &p)
 	gt.Equal(t, p.Title, "Runbook")
 	return alice, bob, ws, p.ID
 }
@@ -163,7 +172,7 @@ func TestPaperAPI(t *testing.T) {
 	md := string(gt.R1(io.ReadAll(resp.Body)).NoError(t))
 	gt.True(t, strings.HasPrefix(md, "# Runbook\n"))
 
-	// search, sidebar, pins
+	// search, sidebar, favorites
 	var hits struct {
 		Hits []struct {
 			Text string `json:"text"`
@@ -171,17 +180,28 @@ func TestPaperAPI(t *testing.T) {
 	}
 	bob.expect("GET", "/api/v1/workspaces/team/search?q=check", nil, http.StatusOK, &hits)
 	gt.A(t, hits.Hits).Length(1)
-	bob.expect("PUT", base+"/pin", map[string]any{}, http.StatusNoContent, nil)
+	bob.expect("PUT", base+"/favorite", map[string]any{}, http.StatusNoContent, nil)
 	var sb struct {
-		Pins []struct {
+		Home struct {
 			ID model.PaperID `json:"id"`
-		} `json:"pins"`
+		} `json:"home"`
+		Favorites []struct {
+			ID model.PaperID `json:"id"`
+		} `json:"favorites"`
 		Recent []struct {
 			ID model.PaperID `json:"id"`
 		} `json:"recent"`
+		UnfiledCount *int `json:"unfiled_count"`
 	}
 	bob.expect("GET", "/api/v1/workspaces/team/sidebar", nil, http.StatusOK, &sb)
-	gt.Equal(t, sb.Pins[0].ID, paper)
+	gt.Equal(t, sb.Favorites[0].ID, paper)
+	gt.Equal(t, sb.Home.ID, homeOf(bob, ws))
+	gt.V(t, *sb.UnfiledCount).Equal(0)
+	bob.expect("PUT", "/api/v1/workspaces/team/papers/"+string(sb.Home.ID)+"/favorite", map[string]any{}, http.StatusBadRequest, nil)
+	bob.expect("DELETE", base+"/favorite", nil, http.StatusNoContent, nil)
+	bob.expect("GET", "/api/v1/workspaces/team/sidebar", nil, http.StatusOK, &sb)
+	gt.A(t, sb.Favorites).Length(0)
+	bob.expect("PUT", base+"/pin", map[string]any{}, http.StatusNotFound, nil)
 
 	// only the creator deletes (with everything under it); others archive
 	alice.expect("POST", base+"/trash", nil, http.StatusOK, nil) // bob's child is under it: archived instead
@@ -224,7 +244,8 @@ func TestVisibilityAndMoveAPI(t *testing.T) {
 	gt.Equal(t, resolved.ID, memo.ID)
 
 	// move across workspaces: the old paper then points to the new place
-	alice.expect("POST", memoBase+"/move", map[string]any{"workspace": "other"}, http.StatusOK, nil)
+	alice.expect("POST", memoBase+"/move", map[string]any{"workspace": "other"}, http.StatusBadRequest, nil) // a parent is required
+	alice.expect("POST", memoBase+"/move", map[string]any{"workspace": "other", "parent": string(homeOf(alice, "other"))}, http.StatusOK, nil)
 	var moved struct {
 		Error struct {
 			Code    string        `json:"code"`
@@ -295,4 +316,122 @@ func TestTrashRunsTheJobAndAnswers(t *testing.T) {
 	alice.expect("GET", base+"/papers/"+string(kid.ID), nil, http.StatusOK, &view)
 	gt.Equal(t, view.Paper.DeletedWith, paper)
 	alice.expect("GET", base+"/jobs/x", nil, http.StatusNotFound, nil)
+}
+
+func TestUnfiledAPI(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice, bob, ws, runbook := setupPaper(t, ts)
+	papers := "/api/v1/workspaces/" + string(ws) + "/papers"
+
+	// without a parent a paper is unfiled and takes no children
+	var m model.Paper
+	alice.expect("POST", papers, map[string]any{"title": "Notes"}, http.StatusCreated, &m)
+	gt.Equal(t, m.ParentID, model.PaperID(""))
+	gt.Equal(t, m.Visibility, model.VisibilityPublic)
+	mBase := papers + "/" + string(m.ID)
+	alice.expect("POST", mBase+"/ops", map[string]any{"ops": []map[string]any{{"op": "insert", "type": "paper", "title": "Sub"}}}, http.StatusBadRequest, nil)
+	alice.expect("POST", papers, map[string]any{"title": "Kid", "parent": string(m.ID)}, http.StatusBadRequest, nil)
+	alice.expect("PUT", mBase+"/favorite", map[string]any{}, http.StatusNoContent, nil)
+	var memo model.Paper
+	alice.expect("POST", papers, map[string]any{"title": "Memo", "visibility": "private"}, http.StatusCreated, &memo)
+	alice.expect("PUT", papers+"/"+string(memo.ID)+"/favorite", map[string]any{}, http.StatusBadRequest, nil)
+
+	var sb struct {
+		UnfiledCount int `json:"unfiled_count"`
+	}
+	alice.expect("GET", "/api/v1/workspaces/team/sidebar", nil, http.StatusOK, &sb)
+	gt.V(t, sb.UnfiledCount).Equal(2)
+
+	// the papers list: mine and unfiled by default
+	type listed struct {
+		Papers []struct {
+			ID         model.PaperID    `json:"id"`
+			Title      string           `json:"title"`
+			Visibility model.Visibility `json:"visibility"`
+			CreatedAt  *string          `json:"created_at"`
+			UpdatedAt  *string          `json:"updated_at"`
+			Parent     *struct {
+				ID    model.PaperID `json:"id"`
+				Title string        `json:"title"`
+			} `json:"parent"`
+		} `json:"papers"`
+		NextCursor *string `json:"next_cursor"`
+	}
+	var page listed
+	alice.expect("GET", papers, nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(2)
+	gt.Equal(t, *page.NextCursor, "")
+	gt.NotNil(t, page.Papers[0].CreatedAt)
+	gt.NotNil(t, page.Papers[0].UpdatedAt)
+	gt.Nil(t, page.Papers[0].Parent)
+	bob.expect("GET", papers, nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(0)
+	bob.expect("GET", papers+"?creator=all", nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(1) // alice's unfiled paper, not her private one
+	gt.Equal(t, page.Papers[0].ID, m.ID)
+	alice.expect("GET", papers+"?place=filed&creator=all&visibility=public&archived=true&sort=created&limit=1", nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(1)
+	gt.Equal(t, page.Papers[0].ID, runbook)
+	gt.Equal(t, page.Papers[0].Parent.ID, homeOf(alice, ws))
+	gt.Equal(t, page.Papers[0].Parent.Title, "Team")
+	alice.expect("GET", papers+"?limit=1", nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(1)
+	gt.NotEqual(t, *page.NextCursor, "")
+	alice.expect("GET", papers+"?limit=1&cursor="+*page.NextCursor, nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(1)
+	gt.Equal(t, *page.NextCursor, "")
+	for _, bad := range []string{"place=x", "creator=x", "visibility=x", "archived=x", "sort=x", "limit=0", "limit=101", "limit=x", "cursor=x"} {
+		alice.expect("GET", papers+"?"+bad, nil, http.StatusBadRequest, nil)
+	}
+
+	// move under a parent, then back to unfiled
+	alice.expect("POST", mBase+"/move", map[string]any{"parent": string(runbook)}, http.StatusOK, nil)
+	var view paperView
+	bob.expect("GET", mBase, nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.ParentID, runbook)
+	gt.A(t, view.Path).Length(2)
+	alice.expect("POST", mBase+"/move", map[string]any{}, http.StatusBadRequest, nil) // a parent or unfiled is required
+	alice.expect("POST", mBase+"/move", map[string]any{"unfiled": true, "parent": string(runbook)}, http.StatusBadRequest, nil)
+	alice.expect("POST", papers+"/"+string(runbook)+"/move", map[string]any{"unfiled": true}, http.StatusBadRequest, nil) // has a child
+	alice.expect("POST", mBase+"/move", map[string]any{"unfiled": true}, http.StatusOK, nil)
+	view = paperView{}
+	bob.expect("GET", mBase, nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.ParentID, model.PaperID(""))
+	gt.A(t, view.Path).Length(0)
+
+	// a private paper made public without a parent is unfiled
+	alice.expect("PUT", papers+"/"+string(memo.ID)+"/visibility", map[string]any{"visibility": "public"}, http.StatusOK, nil)
+	view = paperView{}
+	bob.expect("GET", papers+"/"+string(memo.ID), nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.ParentID, model.PaperID(""))
+	gt.Equal(t, view.Paper.Visibility, model.VisibilityPublic)
+}
+
+func TestWorkspacesLastOpenedAPI(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice, _, ws, paper := setupPaper(t, ts)
+	type list struct {
+		Workspaces []struct {
+			ID         model.WorkspaceID `json:"id"`
+			LastOpened *struct {
+				PaperID  model.PaperID `json:"paper_id"`
+				Title    string        `json:"title"`
+				OpenedAt string        `json:"opened_at"`
+			} `json:"last_opened"`
+		} `json:"workspaces"`
+	}
+	var got list
+	alice.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, &got)
+	gt.Nil(t, got.Workspaces[0].LastOpened)
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers/"+string(paper), nil, http.StatusOK, nil)
+	alice.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, &got)
+	gt.Equal(t, got.Workspaces[0].ID, ws)
+	gt.Equal(t, got.Workspaces[0].LastOpened.PaperID, paper)
+	gt.Equal(t, got.Workspaces[0].LastOpened.Title, "Runbook")
+	gt.NotEqual(t, got.Workspaces[0].LastOpened.OpenedAt, "")
+	gt.Nil(t, got.Workspaces[1].LastOpened)
+	// last_opened is always present, null when there is none
+	resp := alice.do("GET", "/api/v1/workspaces", nil)
+	body := string(gt.R1(io.ReadAll(resp.Body)).NoError(t))
+	gt.True(t, strings.Contains(body, `"last_opened":null`))
 }

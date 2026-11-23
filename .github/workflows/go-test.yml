@@ -42,8 +42,8 @@ jobs:
           echo "the emulator did not start" >&2
           docker logs firestore
           exit 1
-      - name: Repository contract tests
+      - name: Repository contract tests and reset tests
         env:
           FIRESTORE_EMULATOR_HOST: 127.0.0.1:28615
           TEST_FIRESTORE_PROJECT_ID: papers-test
-        run: go test ./pkg/repository/... -count=1
+        run: go test ./pkg/repository/... ./pkg/cli/... -count=1

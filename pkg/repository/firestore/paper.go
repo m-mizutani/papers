@@ -90,19 +90,63 @@ func (r *Repository) ListChildren(ctx context.Context, ws model.WorkspaceID, par
 	return out, nil
 }
 
-func (r *Repository) ListPrivatePapers(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
+// sortField is the paper field a list sorted by s orders on.
+func sortField(s model.PaperSort) string {
+	if s == model.SortCreated {
+		return "CreatedAt"
+	}
+	return "UpdatedAt"
+}
+
+// ListPapers filters only on what the papers-list indexes cover (ParentID
+// and CreatedBy.UserID, see RequiredIndexes) and reads one more paper than
+// the limit to know whether a next page exists.
+func (r *Repository) ListPapers(ctx context.Context, ws model.WorkspaceID, q model.PaperQuery) ([]*model.Paper, string, error) {
+	if err := q.Validate(); err != nil {
+		return nil, "", err
+	}
 	if !validKeys(string(ws)) {
-		return nil, nil
+		return nil, "", nil
 	}
-	q := r.papersCol(ws).Where("Visibility", "==", string(model.VisibilityPrivate)).
-		Where("CreatedBy.UserID", "==", string(owner)).OrderBy("Title", firestore.Asc)
-	got, err := all[model.Paper](q.Documents(ctx), "papers")
+	col := r.papersCol(ws)
+	query := col.Query
+	if q.Unfiled {
+		query = query.Where("ParentID", "==", "")
+	}
+	if q.Creator != "" {
+		query = query.Where("CreatedBy.UserID", "==", string(q.Creator))
+	}
+	query = query.OrderBy(sortField(q.Sort), firestore.Desc).OrderBy(firestore.DocumentID, firestore.Desc)
+	if q.Cursor != "" {
+		c, err := model.ParsePaperCursor(q.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		if !validKeys(string(c.ID)) {
+			return nil, "", goerr.Wrap(model.ErrInvalidArgument, "invalid cursor")
+		}
+		query = query.StartAfter(c.At, col.Doc(string(c.ID)))
+	}
+	got, err := all[model.Paper](query.Limit(q.Limit+1).Documents(ctx), "papers")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	out := slices.DeleteFunc(got, func(p *model.Paper) bool { return p.DeletedAt != nil })
-	slices.SortFunc(out, comparePapers)
-	return out, nil
+	if len(got) <= q.Limit {
+		return got, "", nil
+	}
+	page := got[:q.Limit]
+	return page, model.CursorOf(q.Sort, page[len(page)-1]), nil
+}
+
+// GetPapersIn reads papers of several workspaces in one round trip.
+func (r *Repository) GetPapersIn(ctx context.Context, keys []model.PaperKey) ([]*model.Paper, error) {
+	var refs []*firestore.DocumentRef
+	for _, k := range keys {
+		if validKeys(string(k.WorkspaceID), string(k.PaperID)) {
+			refs = append(refs, r.paperDoc(k.WorkspaceID, k.PaperID))
+		}
+	}
+	return getAll[model.Paper](ctx, r.client, refs, "papers")
 }
 
 // epoch is before every DeletedAt; comparing with it skips papers whose

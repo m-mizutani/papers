@@ -93,7 +93,7 @@ Every flag can also be set through the environment variable next to it.
 | `--enable-mcp` / `PAPERS_ENABLE_MCP` | `true` | Serve `/mcp` |
 | `--ws-origin` / `PAPERS_WS_ORIGINS` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` / `PAPERS_REPOSITORY_BACKEND` | `memory` | `firestore` or `memory` (development only) |
-| `--firestore-project-id` / `PAPERS_FIRESTORE_PROJECT_ID`, `--firestore-database-id` / `PAPERS_FIRESTORE_DATABASE_ID` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore setup` once to create its indexes and TTL policies (`--dry-run` / `PAPERS_DRY_RUN` only reports what is missing) |
+| `--firestore-project-id` / `PAPERS_FIRESTORE_PROJECT_ID`, `--firestore-database-id` / `PAPERS_FIRESTORE_DATABASE_ID` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |
 | `--firestore-search-language` / `PAPERS_FIRESTORE_SEARCH_LANGUAGE` | (detect) | BCP-47 language code of search queries, such as `ja` |
 | `--event-buffer` / `PAPERS_EVENT_BUFFER` | `256` | Realtime events a watcher may lag behind before it is told to reload |
 | `--attachment-backend` / `PAPERS_ATTACHMENT_BACKEND` | `memory` | Where images go: `gcs`, `dir` or `memory` |
@@ -111,3 +111,18 @@ Every flag can also be set through the environment variable next to it.
 Trash, restore and archive of a subtree, and moves across workspaces, run as background jobs that continue on the instance after the response, so on Cloud Run allocate CPU always (`--no-cpu-throttling`); otherwise they still finish, but only when an instance looks for them.
 
 A test checks that every flag of every command has a `PAPERS_*` environment variable (see `papers serve --help`).
+
+### Firestore database
+
+`papers firestore migrate` makes the database match what papers needs: it creates the missing indexes and TTL policies and waits until the indexes are ready, so the server can start right after it. It is safe to run on every deploy; a database that is already up to date sees no change. Each index and TTL policy is reported on one line (`ready`, `creating`, `created`, `failed`, `unmanaged`, ...), and an index that needs repair makes it exit with an error.
+
+| Flag / env | Default | Meaning |
+|---|---|---|
+| `--dry-run` / `PAPERS_DRY_RUN` | `false` | Only read, and report what would be created or deleted |
+| `--no-wait` / `PAPERS_NO_WAIT` | `false` | Do not wait for the indexes to become ready |
+| `--wait-timeout` / `PAPERS_WAIT_TIMEOUT` | `30m` | How long to wait for the indexes to become ready |
+| `--prune` / `PAPERS_PRUNE` | `false` | Delete indexes of the managed collection groups that papers does not need (they are only reported otherwise) |
+
+`papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` (`PAPERS_FORCE_DANGEROUS_APPLY`) skips the question, so never leave that variable set. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted.
+
+Both take `--firestore-project-id` and `--firestore-database-id` (or `PAPERS_FIRESTORE_PROJECT_ID`, `PAPERS_FIRESTORE_DATABASE_ID`).

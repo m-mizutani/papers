@@ -64,3 +64,6 @@ frontend/pr-screenshots/
 /papers
 *.tsbuildinfo
 frontend/dist-demo/
+
+# Specs under discussion are shown on claude.ai, not committed (CLAUDE.md)
+.spec/
