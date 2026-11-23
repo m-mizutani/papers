@@ -184,6 +184,9 @@ type applier struct {
 
 	paperChanged bool
 	titleChanged bool
+	// parentable caches, for this batch, whether the paper may have child
+	// papers (reading the workspace record once, not once per insert).
+	parentable *bool
 	// others are other papers this batch writes (children).
 	others map[model.PaperID]*model.Paper
 	// jobs are background jobs the batch stores; they run after it.
@@ -416,9 +419,14 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 		if a.paper.IsPrivate() {
 			return "", goerr.Wrap(model.ErrInvalidArgument, "a private paper has no child papers")
 		}
-		if ok, err := a.u.canHaveChildren(a.ctx, a.paper); err != nil {
-			return "", err
-		} else if !ok {
+		if a.parentable == nil {
+			ok, err := a.u.canHaveChildren(a.ctx, a.paper)
+			if err != nil {
+				return "", err
+			}
+			a.parentable = &ok
+		}
+		if !*a.parentable {
 			return "", goerr.Wrap(model.ErrInvalidArgument, "an unfiled paper has no child papers; move it under a parent first", goerr.V("paper_id", a.paper.ID))
 		}
 		title := ""

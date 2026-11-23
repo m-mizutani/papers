@@ -10,6 +10,7 @@ import (
 
 	"github.com/m-mizutani/gt"
 
+	"github.com/m-mizutani/papers/pkg/domain/interfaces"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 	"github.com/m-mizutani/papers/pkg/usecase"
 )
@@ -447,4 +448,24 @@ func TestRestoreUnfiledFromTrash(t *testing.T) {
 	gt.R1(e.uc.RestoreFromTrash(ctx, alice, wsA, kid.ID)).NoError(t)
 	gt.Equal(t, e.paper(t, wsA, kid.ID).ParentID, home)
 	gt.True(t, slices.Contains(paperBlocks(t, e, alice, wsA, home), kid.ID))
+}
+
+func TestUnfileUnderBusyParent(t *testing.T) {
+	// a paper whose parent is being moved stays where it is
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	runbooks := e.child(t, alice, wsA, "", "Runbooks")
+	kid := e.child(t, alice, wsA, string(runbooks.ID), "Kid")
+	gt.NoError(t, e.repo.RunTx(ctx, wsA, func(tx interfaces.Tx) error {
+		q, err := tx.GetPaper(runbooks.ID)
+		if err != nil {
+			return err
+		}
+		q.JobID = model.NewJobID()
+		return tx.PutPaper(q)
+	}))
+	_, err := e.uc.MovePaper(ctx, alice, wsA, kid.ID, usecase.MoveInput{Unfiled: true})
+	gt.True(t, errors.Is(err, model.ErrBusy))
+	gt.Equal(t, e.paper(t, wsA, kid.ID).ParentID, runbooks.ID)
 }

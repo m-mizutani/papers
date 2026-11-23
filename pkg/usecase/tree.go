@@ -376,6 +376,22 @@ func (u *UseCases) moveToUnfiled(ctx context.Context, p *model.Principal, paper 
 		if cur.ParentID == "" {
 			return nil // already unfiled
 		}
+		// Checked again in the transaction: a child paper inserted meanwhile
+		// adds a paper block to this body, which this read then conflicts with.
+		blocks, err := tx.Children(cur.ID, "")
+		if err != nil {
+			return goerr.Wrap(err, "failed to list blocks", goerr.V("paper_id", cur.ID))
+		}
+		if slices.ContainsFunc(blocks, func(b *model.Block) bool { return b.Type == model.BlockPaper }) {
+			return goerr.Wrap(model.ErrInvalidArgument, "only a paper without child papers can be unfiled", goerr.V("paper_id", paper.ID))
+		}
+		parent, err := tx.GetPaper(cur.ParentID)
+		if err != nil {
+			return goerr.Wrap(err, "failed to get parent", goerr.V("parent_id", cur.ParentID))
+		}
+		if parent.IsBusy() {
+			return busy(parent)
+		}
 		if err := w.removeBlockOf(ws, cur.ParentID, cur.ID); err != nil {
 			return err
 		}
