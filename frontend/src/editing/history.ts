@@ -65,6 +65,11 @@ export class History {
       topOnly.after = only.after
       return
     }
+    // Title saves while typing in the title field merge the same way.
+    if (session && top?.session === session && steps.length === 1 && top.steps.length === 1 && only?.k === 'title' && topOnly?.k === 'title') {
+      topOnly.after = only.after
+      return
+    }
     this.done.push({ steps, session })
     if (this.done.length > MAX) this.done.shift()
   }

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
-  blocks, body, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
+  blocks, body, call, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
 } from './helpers'
 import type { Block } from '../src/api/types'
 
@@ -201,7 +201,122 @@ test('T26 undo and redo step through typing, Enter and typing', async ({ page, r
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'start A|B', 'redone on the server')
 })
 
-test('T59 a click anywhere from the add line down continues the paper', async ({ page, request }) => {
+test('the title is sent while typing, without leaving the field', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Before') })
+  await call(request, 'PUT', `/workspaces/${WS}/papers/${paper.id}/favorite`, { after: null })
+  await openPaper(page, paper.id)
+  const title = unique('Typed')
+  await titleField(page).fill(title)
+  await expect(titleField(page)).toBeFocused()
+  // the breadcrumb follows at once; the server and the sidebar after a pause
+  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(title)
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(title)
+  await expect(page.locator('.sb').getByText(title)).not.toHaveCount(0)
+  await expect(titleField(page)).toBeFocused()
+
+  // the sends of one focus are one undo step back to the title before it
+  await titleField(page).press('End')
+  await titleField(page).pressSequentially(' more', { delay: 50 })
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(`${title} more`)
+  await titleField(page).blur()
+  await synced(page)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
+  await expect(titleField(page)).toHaveValue(paper.title)
+})
+
+test('a title typed back to what it was is sent even while the earlier send is on its way', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Back') })
+  await openPaper(page, paper.id)
+  // hold the first title send until the second one has been decided
+  let release: () => void = () => undefined
+  const held = new Promise<void>((r) => { release = r })
+  let first = true
+  await page.route(`**/papers/${paper.id}/ops`, async (route) => {
+    if (first) {
+      first = false
+      await held
+    }
+    await route.continue()
+  })
+  await titleField(page).click()
+  await titleField(page).press('End')
+  await titleField(page).pressSequentially('X')
+  await page.waitForTimeout(1000)
+  await titleField(page).press('Backspace')
+  await page.waitForTimeout(1000)
+  release()
+  // still in the field: the server ends with the title shown, not the held one
+  await synced(page)
+  await expect(titleField(page)).toBeFocused()
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
+})
+
+test('T59 typing and Enter keep every line shown while the server answers', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Steady'), markdown: 'first' })
+  await openPaper(page, paper.id)
+  // A slow server: the change feed and the answer both come well after the keys.
+  await page.route('**/ops', async (route) => {
+    await new Promise((r) => setTimeout(r, 500))
+    await route.continue()
+  })
+  // Every state the blocks pass through, so a flicker between two checks is caught.
+  await page.evaluate(() => {
+    const w = window as unknown as { shownStates: string[] }
+    w.shownStates = []
+    const root = document.querySelector('.blocks')
+    if (!root) throw new Error('no blocks')
+    const snap = () => [...root.querySelectorAll(':scope > .blk')]
+      .map((b) => `${b.classList.contains('editing') ? '*' : ''}${b.classList.contains('flash') ? '!' : ''}${(b.querySelector('.bd') as HTMLElement | null)?.innerText.trim() ?? ''}`).join('|')
+    new MutationObserver(() => w.shownStates.push(snap())).observe(root, { subtree: true, childList: true, characterData: true, attributes: true })
+  })
+
+  await editBlock(page, 0)
+  await page.keyboard.type(' typed')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('second')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('third')
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first typed|second|third', 'saved')
+  await expect(blocks(page).locator('.bd')).toHaveText(['first typed', 'second', 'third'])
+
+  const states = await page.evaluate(() => (window as unknown as { shownStates: string[] }).shownStates)
+  for (const s of states) {
+    const lines = s.split('|')
+    // a block that is not being edited shows the whole text typed into it
+    const left = lines.filter((l) => !l.startsWith('*')).map((l) => l.replace(/^!/, ''))
+    expect(left.filter((l) => !['first', 'first typed', 'second', 'third'].includes(l)), s).toEqual([])
+    if (lines.length > 1) expect(lines[0], s).not.toBe('first')
+    // no line shows twice, and my own lines do not flash as someone else's change
+    expect(lines.length, s).toBeLessThanOrEqual(3)
+    expect(new Set(left).size, s).toBe(left.length)
+    expect(lines.filter((l) => l.startsWith('!') || l.startsWith('*!')), s).toEqual([])
+  }
+})
+
+test('T60 going back into a block right after Enter keeps editing it without a conflict', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Back'), markdown: 'first' })
+  await openPaper(page, paper.id)
+  await page.route('**/ops', async (route) => {
+    await new Promise((r) => setTimeout(r, 500))
+    await route.continue()
+  })
+  await editBlock(page, 0)
+  await page.keyboard.type(' typed')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('ArrowUp')
+  await expect(blocks(page).nth(0)).toHaveClass(/editing/)
+  await expect(editor(page)).toHaveText('first typed')
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await page.waitForTimeout(1500)
+  await expect(page.locator('.conf')).toHaveCount(0)
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first typed!|', 'saved')
+})
+
+test('T61 a click anywhere from the add line down continues the paper', async ({ page, request }) => {
   // wide enough for an empty margin beside the column
   await page.setViewportSize({ width: 1400, height: 800 })
   const paper = await createPaper(request, { title: unique('Add area'), markdown: 'first' })
