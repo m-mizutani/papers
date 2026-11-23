@@ -66,51 +66,54 @@ func (r *Repository) GetForward(ctx context.Context, ws model.WorkspaceID, paper
 	return get[model.Forward](ctx, r.forwardDoc(ws, paper), "forward")
 }
 
-// --- pins and recents
+// --- favorites and recents
 
-func (r *Repository) pinsCol(user model.UserID) *firestore.CollectionRef {
-	return r.client.Collection(colUsers).Doc(string(user)).Collection(colPins)
+func (r *Repository) favoritesCol(user model.UserID) *firestore.CollectionRef {
+	return r.client.Collection(colUsers).Doc(string(user)).Collection(colFavorites)
 }
 
-func pinKey(ws model.WorkspaceID, paper model.PaperID) string {
+func favoriteKey(ws model.WorkspaceID, paper model.PaperID) string {
 	return string(ws) + "_" + string(paper)
 }
 
-func (r *Repository) ListPins(ctx context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Pin, error) {
+func (r *Repository) ListFavorites(ctx context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Favorite, error) {
 	if !validKeys(string(user), string(ws)) {
 		return nil, nil
 	}
-	col := r.pinsCol(user)
+	col := r.favoritesCol(user)
 	// Workspace IDs never contain '_' or '`', so this ID range covers
-	// exactly the pins of the workspace and needs no index.
+	// exactly the favorites of the workspace and needs no index.
 	it := col.Where(firestore.DocumentID, ">=", col.Doc(string(ws)+"_")).
 		Where(firestore.DocumentID, "<", col.Doc(string(ws)+"`")).Documents(ctx)
-	pins, err := all[model.Pin](it, "pins")
+	favorites, err := all[model.Favorite](it, "favorites")
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(pins, func(a, b *model.Pin) int {
+	slices.SortFunc(favorites, func(a, b *model.Favorite) int {
 		return cmp.Or(cmp.Compare(a.Order, b.Order), cmp.Compare(a.PaperID, b.PaperID))
 	})
-	return pins, nil
+	return favorites, nil
 }
 
-func (r *Repository) PutPin(ctx context.Context, pin *model.Pin) error {
-	if !validKeys(string(pin.UserID), string(pin.WorkspaceID), string(pin.PaperID)) {
-		return goerr.Wrap(model.ErrInvalidArgument, "invalid pin")
+func (r *Repository) PutFavorite(ctx context.Context, f *model.Favorite) error {
+	if err := f.Validate(); err != nil {
+		return err
 	}
-	if _, err := r.pinsCol(pin.UserID).Doc(pinKey(pin.WorkspaceID, pin.PaperID)).Set(ctx, pin); err != nil {
-		return goerr.Wrap(err, "failed to put pin")
+	if !validKeys(string(f.UserID), string(f.WorkspaceID), string(f.PaperID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid favorite")
+	}
+	if _, err := r.favoritesCol(f.UserID).Doc(favoriteKey(f.WorkspaceID, f.PaperID)).Set(ctx, f); err != nil {
+		return goerr.Wrap(err, "failed to put favorite")
 	}
 	return nil
 }
 
-func (r *Repository) DeletePin(ctx context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error {
+func (r *Repository) DeleteFavorite(ctx context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error {
 	if !validKeys(string(user), string(ws), string(paper)) {
 		return nil
 	}
-	if _, err := r.pinsCol(user).Doc(pinKey(ws, paper)).Delete(ctx); err != nil {
-		return goerr.Wrap(err, "failed to delete pin")
+	if _, err := r.favoritesCol(user).Doc(favoriteKey(ws, paper)).Delete(ctx); err != nil {
+		return goerr.Wrap(err, "failed to delete favorite")
 	}
 	return nil
 }
@@ -135,6 +138,30 @@ func (r *Repository) GetRecent(ctx context.Context, user model.UserID, ws model.
 		rec.PaperIDs = []model.PaperID{}
 	}
 	return rec, nil
+}
+
+// GetRecents reads the user's recent lists of several workspaces in one
+// round trip.
+func (r *Repository) GetRecents(ctx context.Context, user model.UserID, wss []model.WorkspaceID) ([]*model.Recent, error) {
+	if !validKeys(string(user)) {
+		return nil, nil
+	}
+	var refs []*firestore.DocumentRef
+	for _, ws := range wss {
+		if validKeys(string(ws)) {
+			refs = append(refs, r.recentDoc(user, ws))
+		}
+	}
+	out, err := getAll[model.Recent](ctx, r.client, refs, "recents")
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range out {
+		if rec.PaperIDs == nil {
+			rec.PaperIDs = []model.PaperID{}
+		}
+	}
+	return out, nil
 }
 
 func (r *Repository) PutRecent(ctx context.Context, rec *model.Recent) error {

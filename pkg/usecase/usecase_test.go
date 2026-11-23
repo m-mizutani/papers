@@ -125,6 +125,9 @@ func (e *env) home(t *testing.T, ws model.WorkspaceID) model.PaperID {
 // child creates a public paper under parent (the home when empty).
 func (e *env) child(t *testing.T, p *model.Principal, ws model.WorkspaceID, parent, title string) *model.Paper {
 	t.Helper()
+	if parent == "" {
+		parent = string(e.home(t, ws))
+	}
 	paper := gt.R1(e.uc.CreatePaper(context.Background(), p, ws, usecase.CreateInput{Title: title, Parent: parent})).NoError(t)
 	return paper
 }
@@ -160,8 +163,67 @@ type counting struct {
 	mu     sync.Mutex
 	papers int // GetPaper + GetPapers calls
 	blocks int
+	// calls counts the other reads by method name.
+	calls map[string]int
 	// failChildren makes the next calls of ListChildrenOf fail.
 	failChildren int
+}
+
+func (c *counting) called(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.calls == nil {
+		c.calls = map[string]int{}
+	}
+	c.calls[name]++
+}
+
+// reads is the number of repository reads since the last reset: papers,
+// blocks and every counted call.
+func (c *counting) reads() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.papers + c.blocks
+	for _, v := range c.calls {
+		n += v
+	}
+	return n
+}
+
+func (c *counting) callsOf(name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[name]
+}
+
+func (c *counting) GetWorkspaceRecord(ctx context.Context, ws model.WorkspaceID) (*model.WorkspaceRecord, error) {
+	c.called("GetWorkspaceRecord")
+	return c.Repository.GetWorkspaceRecord(ctx, ws)
+}
+
+func (c *counting) ListPapers(ctx context.Context, ws model.WorkspaceID, q model.PaperQuery) ([]*model.Paper, string, error) {
+	c.called("ListPapers")
+	return c.Repository.ListPapers(ctx, ws, q)
+}
+
+func (c *counting) GetPapersIn(ctx context.Context, keys []model.PaperKey) ([]*model.Paper, error) {
+	c.called("GetPapersIn")
+	return c.Repository.GetPapersIn(ctx, keys)
+}
+
+func (c *counting) ListFavorites(ctx context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Favorite, error) {
+	c.called("ListFavorites")
+	return c.Repository.ListFavorites(ctx, user, ws)
+}
+
+func (c *counting) GetRecent(ctx context.Context, user model.UserID, ws model.WorkspaceID) (*model.Recent, error) {
+	c.called("GetRecent")
+	return c.Repository.GetRecent(ctx, user, ws)
+}
+
+func (c *counting) GetRecents(ctx context.Context, user model.UserID, wss []model.WorkspaceID) ([]*model.Recent, error) {
+	c.called("GetRecents")
+	return c.Repository.GetRecents(ctx, user, wss)
 }
 
 func (c *counting) ListChildrenOf(ctx context.Context, ws model.WorkspaceID, parents []model.PaperID) ([]*model.Paper, error) {
@@ -180,7 +242,7 @@ func (c *counting) ListChildrenOf(ctx context.Context, ws model.WorkspaceID, par
 func (c *counting) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.papers, c.blocks = 0, 0
+	c.papers, c.blocks, c.calls = 0, 0, nil
 }
 
 func (c *counting) GetPaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (*model.Paper, error) {

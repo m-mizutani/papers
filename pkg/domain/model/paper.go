@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/base64"
 	"strings"
 	"time"
 
@@ -12,10 +13,11 @@ type Visibility string
 
 const (
 	// VisibilityPublic papers are readable and writable by everyone who can
-	// use the workspace. They live in the workspace's tree.
+	// use the workspace. They live in the workspace's tree, or are unfiled
+	// (no parent) until someone places them.
 	VisibilityPublic Visibility = "public"
 	// VisibilityPrivate papers are seen only by their creator. They stay out
-	// of the tree, in the creator's flat list.
+	// of the tree and show in the creator's papers list.
 	VisibilityPrivate Visibility = "private"
 )
 
@@ -38,13 +40,15 @@ const (
 )
 
 // Paper is a document: a title and an ordered list of blocks. A public paper
-// other than the home sits in exactly one parent's body as a paper block.
+// other than the home either sits in exactly one parent's body as a paper
+// block (filed), or has no parent (unfiled); unfiled and private papers
+// have no children.
 type Paper struct {
 	ID          PaperID     `json:"id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
 	Title       string      `json:"title"`
 	// ParentID is the paper whose body holds this paper's paper block. It
-	// is empty for the home and for private papers.
+	// is empty for the home, for unfiled papers and for private papers.
 	ParentID   PaperID    `json:"parent_id,omitempty"`
 	Visibility Visibility `json:"visibility"`
 	// VersionNumber is the latest saved version; 0 means a draft.
@@ -144,3 +148,105 @@ func (p *Paper) IsBusy() bool     { return p.JobID != "" }
 // Owner is the user the paper belongs to: the creator, or the user an agent
 // acted for.
 func (p *Paper) Owner() UserID { return p.CreatedBy.UserID }
+
+// PaperSort is the order of a papers list, newest first.
+type PaperSort string
+
+const (
+	SortUpdated PaperSort = "updated"
+	SortCreated PaperSort = "created"
+)
+
+func (s PaperSort) Validate() error {
+	switch s {
+	case SortUpdated, SortCreated:
+		return nil
+	}
+	return goerr.Wrap(ErrInvalidArgument, "sort must be updated or created", goerr.V("sort", s))
+}
+
+// TimeOf is the value of p the sort orders by.
+func (s PaperSort) TimeOf(p *Paper) time.Time {
+	if s == SortCreated {
+		return p.CreatedAt
+	}
+	return p.UpdatedAt
+}
+
+// MaxPaperListLimit bounds one read of a papers list.
+const MaxPaperListLimit = 100
+
+// PaperQuery is one read of the papers of a workspace, ordered by Sort
+// descending with ties broken by ID descending. Storage filters only on
+// what has an index; everything else is left to the caller.
+type PaperQuery struct {
+	// Unfiled keeps only papers without a parent (the home, unfiled and
+	// private papers).
+	Unfiled bool
+	// Creator keeps only papers this user created (or an agent created
+	// for them), when set.
+	Creator UserID
+	Sort    PaperSort
+	Limit   int
+	// Cursor continues after the paper a previous read ended with.
+	Cursor string
+}
+
+func (q PaperQuery) Validate() error {
+	if err := q.Sort.Validate(); err != nil {
+		return err
+	}
+	if q.Limit < 1 || q.Limit > MaxPaperListLimit {
+		return goerr.Wrap(ErrInvalidArgument, "limit out of range", goerr.V("limit", q.Limit), goerr.V("max", MaxPaperListLimit))
+	}
+	if q.Cursor != "" {
+		if _, err := ParsePaperCursor(q.Cursor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PaperCursor is a position in a papers list: the sort value and the ID of
+// the last paper read.
+type PaperCursor struct {
+	At time.Time
+	ID PaperID
+}
+
+// CursorOf is the cursor that continues a list sorted by s after p.
+func CursorOf(s PaperSort, p *Paper) string {
+	raw := s.TimeOf(p).UTC().Format(time.RFC3339Nano) + " " + string(p.ID)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// ParsePaperCursor reads a cursor made by CursorOf.
+func ParsePaperCursor(cursor string) (PaperCursor, error) {
+	bad := goerr.Wrap(ErrInvalidArgument, "invalid cursor", goerr.V("cursor", cursor))
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return PaperCursor{}, bad
+	}
+	at, id, ok := strings.Cut(string(raw), " ")
+	if !ok || !ValidID(id) {
+		return PaperCursor{}, bad
+	}
+	t, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return PaperCursor{}, bad
+	}
+	return PaperCursor{At: t, ID: PaperID(id)}, nil
+}
+
+// After reports whether p comes after the cursor in a list sorted by s
+// (newer first, then larger IDs first).
+func (c PaperCursor) After(s PaperSort, p *Paper) bool {
+	t := s.TimeOf(p)
+	return t.Before(c.At) || (t.Equal(c.At) && p.ID < c.ID)
+}
+
+// PaperKey names a paper across workspaces.
+type PaperKey struct {
+	WorkspaceID WorkspaceID
+	PaperID     PaperID
+}

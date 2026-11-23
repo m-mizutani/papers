@@ -1,79 +1,75 @@
-import { expect, test, type Page } from '@playwright/test'
-import { blocks, blocksOf, body, call, createPaper, editor, eventually, finishEditing, msg, openPaper, unique, WS } from './helpers'
-import type { Block } from '../src/api/types'
+import { expect, test } from '@playwright/test'
+import { agent, blocks, call, createPaper, editBlock, editor, eventually, msg, openPaper, synced, topBlocks, unique, WS } from './helpers'
 
-async function startEditing(page: Page, text: string) {
-  await blocks(page).nth(0).click()
-  await expect(editor(page)).toBeFocused()
-  await page.keyboard.press('ControlOrMeta+a')
-  await page.keyboard.type(text)
-}
-
-test('shows a change made elsewhere at once', async ({ page, request }) => {
-  const paper = await createPaper(request, { title: unique('Live'), markdown: 'existing' })
+test('T20 someone changes the block I am editing; "keep both" keeps theirs and adds mine below', async ({ page, request, playwright, baseURL }) => {
+  const paper = await createPaper(request, { title: unique('Conflict'), markdown: 'shared text' })
+  const other = await agent(playwright, request, baseURL ?? '')
   await openPaper(page, paper.id)
-  const [first] = await blocksOf(request, paper.id)
-  await call(request, 'POST', `/workspaces/${WS}/papers/${paper.id}/ops`, {
-    ops: [
-      { op: 'insert', type: 'paragraph', content: 'from elsewhere', after: first?.id },
-      { op: 'update', block_id: first?.id, base_rev: first?.rev, content: 'existing, edited' },
-    ],
-  })
-  await expect(blocks(page).filter({ hasText: 'from elsewhere' })).toBeVisible()
-  await expect(body(page, 0)).toHaveText('existing, edited')
+  const [b] = await topBlocks(request, paper.id)
+
+  await editBlock(page, 0)
+  await page.keyboard.type(' mine')
+  // their change lands before mine is sent (it waits for a pause in typing)
+  await call(other.api, 'POST', `/workspaces/${WS}/papers/${paper.id}/ops`, { ops: [{ op: 'update', block_id: b?.id, base_rev: b?.rev, content: 'theirs now' }] })
+
+  const conf = page.locator('.conf')
+  await expect(conf).toBeVisible()
+  await expect(conf).toContainText(msg('conflictTitle', { name: `${other.name} (${msg('forUser', { name: 'Developer' })})` }))
+  await expect(conf).toContainText('theirs now')
+  await expect(conf).toContainText('shared text mine')
+  await conf.getByRole('button', { name: msg('keepBoth') }).click()
+  await expect(conf).toHaveCount(0)
+
+  await expect(blocks(page).locator('.txt, .rich-editor')).toHaveText(['theirs now', 'shared text mine'])
+  await page.keyboard.press('Escape')
+  await synced(page)
+  const bs = await eventually(() => topBlocks(request, paper.id), (x) => x.length === 2, 'both kept')
+  expect(bs.map((x) => x.content)).toEqual(['theirs now', 'shared text mine'])
+  expect(bs[0]?.id).toBe(b?.id)
+  await other.api.dispose()
 })
 
-for (const choice of ['theirs', 'mine'] as const) {
-  test(`resolves a conflict by keeping ${choice}`, async ({ browser, request }) => {
-    const paper = await createPaper(request, { title: unique('Conflict'), markdown: 'original' })
-    const a = await (await browser.newContext({ locale: 'en-US' })).newPage()
-    const b = await (await browser.newContext({ locale: 'en-US' })).newPage()
-    await openPaper(a, paper.id)
-    await openPaper(b, paper.id)
-
-    // a starts editing; b changes the same block and saves first
-    await startEditing(a, 'from A')
-    await startEditing(b, 'from B')
-    await finishEditing(b)
-    await expect(a.locator('.updated-note')).toBeVisible()
-
-    // a saves: the change is based on an older revision
-    await a.keyboard.press('Escape')
-    const box = a.locator('.conflict')
-    await expect(box).toBeVisible()
-    await expect(box).toContainText('from B')
-    await box.getByRole('button', { name: choice === 'theirs' ? msg('conflictKeepTheirs') : msg('conflictOverwrite') }).click()
-    await expect(box).toHaveCount(0)
-
-    const want = choice === 'theirs' ? 'from B' : 'from A'
-    await expect(body(a, 0)).toHaveText(want)
-    await expect(body(b, 0)).toHaveText(want)
-    await eventually(() => blocksOf(request, paper.id), (bs: Block[]) => bs[0]?.content === want, 'saved')
-  })
-}
-
-test('lets an AI agent write with a token and marks its blocks', async ({ page, request, playwright }) => {
-  const paper = await createPaper(request, { title: unique('Agent'), markdown: 'by a person' })
-  await page.goto('/settings/tokens')
-  const name = unique('agent')
-  await page.getByLabel(msg('tokenName')).fill(name)
-  await page.getByRole('button', { name: msg('createToken') }).click()
-  await expect(page.getByText(msg('tokenCreated'))).toBeVisible()
-  const secret = (await page.locator('.secret pre').first().textContent())?.trim() ?? ''
-  expect(secret).toMatch(/^pap_/)
-
-  const agent = await playwright.request.newContext({ baseURL: test.info().project.use.baseURL, extraHTTPHeaders: { Authorization: `Bearer ${secret}` } })
+test('T21 someone deletes the block I am editing; "add as a new block" keeps my text', async ({ page, request, playwright, baseURL }) => {
+  const paper = await createPaper(request, { title: unique('Deleted'), markdown: 'before\n\ndoomed' })
+  const other = await agent(playwright, request, baseURL ?? '')
   await openPaper(page, paper.id)
-  const [first] = await blocksOf(request, paper.id)
-  const res = await agent.post(`/api/v1/workspaces/${WS}/papers/${paper.id}/ops`, { data: { ops: [{ op: 'insert', type: 'paragraph', content: 'by an agent', after: first?.id }] } })
-  expect(res.ok()).toBeTruthy()
-  await expect(page.locator('.block.by-agent', { hasText: 'by an agent' })).toBeVisible()
+  const [, b] = await topBlocks(request, paper.id)
 
-  // a revoked token stops working
-  await page.goto('/settings/tokens')
-  await page.locator('.token-row', { hasText: name }).getByRole('button', { name: msg('revoke') }).click()
-  await expect(page.locator('.token-row', { hasText: name })).toHaveCount(0)
-  const denied = await agent.get(`/api/v1/workspaces/${WS}/papers/${paper.id}`)
-  expect(denied.status()).toBe(401)
-  await agent.dispose()
+  await editBlock(page, 1)
+  await page.keyboard.type(' but mine')
+  await call(other.api, 'POST', `/workspaces/${WS}/papers/${paper.id}/ops`, { ops: [{ op: 'delete', block_id: b?.id, base_rev: b?.rev }] })
+
+  const conf = page.locator('.conf')
+  await expect(conf).toBeVisible()
+  await expect(conf).toContainText('doomed but mine')
+  await conf.getByRole('button', { name: msg('addAsNew') }).click()
+  await expect(conf).toHaveCount(0)
+  await expect(editor(page)).toHaveText('doomed but mine')
+  await page.keyboard.press('Escape')
+  await synced(page)
+
+  const bs = await eventually(() => topBlocks(request, paper.id), (x) => x.length === 2 && x[1]?.content === 'doomed but mine', 'my text kept')
+  expect(bs[0]?.content).toBe('before')
+  expect(bs[1]?.id).not.toBe(b?.id)
+  await expect(blocks(page).locator('.txt')).toHaveText(['before', 'doomed but mine'])
+  await other.api.dispose()
+})
+
+test('T22 presence from another session shows a name tag on the block', async ({ page, request, playwright, baseURL }) => {
+  const paper = await createPaper(request, { title: unique('Presence'), markdown: 'one\n\ntwo' })
+  const other = await agent(playwright, request, baseURL ?? '', 'Scribe')
+  await openPaper(page, paper.id)
+  const [, b] = await topBlocks(request, paper.id)
+
+  await call(other.api, 'POST', `/workspaces/${WS}/papers/${paper.id}/presence`, { block_id: b?.id, leaving: false })
+  const tag = blocks(page).nth(1).locator('.ptag')
+  await expect(tag).toHaveText(`✦ ${msg('editing', { name: other.name })}`)
+  await expect(blocks(page).nth(1)).toHaveClass(/pres/)
+  await expect(blocks(page).nth(0).locator('.ptag')).toHaveCount(0)
+  await expect(page.locator('.faces .face.ai')).toHaveCount(1)
+
+  // leaving takes the tag away
+  await call(other.api, 'POST', `/workspaces/${WS}/papers/${paper.id}/presence`, { block_id: b?.id, leaving: true })
+  await expect(tag).toHaveCount(0)
+  await other.api.dispose()
 })

@@ -1,6 +1,8 @@
 package model_test
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -126,4 +128,71 @@ func TestBlockTypeTraits(t *testing.T) {
 	gt.True(t, model.BlockParagraph.UsesMarkup())
 	gt.False(t, model.BlockCode.UsesMarkup())
 	gt.True(t, model.BlockPaper.HumanEditable())
+}
+
+func TestBlockPropsFieldsNormalize(t *testing.T) {
+	// T10: fields stay on html and svg and are dropped elsewhere
+	p := model.BlockProps{Height: 300, Fields: map[string]string{"rto": "15m", "rpo": "5m"}}
+	for _, bt := range []model.BlockType{model.BlockHTML, model.BlockSVG} {
+		n := p.Normalize(bt)
+		gt.Equal(t, n.Fields, p.Fields)
+		gt.True(t, n.Equal(p))
+		gt.True(t, bt.HasFields())
+	}
+	for _, bt := range model.BlockTypes() {
+		if bt.HasFields() {
+			continue
+		}
+		gt.Nil(t, p.Normalize(bt).Fields)
+	}
+	// a copy: changing the result leaves the input alone
+	n := p.Normalize(model.BlockHTML)
+	n.Fields["rto"] = "10m"
+	gt.Equal(t, p.Fields["rto"], "15m")
+	// empty fields are no fields
+	gt.Nil(t, model.BlockProps{Fields: map[string]string{}}.Normalize(model.BlockHTML).Fields)
+	// a changed value is a change of contents
+	gt.False(t, n.Equal(p))
+	gt.True(t, model.BlockProps{}.Equal(model.BlockProps{Fields: map[string]string{}}))
+
+	b := validBlock()
+	b.Type, b.Content, b.Props = model.BlockHTML, "<p data-field=\"rto\">15m</p>", p.Normalize(model.BlockHTML)
+	c := b.Clone()
+	c.Props.Fields["rto"] = "1m"
+	gt.Equal(t, b.Props.Fields["rto"], "15m")
+	gt.False(t, model.SameContents(b, c))
+}
+
+func TestBlockPropsFieldsValidate(t *testing.T) {
+	// T11: bad names, too many fields, long values and line breaks
+	html := func(fields map[string]string) *model.Block {
+		b := validBlock()
+		b.Type, b.Content, b.Props = model.BlockSVG, "<svg></svg>", model.BlockProps{Fields: fields}
+		return b
+	}
+	gt.NoError(t, html(map[string]string{"rto": "15m", "a_1": "", "z" + strings.Repeat("9", 31): "x"}).Validate())
+	many := map[string]string{}
+	for i := range model.MaxFields {
+		many["f"+strconv.Itoa(i)] = "v"
+	}
+	gt.NoError(t, html(many).Validate())
+	gt.NoError(t, html(map[string]string{"v": strings.Repeat("x", model.MaxFieldValueLength)}).Validate())
+	gt.NoError(t, html(map[string]string{"v": strings.Repeat("あ", model.MaxFieldValueLength/3)}).Validate())
+
+	many["f32"] = "v"
+	bad := []map[string]string{
+		{"Bad-Key": "x"},
+		{"1abc": "x"},
+		{"": "x"},
+		{"a" + strings.Repeat("b", 32): "x"},
+		many,
+		{"v": strings.Repeat("x", model.MaxFieldValueLength+1)},
+		{"v": "two\nlines"},
+		{"v": "carriage\rreturn"},
+		{"v": "\xff"},
+	}
+	for _, f := range bad {
+		err := html(f).Validate()
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	}
 }

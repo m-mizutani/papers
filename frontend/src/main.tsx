@@ -4,9 +4,11 @@ import { BrowserRouter, MemoryRouter } from 'react-router'
 import { App } from './App'
 import { detectLang } from './i18n'
 import { isDemo } from './utils/demo'
+import { applyTheme, storedTheme } from './utils/prefs'
 import './styles/global.css'
 
 document.documentElement.lang = detectLang()
+applyTheme(storedTheme())
 
 async function start() {
   if (isDemo) {

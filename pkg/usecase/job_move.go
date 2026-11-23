@@ -401,8 +401,10 @@ func (u *UseCases) attachStep(ctx context.Context, j *model.Job) error {
 		if err != nil {
 			return goerr.Wrap(err, "the new parent is gone", goerr.V("paper_id", j.Target.ParentID))
 		}
-		if np.IsPrivate() || np.IsTrashed() {
-			return goerr.Wrap(model.ErrInvalidArgument, "the new parent must be a public paper that is not in the trash")
+		if ok, err := u.canHaveChildren(ctx, np); err != nil {
+			return err
+		} else if !ok || np.IsTrashed() {
+			return goerr.Wrap(model.ErrInvalidArgument, "the new parent must be the home or a filed paper that is not in the trash")
 		}
 		if np.IsBusy() {
 			return busy(np)

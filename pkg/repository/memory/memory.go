@@ -25,7 +25,7 @@ type paperKey struct {
 	paper model.PaperID
 }
 
-type pinKey struct {
+type userWorkspaceKey struct {
 	user model.UserID
 	ws   model.WorkspaceID
 }
@@ -62,8 +62,8 @@ type Repository struct {
 	records    map[model.WorkspaceID]*model.WorkspaceRecord
 	forwards   map[paperKey]*model.Forward
 	papers     map[paperKey]*paperData
-	pins       map[pinKey]map[model.PaperID]*model.Pin
-	recents    map[pinKey]*model.Recent
+	favorites  map[userWorkspaceKey]map[model.PaperID]*model.Favorite
+	recents    map[userWorkspaceKey]*model.Recent
 	jobs       map[jobKey]*model.Job
 	jobItems   map[jobKey]map[model.PaperID]*model.JobItem
 
@@ -88,8 +88,8 @@ func New(opts ...Option) *Repository {
 		records:     map[model.WorkspaceID]*model.WorkspaceRecord{},
 		forwards:    map[paperKey]*model.Forward{},
 		papers:      map[paperKey]*paperData{},
-		pins:        map[pinKey]map[model.PaperID]*model.Pin{},
-		recents:     map[pinKey]*model.Recent{},
+		favorites:   map[userWorkspaceKey]map[model.PaperID]*model.Favorite{},
+		recents:     map[userWorkspaceKey]*model.Recent{},
 		jobs:        map[jobKey]*model.Job{},
 		jobItems:    map[jobKey]map[model.PaperID]*model.JobItem{},
 		watchers:    map[paperKey]map[int]chan *model.Event{},
@@ -325,55 +325,67 @@ func (r *Repository) GetForward(_ context.Context, ws model.WorkspaceID, paper m
 	return clone(f), nil
 }
 
-// --- pins and recents
+// --- favorites and recents
 
-func (r *Repository) ListPins(_ context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Pin, error) {
+func (r *Repository) ListFavorites(_ context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Favorite, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var out []*model.Pin
-	for _, p := range r.pins[pinKey{user, ws}] {
-		out = append(out, clone(p))
+	var out []*model.Favorite
+	for _, f := range r.favorites[userWorkspaceKey{user, ws}] {
+		out = append(out, clone(f))
 	}
-	slices.SortFunc(out, func(a, b *model.Pin) int {
+	slices.SortFunc(out, func(a, b *model.Favorite) int {
 		return cmp.Or(cmp.Compare(a.Order, b.Order), cmp.Compare(a.PaperID, b.PaperID))
 	})
 	return out, nil
 }
 
-func (r *Repository) PutPin(_ context.Context, pin *model.Pin) error {
-	if pin.UserID == "" || pin.WorkspaceID == "" || pin.PaperID == "" || !model.ValidOrderKey(pin.Order) {
-		return goerr.Wrap(model.ErrInvalidArgument, "invalid pin")
+func (r *Repository) PutFavorite(_ context.Context, f *model.Favorite) error {
+	if err := f.Validate(); err != nil {
+		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	k := pinKey{pin.UserID, pin.WorkspaceID}
-	if r.pins[k] == nil {
-		r.pins[k] = map[model.PaperID]*model.Pin{}
+	k := userWorkspaceKey{f.UserID, f.WorkspaceID}
+	if r.favorites[k] == nil {
+		r.favorites[k] = map[model.PaperID]*model.Favorite{}
 	}
-	r.pins[k][pin.PaperID] = clone(pin)
+	r.favorites[k][f.PaperID] = clone(f)
 	return nil
 }
 
-func (r *Repository) DeletePin(_ context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error {
+func (r *Repository) DeleteFavorite(_ context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.pins[pinKey{user, ws}], paper)
+	delete(r.favorites[userWorkspaceKey{user, ws}], paper)
 	return nil
 }
 
 func (r *Repository) GetRecent(_ context.Context, user model.UserID, ws model.WorkspaceID) (*model.Recent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if rec, ok := r.recents[pinKey{user, ws}]; ok {
+	if rec, ok := r.recents[userWorkspaceKey{user, ws}]; ok {
 		return clone(rec), nil
 	}
 	return &model.Recent{UserID: user, WorkspaceID: ws, PaperIDs: []model.PaperID{}}, nil
 }
 
+func (r *Repository) GetRecents(_ context.Context, user model.UserID, wss []model.WorkspaceID) ([]*model.Recent, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*model.Recent
+	for _, ws := range wss {
+		if rec, ok := r.recents[userWorkspaceKey{user, ws}]; ok {
+			out = append(out, clone(rec))
+		}
+	}
+	return out, nil
+}
+
 func (r *Repository) PutRecent(_ context.Context, rec *model.Recent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.recents[pinKey{rec.UserID, rec.WorkspaceID}] = clone(rec)
+	r.recents[userWorkspaceKey{rec.UserID, rec.WorkspaceID}] = clone(rec)
 	return nil
 }
 

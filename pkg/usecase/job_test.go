@@ -182,7 +182,7 @@ func TestMoveAcrossInStepsKeepsOriginalsReadOnly(t *testing.T) {
 	att := gt.R1(e.uc.Upload(ctx, alice, wsA, all[1].ID, usecase.UploadInput{Name: "x.png", ContentType: "image/png", Body: strings.NewReader("png")})).NoError(t)
 	e.apply(t, alice, wsA, all[1].ID, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockImage), Props: &model.BlockProps{AttachmentID: att.ID}})
 
-	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB, Parent: string(e.home(t, wsB))})).NoError(t)
 	j := started(t, e, wsA)
 
 	// once collected, the originals cannot be written and are not found
@@ -282,12 +282,12 @@ func TestMoveAcrossStopsAtAnotherMove(t *testing.T) {
 	other := e.child(t, bob, wsA, string(mid.ID), "other")
 
 	// bob's move of his paper has marked it
-	gt.R1(e.uc.MovePaper(ctx, bob, wsA, other.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, bob, wsA, other.ID, usecase.MoveInput{Workspace: wsB, Parent: string(e.home(t, wsB))})).NoError(t)
 	first := started(t, e, wsA)
 	stepUntil(t, e, wsA, first.ID, func(j *model.Job) bool { return j.Phase == model.PhaseCopy })
 
 	// alice's move of the tree above it fails and lets go of her papers
-	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB, Parent: string(e.home(t, wsB))})).NoError(t)
 	second := started(t, e, wsA, first)
 	got := stepUntil(t, e, wsA, second.ID, func(*model.Job) bool { return false })
 	gt.Equal(t, got.State, model.JobFailed)
@@ -344,4 +344,38 @@ func TestRestoreVersionBringsBackTrashedChildWithItsSubtree(t *testing.T) {
 	gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
 	gt.False(t, e.paper(t, wsA, kid.ID).IsTrashed())
 	gt.False(t, e.paper(t, wsA, grand.ID).IsTrashed())
+}
+
+func TestRestoreVersionIntoUnfiledPaper(t *testing.T) {
+	// a version brings back every child still in the trash, even into a
+	// paper that is unfiled now; a child gone for good is not restored, and
+	// the version view says so before restoring
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	parent := e.child(t, alice, wsA, "", "parent")
+	kid := e.child(t, alice, wsA, string(parent.ID), "kid")
+	gone := e.child(t, alice, wsA, string(parent.ID), "gone")
+	gt.R1(e.uc.SaveVersion(ctx, alice, wsA, parent.ID, "with kids")).NoError(t)
+
+	gt.R1(e.uc.Trash(ctx, alice, wsA, kid.ID)).NoError(t)
+	gt.R1(e.uc.Trash(ctx, alice, wsA, gone.ID)).NoError(t)
+	gt.NoError(t, e.repo.PurgePaper(ctx, wsA, gone.ID))
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, parent.ID, usecase.MoveInput{Unfiled: true})).NoError(t)
+
+	view := gt.R1(e.uc.GetVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
+	outcomes := map[model.PaperID]string{}
+	for _, c := range view.Children {
+		outcomes[c.PaperID] = c.Outcome
+	}
+	gt.Equal(t, outcomes[kid.ID], usecase.ChildFromTrash)
+	gt.Equal(t, outcomes[gone.ID], usecase.ChildMissing)
+
+	res := gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
+	got := e.paper(t, wsA, kid.ID)
+	gt.False(t, got.IsTrashed())
+	gt.Equal(t, got.ParentID, parent.ID)
+	gt.Equal(t, e.paper(t, wsA, parent.ID).ParentID, model.PaperID(""))
+	gt.A(t, res.NotRestored).Length(1)
+	gt.Equal(t, res.NotRestored[0].Reason, "missing")
 }

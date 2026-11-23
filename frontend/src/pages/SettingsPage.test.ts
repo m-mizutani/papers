@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mcpConfig } from './TokensPage'
+import { mcpConfig } from './SettingsPage'
 
 describe('mcpConfig', () => {
   it('builds a Claude Code command', () => {

@@ -49,12 +49,23 @@ func (a *Attachment) Validate() error {
 	return nil
 }
 
-// Pin is a paper a user keeps in the sidebar of a workspace.
-type Pin struct {
+// Favorite is a public paper a user keeps in the sidebar of a workspace.
+// It is personal: no one else sees it.
+type Favorite struct {
 	UserID      UserID      `json:"user_id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
 	PaperID     PaperID     `json:"paper_id"`
 	Order       string      `json:"order"`
+}
+
+func (f *Favorite) Validate() error {
+	if f.UserID == "" || f.WorkspaceID == "" || !ValidID(string(f.PaperID)) {
+		return goerr.Wrap(ErrInvalidArgument, "favorite needs a user, a workspace and a paper", goerr.V("paper_id", f.PaperID))
+	}
+	if !ValidOrderKey(f.Order) {
+		return goerr.Wrap(ErrInvalidArgument, "invalid favorite order key", goerr.V("order", f.Order))
+	}
+	return nil
 }
 
 // Recent is the list of papers a user opened recently in a workspace.

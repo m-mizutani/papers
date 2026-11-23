@@ -1,6 +1,8 @@
 package model
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -67,8 +69,8 @@ func SearchText(b *Block) string {
 	switch {
 	case b.Type == BlockDivider || b.Type == BlockTable || b.Type == BlockPaper:
 		return ""
-	case b.Type == BlockHTML || b.Type == BlockSVG:
-		return markupText(b.Content)
+	case b.Type.HasFields():
+		return strings.TrimSpace(markupText(b.Content) + " " + fieldText(b.Props.Fields))
 	case b.Type.UsesMarkup():
 		// index only what readers see: [always]{.red} is "always"
 		return strings.TrimSpace(markup.PlainText(b.Content))
@@ -102,6 +104,19 @@ func markupText(src string) string {
 			}
 		}
 	}
+}
+
+// fieldText joins the values of an html or svg block's fields, in the
+// order of their names so that the entry is the same on every write.
+func fieldText(fields map[string]string) string {
+	names := slices.Sorted(maps.Keys(fields))
+	values := make([]string, 0, len(names))
+	for _, n := range names {
+		if v := strings.Join(strings.Fields(fields[n]), " "); v != "" {
+			values = append(values, v)
+		}
+	}
+	return strings.Join(values, " ")
 }
 
 func isHiddenTag(name []byte) bool {

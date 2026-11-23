@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/m-mizutani/goerr/v2"
 
@@ -40,10 +41,22 @@ func listed(p *model.Principal, q *model.Paper) bool {
 type WorkspaceView struct {
 	*model.Workspace
 	HomePaperID model.PaperID `json:"home_paper_id"`
+	// LastOpened is the paper the principal opened last in the workspace,
+	// nil when there is none or it can no longer be shown. Only
+	// ListWorkspaces fills it.
+	LastOpened *LastOpened `json:"last_opened"`
+}
+
+// LastOpened is where the principal left off in a workspace.
+type LastOpened struct {
+	PaperID  model.PaperID `json:"paper_id"`
+	Title    string        `json:"title"`
+	OpenedAt time.Time     `json:"opened_at"`
 }
 
 // ListWorkspaces lists the workspaces the principal may use, in display
-// order, with the display groups.
+// order, with the display groups and the paper last opened in each. The
+// recent lists and their papers are read with one batch read each.
 func (u *UseCases) ListWorkspaces(ctx context.Context, p *model.Principal) ([]*WorkspaceView, []model.WorkspaceGroup, error) {
 	if err := requirePrincipal(p); err != nil {
 		return nil, nil, err
@@ -61,6 +74,9 @@ func (u *UseCases) ListWorkspaces(ctx context.Context, p *model.Principal) ([]*W
 		allowed[w.ID] = true
 		out = append(out, &WorkspaceView{Workspace: w, HomePaperID: home})
 	}
+	if err := u.fillLastOpened(ctx, p, out); err != nil {
+		return nil, nil, err
+	}
 	var groups []model.WorkspaceGroup
 	for _, g := range u.workspaces.Groups() {
 		g.Workspaces = slices.DeleteFunc(g.Workspaces, func(id model.WorkspaceID) bool { return !allowed[id] })
@@ -69,6 +85,51 @@ func (u *UseCases) ListWorkspaces(ctx context.Context, p *model.Principal) ([]*W
 		}
 	}
 	return out, groups, nil
+}
+
+// fillLastOpened sets LastOpened of each view from the principal's recent
+// lists: one batch read of the lists and one of their first papers.
+func (u *UseCases) fillLastOpened(ctx context.Context, p *model.Principal, views []*WorkspaceView) error {
+	if len(views) == 0 {
+		return nil
+	}
+	wss := make([]model.WorkspaceID, 0, len(views))
+	for _, v := range views {
+		wss = append(wss, v.ID)
+	}
+	recents, err := u.repo.GetRecents(ctx, p.User.ID, wss)
+	if err != nil {
+		return goerr.Wrap(err, "failed to read recent papers")
+	}
+	last := map[model.WorkspaceID]*model.Recent{}
+	var keys []model.PaperKey
+	for _, r := range recents {
+		if len(r.PaperIDs) > 0 {
+			last[r.WorkspaceID] = r
+			keys = append(keys, model.PaperKey{WorkspaceID: r.WorkspaceID, PaperID: r.PaperIDs[0]})
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	papers, err := u.repo.GetPapersIn(ctx, keys)
+	if err != nil {
+		return goerr.Wrap(err, "failed to read recent papers")
+	}
+	byKey := map[model.PaperKey]*model.Paper{}
+	for _, q := range papers {
+		byKey[model.PaperKey{WorkspaceID: q.WorkspaceID, PaperID: q.ID}] = q
+	}
+	for _, v := range views {
+		r, ok := last[v.ID]
+		if !ok {
+			continue
+		}
+		if q, ok := byKey[model.PaperKey{WorkspaceID: v.ID, PaperID: r.PaperIDs[0]}]; ok && listed(p, q) {
+			v.LastOpened = &LastOpened{PaperID: q.ID, Title: q.Title, OpenedAt: r.UpdatedAt}
+		}
+	}
+	return nil
 }
 
 func (u *UseCases) GetWorkspace(ctx context.Context, p *model.Principal, ws model.WorkspaceID) (*WorkspaceView, error) {
@@ -231,11 +292,20 @@ func (u *UseCases) ListChildren(ctx context.Context, p *model.Principal, ws mode
 
 // Sidebar is what the side navigation shows for a workspace.
 type Sidebar struct {
-	Home    *PaperRef   `json:"home"`
-	Pins    []*PaperRef `json:"pins"`
-	Recent  []*PaperRef `json:"recent"`
-	Private []*PaperRef `json:"private"`
+	Home      *PaperRef   `json:"home"`
+	Favorites []*PaperRef `json:"favorites"`
+	Recent    []*PaperRef `json:"recent"`
+	// UnfiledCount is the number of the principal's own unfiled and
+	// private papers, counted up to MaxUnfiledCount (which then means "at
+	// least that many").
+	UnfiledCount int `json:"unfiled_count"`
 }
+
+// MaxUnfiledCount caps Sidebar.UnfiledCount.
+const MaxUnfiledCount = 100
+
+// maxListReads bounds the queries one papers list (or count) makes.
+const maxListReads = 5
 
 func (u *UseCases) Sidebar(ctx context.Context, p *model.Principal, ws model.WorkspaceID) (*Sidebar, error) {
 	if _, err := u.workspaceFor(ctx, p, ws); err != nil {
@@ -245,17 +315,17 @@ func (u *UseCases) Sidebar(ctx context.Context, p *model.Principal, ws model.Wor
 	if err != nil {
 		return nil, err
 	}
-	pins, err := u.repo.ListPins(ctx, p.User.ID, ws)
+	favorites, err := u.repo.ListFavorites(ctx, p.User.ID, ws)
 	if err != nil {
-		return nil, goerr.Wrap(err, "failed to list pins")
+		return nil, goerr.Wrap(err, "failed to list favorites")
 	}
 	rec, err := u.repo.GetRecent(ctx, p.User.ID, ws)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to get recent papers")
 	}
 	ids := []model.PaperID{homeID}
-	for _, pin := range pins {
-		ids = append(ids, pin.PaperID)
+	for _, f := range favorites {
+		ids = append(ids, f.PaperID)
 	}
 	ids = append(ids, rec.PaperIDs...)
 	papers, err := u.repo.GetPapers(ctx, ws, ids)
@@ -266,13 +336,13 @@ func (u *UseCases) Sidebar(ctx context.Context, p *model.Principal, ws model.Wor
 	for _, q := range papers {
 		byID[q.ID] = q
 	}
-	sb := &Sidebar{Pins: []*PaperRef{}, Recent: []*PaperRef{}, Private: []*PaperRef{}}
+	sb := &Sidebar{Favorites: []*PaperRef{}, Recent: []*PaperRef{}}
 	if h, ok := byID[homeID]; ok {
 		sb.Home = refOf(h)
 	}
-	for _, pin := range pins {
-		if q, ok := byID[pin.PaperID]; ok && p.SeesPaper(q) && !q.IsTrashed() {
-			sb.Pins = append(sb.Pins, refOf(q))
+	for _, f := range favorites {
+		if q, ok := byID[f.PaperID]; ok && p.SeesPaper(q) && !q.IsTrashed() && !q.IsPrivate() {
+			sb.Favorites = append(sb.Favorites, refOf(q))
 		}
 	}
 	for _, id := range rec.PaperIDs {
@@ -280,16 +350,236 @@ func (u *UseCases) Sidebar(ctx context.Context, p *model.Principal, ws model.Wor
 			sb.Recent = append(sb.Recent, refOf(q))
 		}
 	}
-	priv, err := u.repo.ListPrivatePapers(ctx, ws, p.User.ID)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to list private papers")
-	}
-	for _, q := range priv {
-		if !q.IsArchived() {
-			sb.Private = append(sb.Private, refOf(q))
-		}
+	if sb.UnfiledCount, err = u.countUnfiled(ctx, p, ws, homeID); err != nil {
+		return nil, err
 	}
 	return sb, nil
+}
+
+// countUnfiled counts the principal's own unfiled and private papers that
+// are neither archived, trashed nor being moved, reading at most
+// MaxUnfiledCount of them per query and stopping at MaxUnfiledCount.
+func (u *UseCases) countUnfiled(ctx context.Context, p *model.Principal, ws model.WorkspaceID, home model.PaperID) (int, error) {
+	n, cursor := 0, ""
+	for range maxListReads {
+		got, next, err := u.repo.ListPapers(ctx, ws, model.PaperQuery{
+			Unfiled: true, Creator: p.User.ID, Sort: model.SortUpdated, Limit: MaxUnfiledCount, Cursor: cursor,
+		})
+		if err != nil {
+			return 0, goerr.Wrap(err, "failed to list unfiled papers")
+		}
+		for _, q := range got {
+			if q.ID != home && listed(p, q) && !q.IsBusy() {
+				n++
+			}
+		}
+		if n >= MaxUnfiledCount {
+			return MaxUnfiledCount, nil
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	return n, nil
+}
+
+// PaperPlace narrows a papers list by where the papers are.
+type PaperPlace string
+
+const (
+	// PlaceUnfiled is the papers outside the tree: unfiled papers and
+	// private papers.
+	PlaceUnfiled PaperPlace = "unfiled"
+	// PlaceFiled is the papers in the tree, other than the home.
+	PlaceFiled PaperPlace = "filed"
+	PlaceAll   PaperPlace = "all"
+)
+
+// PaperCreator narrows a papers list by who created the papers.
+type PaperCreator string
+
+const (
+	CreatorMe  PaperCreator = "me"
+	CreatorAll PaperCreator = "all"
+)
+
+// VisibilityAll lists public and private papers together.
+const VisibilityAll model.Visibility = "all"
+
+// ListPapersInput is one page of the papers list. Empty values take the
+// defaults: unfiled, mine, any visibility, without archived papers, by
+// update, 50 papers.
+type ListPapersInput struct {
+	Place      PaperPlace
+	Creator    PaperCreator
+	Visibility model.Visibility
+	Archived   bool
+	Sort       model.PaperSort
+	Limit      int
+	Cursor     string
+}
+
+// DefaultPaperListLimit is the page size of a papers list when none is
+// given.
+const DefaultPaperListLimit = 50
+
+func (in *ListPapersInput) normalize() error {
+	if in.Place == "" {
+		in.Place = PlaceUnfiled
+	}
+	if in.Creator == "" {
+		in.Creator = CreatorMe
+	}
+	if in.Visibility == "" {
+		in.Visibility = VisibilityAll
+	}
+	if in.Sort == "" {
+		in.Sort = model.SortUpdated
+	}
+	if in.Limit == 0 {
+		in.Limit = DefaultPaperListLimit
+	}
+	switch in.Place {
+	case PlaceUnfiled, PlaceFiled, PlaceAll:
+	default:
+		return goerr.Wrap(model.ErrInvalidArgument, "place must be unfiled, filed or all", goerr.V("place", in.Place))
+	}
+	switch in.Creator {
+	case CreatorMe, CreatorAll:
+	default:
+		return goerr.Wrap(model.ErrInvalidArgument, "creator must be me or all", goerr.V("creator", in.Creator))
+	}
+	if in.Visibility != VisibilityAll {
+		if err := in.Visibility.Validate(); err != nil {
+			return goerr.Wrap(model.ErrInvalidArgument, "visibility must be all, public or private", goerr.V("visibility", in.Visibility))
+		}
+	}
+	if err := in.Sort.Validate(); err != nil {
+		return err
+	}
+	if in.Limit < 1 || in.Limit > model.MaxPaperListLimit {
+		return goerr.Wrap(model.ErrInvalidArgument, "limit must be between 1 and 100", goerr.V("limit", in.Limit))
+	}
+	if in.Cursor != "" {
+		if _, err := model.ParsePaperCursor(in.Cursor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ParentRef is the parent shown next to a paper in a list.
+type ParentRef struct {
+	ID    model.PaperID `json:"id"`
+	Title string        `json:"title"`
+}
+
+// ListedPaper is one row of the papers list.
+type ListedPaper struct {
+	*PaperRef
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	Parent    *ParentRef `json:"parent"`
+}
+
+// PapersPage is one page of the papers list.
+type PapersPage struct {
+	Papers []*ListedPaper `json:"papers"`
+	// NextCursor continues the list; "" at the end.
+	NextCursor string `json:"next_cursor"`
+}
+
+// ListPapers reads one page of the workspace's papers list. Storage filters
+// only on "unfiled" and "mine"; the home, trashed and moving papers, papers
+// the principal may not see, the wrong visibility or place and (unless
+// asked) archived papers are dropped here. Each query asks for twice the
+// page size, and reading goes on until the page is full or maxListReads
+// queries were made; the parents' titles come from one batch read.
+func (u *UseCases) ListPapers(ctx context.Context, p *model.Principal, ws model.WorkspaceID, in ListPapersInput) (*PapersPage, error) {
+	if _, err := u.workspaceFor(ctx, p, ws); err != nil {
+		return nil, err
+	}
+	if err := in.normalize(); err != nil {
+		return nil, err
+	}
+	homeID, err := u.homeID(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	q := model.PaperQuery{Unfiled: in.Place == PlaceUnfiled, Sort: in.Sort, Limit: min(in.Limit*2, model.MaxPaperListLimit), Cursor: in.Cursor}
+	if in.Creator == CreatorMe {
+		q.Creator = p.User.ID
+	}
+	keep := func(x *model.Paper) bool {
+		switch {
+		case x.ID == homeID, x.IsTrashed(), x.IsBusy(), !p.SeesPaper(x):
+			return false
+		case !in.Archived && x.IsArchived():
+			return false
+		case in.Visibility != VisibilityAll && x.Visibility != in.Visibility:
+			return false
+		case in.Place == PlaceFiled && x.ParentID == "":
+			return false
+		}
+		return true
+	}
+	var picked []*model.Paper
+	next := ""
+	for range maxListReads {
+		got, more, err := u.repo.ListPapers(ctx, ws, q)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to list papers")
+		}
+		next = more
+		for i, x := range got {
+			if !keep(x) {
+				continue
+			}
+			picked = append(picked, x)
+			if len(picked) == in.Limit {
+				// the page is full: continue right after this paper,
+				// unless it was the last one there is
+				next = ""
+				if i < len(got)-1 || more != "" {
+					next = model.CursorOf(in.Sort, x)
+				}
+				break
+			}
+		}
+		if len(picked) == in.Limit || next == "" {
+			break
+		}
+		q.Cursor = next
+	}
+
+	page := &PapersPage{Papers: make([]*ListedPaper, 0, len(picked)), NextCursor: next}
+	var parentIDs []model.PaperID
+	seen := map[model.PaperID]bool{}
+	for _, x := range picked {
+		if x.ParentID != "" && !seen[x.ParentID] {
+			seen[x.ParentID] = true
+			parentIDs = append(parentIDs, x.ParentID)
+		}
+	}
+	parents := map[model.PaperID]*model.Paper{}
+	if len(parentIDs) > 0 {
+		got, err := u.repo.GetPapers(ctx, ws, parentIDs)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to read parents")
+		}
+		for _, x := range got {
+			parents[x.ID] = x
+		}
+	}
+	for _, x := range picked {
+		row := &ListedPaper{PaperRef: refOf(x), CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}
+		if par, ok := parents[x.ParentID]; ok && p.SeesPaper(par) {
+			row.Parent = &ParentRef{ID: par.ID, Title: par.Title}
+		}
+		page.Papers = append(page.Papers, row)
+	}
+	return page, nil
 }
 
 // --- search
