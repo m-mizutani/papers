@@ -49,7 +49,7 @@ Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"delete","block_id":"...","base_rev":3}   {"op":"move","block_id":"...","after":"..."}
 - {"op":"set_title","title":"..."}
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
-- Paper-level ops, each alone in its batch: move_paper {parent, after, workspace} or {unfiled:true} (out of the tree; only for a paper without child papers), set_visibility {visibility, parent} (parent is optional: making a paper public without one leaves it unfiled), save_version {note}, restore_version {version}, archive / unarchive {subtree}.
+- Paper-level ops, each alone in its batch: move_paper {parent (required), after, workspace} or {unfiled:true} (out of the tree; only for a paper without child papers), set_visibility {visibility, parent} (parent is optional: making a paper public without one leaves it unfiled), save_version {note}, restore_version {version}, archive / unarchive {subtree}.
 - Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs in the background after the call returns; read the papers again to see the result. Deleting a child whose subtree has someone else's paper archives it instead. While a move runs, its papers cannot be written (error "busy"); afterwards the old paper id answers with where it moved.`
 
 func (s *Server) mcpHandler() http.Handler {
