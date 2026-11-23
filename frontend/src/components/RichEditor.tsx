@@ -288,6 +288,12 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
           return true
         }
         const text = event.clipboardData?.getData('text/plain') ?? ''
+        // A URL pasted over selected text links the text.
+        const ed = editorRef.current
+        if (ed && !ed.state.selection.empty && /^https?:\/\/\S+$/.test(text.trim())) {
+          ed.chain().focus().setLink({ href: text.trim() }).run()
+          return true
+        }
         const lines = text.replace(/\r/g, '').split('\n').filter((l) => l.trim() !== '')
         if (lines.length > 1 && pasteRef.current.onPasteText) {
           pasteRef.current.onPasteText(lines)

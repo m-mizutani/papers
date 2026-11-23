@@ -144,6 +144,7 @@ function Shell({ me, workspaces, loaded, onSignOut }: { me: Me; workspaces: Work
         <Route path="/ws/:ws/papers" element={<PapersPage ws={ws} onNew={() => void create({})} onNewPrivate={() => void create({ visibility: 'private' })} layoutTop={<Top title={t('papers')} layout={layout} />} />} />
         <Route path="/ws/:ws/trash" element={<TrashPage ws={ws} onChanged={onChanged} layoutTop={<Top title={t('trash')} layout={layout} />} />} />
         <Route path="/ws/:ws/search" element={<Navigate to={`/ws/${ws}`} replace />} />
+        <Route path="/tokens" element={<Navigate to="/settings" replace />} />
         <Route path="/settings" element={<SettingsPage layoutTop={<Top title={t('settings')} layout={layout} />} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

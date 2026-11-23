@@ -50,7 +50,8 @@ flowchart LR
 - **Limits**: 240 changed blocks, 3 MiB of text, and 5,000 blocks per paper (counted only when the batch inserts). The number of ops is `--max-ops-per-batch`.
 - **What is written**: the blocks, the search entries (one per block; the title's is `_title`) and the events (one per block, plus one for the paper when it changes). The paper document is written only when the title changes or `UpdatedAt` is a minute or more old (D6).
 - **Reads**: a Firestore transaction must read before it writes, so writes are staged and applied at the end, and reads return the staged writes on top of what is stored (`fsTx`).
-- **UI**: a new block shows at once under a temporary key (`tmp:n`) and can be edited right away; the answer's ref map then gives it its real ID. The React key stays the temporary one, so the caret is not lost.
+- **UI**: a new block shows at once under a temporary key (`tmp:n`) and can be edited right away; the answer's ref map then gives it its real ID. The React key stays the temporary one, and the temporary block gets the order key the server will pick, so it neither moves nor loses the caret when the answer comes. An edit keeps the Rev it started from and is sent after a 0.7 second pause, when the caret leaves the block, or with a structural change (a split sends the update and the insert in one batch). Sends run one after another, each based on the Rev the previous one produced. A 409, or someone else's change to the block while something is unsent, opens the conflict choice for that block only; with nothing unsent, their change simply replaces the block.
+- **Undo**: the UI records what each of its sends changed (grouped per edit session) and undoes by sending the inverse ops; a block deleted and brought back gets a new ID, which later steps follow. Undo stops, saying why, when someone else has changed a block since. Restoring a version clears the history.
 
 ## Versions
 
