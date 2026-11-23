@@ -28,7 +28,7 @@ export function LoginPage() {
           <div className="s-line w90" /><div className="s-line w70" />
           <div className="s-row"><div className="s-line w60 typing p" /><span className="s-tag p">Aiko</span></div>
           <div className="s-line w80" />
-          <div className="s-row"><div className="s-line w50 typing ai" /><span className="s-tag ai">✦ Claude</span></div>
+          <div className="s-row"><div className="s-line w50 typing ai" /><span className="s-tag ai">✦ AI</span></div>
           <div className="s-ver"><span className="vdot" />v3</div>
         </div>
       </section>
