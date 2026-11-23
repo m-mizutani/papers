@@ -111,7 +111,10 @@ function FormatBar({ editor, anchor }: { editor: TiptapEditor; anchor: DOMRect }
   }
   const on = (n: string) => (editor.isActive(n) ? 'on' : '')
   return (
-    <Popover anchor={anchor} placement="above" className="fmtpop" onClose={() => undefined} label={t('formatting')}>
+    // Escape (or a click outside) while text is selected collapses the
+    // selection, which hides the toolbar; the next Escape leaves the block.
+    // While a colour or link box is open, that box closes first.
+    <Popover anchor={anchor} placement="above" className="fmtpop" onClose={() => { if (!sub) editor.commands.setTextSelection(editor.state.selection.to) }} label={t('formatting')}>
       <div ref={barRef} className="fmt" role="toolbar" aria-label={t('formatting')} onMouseDown={keep}>
         <button type="button" className={on('bold')} title={t('bold')} aria-label={t('bold')} onClick={() => toggle('bold')}><b>B</b></button>
         <button type="button" className={on('italic')} title={t('italic')} aria-label={t('italic')} onClick={() => toggle('italic')}><i>I</i></button>
@@ -180,6 +183,13 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
   pasteRef.current = { onPasteText, onPasteImage, onSlash }
   const [selRect, setSelRect] = useState<DOMRect | null>(null)
 
+  const unmounted = useRef(false)
+  // The cleanup runs before the editor's own unmount, which blurs it.
+  useLayoutEffect(() => {
+    unmounted.current = false
+    return () => { unmounted.current = true }
+  }, [])
+
   const editor = useEditor({
     extensions: [
       SingleDoc, Paragraph, Text, Bold, Italic, Strike, Code, HardBreak, Color, Background,
@@ -218,6 +228,9 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
       // Clicks in the floating toolbar keep the edit going.
       const to = (event as FocusEvent).relatedTarget as Node | null
       if (to && (to as HTMLElement).closest?.('.fmtpop, .pop')) return
+      // The editor going away is not the person leaving the block: when "```"
+      // turns the block into code, the code editor goes on with the edit.
+      if (unmounted.current) return
       setSelRect(null)
       onBlur()
     },

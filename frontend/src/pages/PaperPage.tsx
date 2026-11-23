@@ -221,9 +221,10 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const readOnlyVersion = version !== undefined
   const base = `/ws/${ws}/p/${paperId}`
 
+  // Also read while a saved version is shown: restoring it asks to save unsaved changes first.
   const refreshStatus = useCallback(() => {
-    if (!readOnlyVersion) void api.status(ws, paperId).then(setStatus).catch(() => undefined)
-  }, [ws, paperId, readOnlyVersion])
+    void api.status(ws, paperId).then(setStatus).catch(() => undefined)
+  }, [ws, paperId])
 
   const load = useCallback(async () => {
     try {
@@ -236,10 +237,13 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         setTitle(vv.paper.title)
         const kids = await api.children(ws, paperId).catch(() => [])
         setState((s) => (s ? applyChildren(s, Object.fromEntries(kids.map((k) => [k.id, k]))) : s))
+        refreshStatus()
         return
       }
       const first = await api.blocks(ws, paperId, '', 200)
-      setState(initState(v.paper, first.blocks, first.papers))
+      // A reload (the live connection's hello) keeps who is editing what:
+      // presence that arrived meanwhile is not sent again for a while.
+      setState((s) => ({ ...initState(v.paper, first.blocks, first.papers), presence: s?.paper.id === paperId ? s.presence : new Map() }))
       setTitle(v.paper.title)
       setShown(undefined)
       let after = first.next
@@ -1006,7 +1010,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
 
   const latestN = state?.paper.version_number ?? 0
   useEffect(() => {
-    if (readOnlyVersion || !latestN || !status?.changed) {
+    // A shown version has its own marks (the effect below).
+    if (readOnlyVersion) return
+    if (!latestN || !status?.changed) {
       setCounts(null)
       setDiffMarks(null)
       return
