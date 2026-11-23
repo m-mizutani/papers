@@ -8,6 +8,9 @@ export function msg(key: MsgKey, params: Record<string, string | number> = {}): 
   return en[key].replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`))
 }
 
+/** The second e2e server, started with --anonymous (playwright.config.ts). */
+export const ANONYMOUS_URL = `http://127.0.0.1:${Number(process.env.E2E_PORT ?? 18090) + 1}`
+
 /** The example workspaces the e2e server is started with. */
 export const WS = 'product'
 export const OTHER_WS = 'security'

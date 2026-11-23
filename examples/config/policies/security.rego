@@ -1,4 +1,6 @@
-# Input: {"workspace": {"id"}, "user": {"id", "email", "domain"}}
+# Input: {"workspace": {"id"}, "user": {"id", "email", "domain", "anonymous"}}
+# Anonymous users (--anonymous) have the domain "anonymous.invalid"; to let
+# them in, add: allow if input.user.anonymous
 # The rule must define a boolean `allow` in package papers.authz.
 package papers.authz
 

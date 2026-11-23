@@ -60,6 +60,7 @@ export const en: Record<MsgKey, string> = {
   devMode: 'Development mode: sign-in is disabled',
   codeLanguage: 'Language',
   demoMode: 'Demo: data lives in this tab and resets on reload',
+  anonymousMode: 'Anonymous mode: you are a guest in this browser. Clearing cookies loses access to your private papers.',
   conflictTheirs: 'Their version',
   conflictMine: 'Your version',
   conflictOverwrite: 'Save mine',

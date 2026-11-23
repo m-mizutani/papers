@@ -40,13 +40,15 @@ func normalizeList(xs []string) []string {
 }
 
 // Auth authenticates browsers (sessions), API callers (tokens) and, in
-// development, a fixed user.
+// development, a fixed user. In anonymous mode a browser without a valid
+// session is given a new anonymous user.
 type Auth struct {
-	repo     interfaces.Repository
-	provider interfaces.IdentityProvider
-	cfg      AuthConfig
-	now      func() time.Time
-	devUser  *model.User
+	repo      interfaces.Repository
+	provider  interfaces.IdentityProvider
+	cfg       AuthConfig
+	now       func() time.Time
+	devUser   *model.User
+	anonymous bool
 }
 
 type AuthOption func(*Auth)
@@ -56,8 +58,9 @@ func WithAuthClock(now func() time.Time) AuthOption {
 }
 
 // NewAuth builds the authenticator. provider may be nil only in no-authn
-// mode (see EnableDevUser); with a provider, at least one allow rule is
-// required so a misconfiguration cannot admit every Google account.
+// mode (see EnableDevUser) or anonymous mode (see EnableAnonymous); with a
+// provider, at least one allow rule is required so a misconfiguration cannot
+// admit every Google account.
 func NewAuth(repo interfaces.Repository, provider interfaces.IdentityProvider, cfg AuthConfig, opts ...AuthOption) (*Auth, error) {
 	cfg.AllowedDomains = normalizeList(cfg.AllowedDomains)
 	cfg.AllowedEmails = normalizeList(cfg.AllowedEmails)
@@ -89,6 +92,34 @@ func (a *Auth) EnableDevUser(ctx context.Context, email, name string) error {
 }
 
 func (a *Auth) IsNoAuthn() bool { return a.devUser != nil }
+
+// EnableAnonymous switches to anonymous mode: a browser without a valid
+// session becomes a new anonymous user (see OpenAnonymousSession).
+func (a *Auth) EnableAnonymous() { a.anonymous = true }
+
+func (a *Auth) IsAnonymous() bool { return a.anonymous }
+
+// OpenAnonymousSession creates a new anonymous user and a session for it.
+// It writes the user and the session only; anonymous users have no
+// Identity, so the session is the only way back to the user.
+func (a *Auth) OpenAnonymousSession(ctx context.Context) (*SessionCredential, *model.Principal, error) {
+	if !a.anonymous {
+		return nil, nil, goerr.Wrap(model.ErrUnauthenticated, "anonymous mode is not enabled")
+	}
+	user := model.NewAnonymousUser(a.now())
+	if err := a.repo.PutUser(ctx, user); err != nil {
+		return nil, nil, goerr.Wrap(err, "failed to save anonymous user")
+	}
+	cred, err := a.openSession(ctx, user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := a.principal(ctx, user)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cred, p, nil
+}
 
 func (a *Auth) HasProvider() bool { return a.provider != nil }
 

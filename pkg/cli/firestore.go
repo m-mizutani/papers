@@ -27,7 +27,7 @@ func cmdFirestore() *cli.Command {
 					Name: "firestore-database-id", Usage: "Firestore database ID", Value: "(default)",
 					Sources: cli.EnvVars("PAPERS_FIRESTORE_DATABASE_ID"), Destination: &databaseID,
 				},
-				&cli.BoolFlag{Name: "dry-run", Usage: "Report what is missing without creating it", Destination: &dryRun},
+				&cli.BoolFlag{Name: "dry-run", Usage: "Report what is missing without creating it", Sources: cli.EnvVars("PAPERS_DRY_RUN"), Destination: &dryRun},
 			},
 			Action: func(ctx context.Context, c *cli.Command) error {
 				report, err := firestore.Setup(ctx, projectID, databaseID, dryRun)

@@ -58,6 +58,7 @@ export const keys = {
   devMode: 'devMode',
   codeLanguage: 'codeLanguage',
   demoMode: 'demoMode',
+  anonymousMode: 'anonymousMode',
   conflictTheirs: 'conflictTheirs',
   conflictMine: 'conflictMine',
   conflictOverwrite: 'conflictOverwrite',

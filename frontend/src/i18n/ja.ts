@@ -60,6 +60,7 @@ export const ja: Record<MsgKey, string> = {
   devMode: '開発モード: サインインは無効です',
   codeLanguage: '言語',
   demoMode: 'デモ: データはこのタブの中だけにあり、再読み込みで元に戻ります',
+  anonymousMode: '匿名モード: このブラウザのゲストとして使っています。cookie を消すと非公開ペーパーに戻れなくなります。',
   conflictTheirs: '相手の内容',
   conflictMine: 'あなたの内容',
   conflictOverwrite: '自分の内容で上書き',

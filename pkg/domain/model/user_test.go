@@ -14,6 +14,19 @@ func TestEmailDomain(t *testing.T) {
 	gt.Equal(t, model.EmailDomain("broken"), "")
 }
 
+func TestNewAnonymousUser(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	u := model.NewAnonymousUser(now)
+	id := string(u.ID)
+	gt.True(t, u.Anonymous)
+	gt.Equal(t, u.Email, id+"@anonymous.invalid")
+	gt.Equal(t, u.EmailDomain(), model.AnonymousEmailDomain)
+	gt.Equal(t, u.Name, "Anonymous "+id[len(id)-4:])
+	gt.Equal(t, u.CreatedAt, now)
+	gt.NoError(t, u.Validate())
+	gt.NotEqual(t, model.NewAnonymousUser(now).ID, u.ID)
+}
+
 func TestAPIToken(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-time.Minute)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/urfave/cli/v3"
+
 	"github.com/m-mizutani/gt"
 
 	"github.com/m-mizutani/papers/pkg/cli/config"
@@ -30,4 +32,37 @@ func TestAuthConfigure(t *testing.T) {
 	gt.Error(t, err) // no allow rule
 	_, err = config.NewAuthForTest("id", "", false, []string{"example.com"}).Configure(ctx, memory.New(), "https://p.example")
 	gt.Error(t, err) // no secret
+}
+
+func TestAuthConfigureAnonymous(t *testing.T) {
+	ctx := context.Background()
+
+	a := gt.R1(config.NewAnonymousAuthForTest("", false).Configure(ctx, memory.New(), "http://localhost")).NoError(t)
+	gt.True(t, a.IsAnonymous())
+	gt.False(t, a.HasProvider())
+	gt.False(t, a.IsNoAuthn())
+
+	_, err := config.NewAnonymousAuthForTest("", true).Configure(ctx, memory.New(), "http://localhost")
+	gt.Error(t, err) // with --no-authn
+	_, err = config.NewAnonymousAuthForTest("id", false).Configure(ctx, memory.New(), "https://p.example")
+	gt.Error(t, err) // with Google sign-in
+}
+
+func TestAnonymousFromEnvironment(t *testing.T) {
+	t.Setenv("PAPERS_ANONYMOUS", "true")
+	var x config.Auth
+	var got bool
+	cmd := &cli.Command{
+		Name: "t", Flags: x.Flags(),
+		Action: func(ctx context.Context, _ *cli.Command) error {
+			a, err := x.Configure(ctx, memory.New(), "http://localhost")
+			if err != nil {
+				return err
+			}
+			got = a.IsAnonymous()
+			return nil
+		},
+	}
+	gt.NoError(t, cmd.Run(context.Background(), []string{"t"}))
+	gt.True(t, got)
 }

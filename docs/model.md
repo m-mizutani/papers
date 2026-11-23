@@ -445,12 +445,14 @@ Two similar words, kept apart. The **principal** is "who is making this request"
 | Way in                                | Writer kind | Shown as                                      |
 |---------------------------------------|-------------|-----------------------------------------------|
 | Web UI (session)                      | person      | User name                                     |
+| Web UI (anonymous mode)               | person      | "Anonymous 7fQa" (a guest of one browser)     |
 | AI token (REST / MCP)                 | AI          | "Claude (for Alice)"                          |
 | MCP with a session (development mode) | AI          | "MCP client (for …)"                          |
 | Personal token (scripts)              | **person**  | User name (with "via API", [D7](#d7-writes-with-a-personal-token-stay-a-persons-marked-via-api-decided-b)) |
 
 - AI always acts for someone. It borrows that person's access, narrowed by the token. There is no user that is AI alone.
 - Users have IDs issued by papers and are tied to external IDs such as Google's through `Identity`. One person may sign in with several external IDs.
+- **Anonymous users** exist only in anonymous mode (`--anonymous`, which excludes Google sign-in and `--no-authn`). A browser that comes without a valid session cookie gets a new user with `Anonymous` set, the email `{userID}@anonymous.invalid`, the name `Anonymous {last 4 characters of the ID}` and a session; it has no `Identity`, so its session is the only way back to it. When the session expires (`--session-ttl`) or the cookie is lost, that browser becomes a new anonymous user; the old user's private papers stay but nobody can see them. Otherwise an anonymous user is an ordinary user: it creates public and private papers, is their creator, and may issue tokens.
 
 ## Access
 
@@ -458,7 +460,7 @@ Two similar words, kept apart. The **principal** is "who is making this request"
 
 ### How it is decided
 
-1.  **May one use the workspace**: whether the Rego in the workspace configuration's `[authz]` returns `allow` (as in hecatoncheires). The input is the workspace and the user (ID, email). There are no user groups for now ([D14](#d14-no-groups-for-now-decided)), so rules are written with emails or domains. A workspace without a rule: [D12](#d12-a-workspace-without-a-rule-is-open-to-everyone-signed-in-decided-a).
+1.  **May one use the workspace**: whether the Rego in the workspace configuration's `[authz]` returns `allow` (as in hecatoncheires). The input is the workspace and the user (ID, email, domain, and whether the user is anonymous). An anonymous user's domain is `anonymous.invalid`, so rules written with real domains keep them out; `allow if input.user.anonymous` lets them in. There are no user groups for now ([D14](#d14-no-groups-for-now-decided)), so rules are written with emails or domains. A workspace without a rule: [D12](#d12-a-workspace-without-a-rule-is-open-to-everyone-signed-in-decided-a).
 2.  **May one use the paper**:
     - public → anyone who may use the workspace may read and write it (the home included)
     - private → only when one may use the workspace and is the creator

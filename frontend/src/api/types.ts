@@ -16,6 +16,8 @@ export interface User {
   email: string
   name: string
   avatar_url?: string
+  /** Set for users created by the server's anonymous mode. */
+  anonymous?: boolean
 }
 
 export interface Workspace {
@@ -283,6 +285,8 @@ export interface PaperEvent {
 export interface Me {
   user: User
   no_authn: boolean
+  /** The server runs in anonymous mode: each browser is its own guest user. */
+  anonymous?: boolean
   /** Only the in-browser demo sets this. */
   demo?: boolean
 }

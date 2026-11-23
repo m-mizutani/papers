@@ -13,10 +13,20 @@ import (
 )
 
 func Run(ctx context.Context, args []string, version string) error {
+	if err := newApp(version).Run(ctx, args); err != nil {
+		errutil.Handle(ctx, goerr.Wrap(err, "failed to run app"), "failed to run app")
+		return err
+	}
+	return nil
+}
+
+// newApp builds the command tree. Every flag of every command must also be
+// settable through a PAPERS_* environment variable (enforced by a test).
+func newApp(version string) *cli.Command {
 	var loggerCfg config.Logger
 	var closer func()
 
-	app := &cli.Command{
+	return &cli.Command{
 		Name:    "papers",
 		Usage:   "AI-native collaborative knowledge canvas",
 		Version: version,
@@ -41,10 +51,4 @@ func Run(ctx context.Context, args []string, version string) error {
 			cmdFirestore(),
 		},
 	}
-
-	if err := app.Run(ctx, args); err != nil {
-		errutil.Handle(ctx, goerr.Wrap(err, "failed to run app"), "failed to run app")
-		return err
-	}
-	return nil
 }

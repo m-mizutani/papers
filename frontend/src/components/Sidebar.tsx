@@ -61,11 +61,6 @@ export function Sidebar({ me, workspaces, groups, current, version, onSearch }: 
     void api.sidebar(current).then(setData).catch(() => setData(undefined))
   }, [current, version])
 
-  const signOut = async () => {
-    await api.logout()
-    window.location.href = '/login'
-  }
-
   const newPaper = async (visibility: 'public' | 'private') => {
     if (!current) return
     const title = window.prompt(t('newPaperTitle'))
@@ -148,15 +143,32 @@ export function Sidebar({ me, workspaces, groups, current, version, onSearch }: 
         </>
       )}
 
-      <div className="sidebar-foot">
-        {me.no_authn && <span className="dev-banner">{me.demo ? t('demoMode') : t('devMode')}</span>}
-        <NavLink className="nav-item" to="/settings/tokens">{t('tokens')}</NavLink>
-        <div className="me">
-          {me.user.avatar_url ? <img className="avatar" src={me.user.avatar_url} alt="" referrerPolicy="no-referrer" /> : <span className="avatar" aria-hidden />}
-          <span>{me.user.name || me.user.email}</span>
-        </div>
-        {!me.no_authn && <button type="button" className="nav-item" onClick={() => void signOut()}>{t('signOut')}</button>}
-      </div>
+      <SidebarFoot me={me} />
     </nav>
+  )
+}
+
+/**
+ * The bottom of the sidebar: the sign-in mode, token settings and the user.
+ * Signing out is offered only with a real sign-in: in no-authn mode there is
+ * nothing to leave, and in anonymous mode it would lose the user for good.
+ */
+export function SidebarFoot({ me }: { me: Me }) {
+  const { t } = useTranslation()
+  const signOut = async () => {
+    await api.logout()
+    window.location.href = '/login'
+  }
+  const banner = me.no_authn ? (me.demo ? t('demoMode') : t('devMode')) : me.anonymous ? t('anonymousMode') : undefined
+  return (
+    <div className="sidebar-foot">
+      {banner && <span className="dev-banner">{banner}</span>}
+      <NavLink className="nav-item" to="/settings/tokens">{t('tokens')}</NavLink>
+      <div className="me">
+        {me.user.avatar_url ? <img className="avatar" src={me.user.avatar_url} alt="" referrerPolicy="no-referrer" /> : <span className="avatar" aria-hidden />}
+        <span>{me.user.name || me.user.email}</span>
+      </div>
+      {!me.no_authn && !me.anonymous && <button type="button" className="nav-item" onClick={() => void signOut()}>{t('signOut')}</button>}
+    </div>
   )
 }

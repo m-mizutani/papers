@@ -10,6 +10,10 @@ func NewAuthForTest(clientID, secret string, noAuthn bool, domains []string) *Au
 	return &Auth{googleClientID: clientID, googleClientSecret: secret, noAuthn: noAuthn, allowedDomains: domains, sessionTTL: time.Hour, devUserEmail: "dev@localhost", devUserName: "Dev"}
 }
 
+func NewAnonymousAuthForTest(clientID string, noAuthn bool) *Auth {
+	return &Auth{googleClientID: clientID, googleClientSecret: "secret", noAuthn: noAuthn, anonymous: true, allowedDomains: []string{"example.com"}, sessionTTL: time.Hour, devUserEmail: "dev@localhost", devUserName: "Dev"}
+}
+
 func NewRepositoryForTest(backend, projectID string, buffer int) *Repository {
 	return &Repository{backend: backend, projectID: projectID, eventBuffer: buffer}
 }

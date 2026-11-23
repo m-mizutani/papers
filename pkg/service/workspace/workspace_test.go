@@ -87,6 +87,25 @@ workspaces = ["security"]
 	gt.False(t, gt.R1(r.Allow(ctx, alice, "security")).NoError(t))
 }
 
+func TestAllowAnonymous(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	write(t, dir, "guests.toml", "[workspace]\nid = \"guests\"\n[authz]\npolicy = [\"g.rego\"]\n")
+	write(t, dir, "g.rego", "package papers.authz\n\nallow if input.user.anonymous\n")
+	write(t, dir, "team.toml", "[workspace]\nid = \"team\"\n[authz]\npolicy = [\"t.rego\"]\n")
+	write(t, dir, "t.rego", "package papers.authz\n\nallow if input.user.domain == \"example.com\"\n")
+	r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+
+	anon := model.NewAnonymousUser(time.Now())
+	alice := &model.User{ID: model.NewUserID(), Email: "alice@example.com"}
+	// a rule on the anonymous flag admits anonymous users only
+	gt.True(t, gt.R1(r.Allow(ctx, anon, "guests")).NoError(t))
+	gt.False(t, gt.R1(r.Allow(ctx, alice, "guests")).NoError(t))
+	// rules written with real domains keep anonymous users out
+	gt.False(t, gt.R1(r.Allow(ctx, anon, "team")).NoError(t))
+	gt.True(t, gt.R1(r.Allow(ctx, alice, "team")).NoError(t))
+}
+
 func TestLoadRejectsBadConfiguration(t *testing.T) {
 	ctx := context.Background()
 	cases := map[string]map[string]string{

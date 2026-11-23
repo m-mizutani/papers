@@ -15,8 +15,9 @@
 //
 // Policy paths are relative to the TOML file. A policy is Rego in package
 // papers.authz and defines the boolean allow from input.workspace.id,
-// input.user.id, input.user.email and input.user.domain. A workspace
-// without [authz] is open to every signed-in user.
+// input.user.id, input.user.email, input.user.domain and
+// input.user.anonymous. A workspace without [authz] is open to every
+// signed-in user, anonymous users included.
 //
 // The optional global configuration file groups workspaces for display:
 //
@@ -281,7 +282,7 @@ func (r *Registry) Allow(ctx context.Context, user *model.User, ws model.Workspa
 
 	input := map[string]any{
 		"workspace": map[string]any{"id": string(ws)},
-		"user":      map[string]any{"id": string(user.ID), "email": strings.ToLower(user.Email), "domain": model.EmailDomain(user.Email)},
+		"user":      map[string]any{"id": string(user.ID), "email": strings.ToLower(user.Email), "domain": model.EmailDomain(user.Email), "anonymous": user.Anonymous},
 	}
 	rs, err := e.policy.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
