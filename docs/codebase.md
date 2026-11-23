@@ -168,7 +168,7 @@ Only the ones easy to break when changing code. The full list is in `CLAUDE.md`.
 - **No locks; revisions protect.** update and delete require the base Rev, and a conflict is refused once. The UI sends the Rev an edit started from.
 - **The system never makes versions on its own.** Only the save operation makes one.
 - **The paper document is not written on every write.** Its updated time moves at most once a minute; contents live on blocks.
-- **A new query needs its index.** Add it to `RequiredIndexes` in `indexes.go`; `papers firestore setup` creates it.
+- **A new query needs its index.** Add it to `RequiredIndexes` in `indexes.go`; `papers firestore migrate` creates it (`migrate.go`). `reset.go` empties a database for `papers firestore reset`.
 - **Reads are batched.** Child papers, pins and search hits are read with one `GetPapers`. Use-case tests count reads.
 - **AI-written HTML/SVG renders only inside RichFrame.** Block markup is rendered as React elements, never inserted as HTML.
 - **Storage contract tests run on both implementations.** `pkg/repository/*_test.go`. The markup cases run in both Go and TypeScript.
