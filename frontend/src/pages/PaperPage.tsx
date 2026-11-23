@@ -49,6 +49,14 @@ function stripPrefix(markup: string, prefixLen: number, plain: string): string {
 
 const snapOf = (b: Block): Snap => ({ type: b.type, content: b.content, props: b.props })
 
+/** The text, type and properties a block shows while my update of it is on its way. */
+type Held = Pick<Block, 'content' | 'type' | 'props'>
+
+/** The edit changed the block (its text, type or properties). */
+function isDirty(ed: EditingState): boolean {
+  return ed.textChanged || ed.type !== ed.orig.type || JSON.stringify(ed.props) !== JSON.stringify(ed.orig.props)
+}
+
 function tempBlock(paperId: string, ws: string, me: Me, order: string, type: BlockType, content: string, props: BlockProps): Block {
   const actor: Actor = { kind: 'human', user_id: me.user.id, name: me.user.name }
   const now = new Date().toISOString()
@@ -184,6 +192,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const [fatal, setFatal] = useState<'notfound' | 'revoked' | 'deleted' | null>(null)
   const [slow, setSlow] = useState(false)
   const [editing, setEditing] = useState<EditingState | null>(null)
+  const [held, setHeld] = useState<Map<string, Held>>(() => new Map())
   const [recent, setRecent] = useState<Set<string>>(new Set())
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -214,6 +223,13 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const ownRev = useRef(new Map<string, number>())
   /** The text of an update of mine still on its way, by block. */
   const inflight = useRef(new Map<string, string>())
+  /** What blocks I have just left show until my update of them is answered (by block or temporary key). */
+  const heldRef = useRef(held)
+  /** Blocks my batches still on their way write, and how many such batches insert. */
+  const writing = useRef(new Map<string, number>())
+  const inserting = useRef(0)
+  /** Blocks of mine the change feed brought while my inserts were on their way; applied when they are answered. */
+  const deferred = useRef(new Map<string, Block>())
   const saveTimer = useRef<number | undefined>(undefined)
   const editorRef = useRef<TiptapEditor | null>(null)
   const titleRef = useRef<HTMLTextAreaElement>(null)
@@ -288,6 +304,30 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     setEditing(next)
   }, [])
 
+  /**
+   * Shows a block I have just left with the text I am sending (the editor
+   * is gone, and the block would show its last answered text until the
+   * answer comes). The returned function stops it once the send is over.
+   */
+  const hold = useCallback((id: string, h: Held): (() => void) => {
+    const put = (next: Map<string, Held>) => {
+      heldRef.current = next
+      setHeld(next)
+    }
+    put(new Map(heldRef.current).set(id, h))
+    return () => {
+      if (heldRef.current.get(id) !== h) return
+      const next = new Map(heldRef.current)
+      next.delete(id)
+      put(next)
+    }
+  }, [])
+  /** A block as it shows: with the text held for it, under its own ID or its temporary key. */
+  const shownOf = useCallback((b: Block, from: Map<string, Held> = heldRef.current): Block => {
+    const h = from.get(b.id) ?? from.get(viewKeys.current.get(b.id) ?? '')
+    return h ? { ...b, ...h } : b
+  }, [])
+
   const openConflict = useCallback((c: ConflictState | null) => {
     conflictRef.current = c
     setConflict(c)
@@ -303,7 +343,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     if (!own && ed) {
       const gone = deleted.includes(ed.id)
       const theirs = put.find((b) => b.id === ed.id && b.rev > ed.base)
-      const dirty = ed.textChanged || ed.type !== ed.orig.type || JSON.stringify(ed.props) !== JSON.stringify(ed.orig.props)
+      const dirty = isDirty(ed)
       // My own write can come back through the feed before its answer does.
       const mine = theirs && (inflight.current.get(theirs.id) === theirs.content || theirs.content === ed.draft)
       if (theirs && mine) {
@@ -317,13 +357,22 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         openConflict({ blockId: ed.id, theirs, mine: ed.draft })
       }
     }
-    let next = applyBlocks(cur, put, deleted)
+    // My own writes come back through the feed too, often before their
+    // answer. A block of mine the feed brings while my insert is on its way
+    // waits for the answer (which shows it in place of its temporary key),
+    // so it is not shown twice; and my own writes do not flash.
+    const byMe = (b: Block) => b.updated_by.kind === 'human' && b.updated_by.user_id === me.user.id
+    for (const id of deleted) deferred.current.delete(id)
+    const wait = !own && inserting.current > 0 ? put.filter((b) => byMe(b) && !cur.blocks.has(b.id)) : []
+    wait.forEach((b) => deferred.current.set(b.id, b))
+    const apply = wait.length ? put.filter((b) => !wait.includes(b)) : put
+    let next = applyBlocks(cur, apply, deleted)
     if (paper) next = applyPaper(next, paper)
     if (next === cur) return
     commit(next)
     if (paper && document.activeElement !== titleRef.current) setTitle(paper.title)
-    if (!own) markRecent(put.filter((b) => next.blocks.get(b.id) === b && !b.parent_id).map((b) => b.id))
-  }, [markRecent, commit, openConflict, setEdit])
+    if (!own) markRecent(apply.filter((b) => next.blocks.get(b.id) === b && !b.parent_id && !(byMe(b) && writing.current.has(b.id))).map((b) => b.id))
+  }, [markRecent, commit, openConflict, setEdit, me.user.id])
 
   // Initial load and the live connection (none for a saved version).
   useEffect(() => {
@@ -332,6 +381,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     setFatal(null)
     setEdit(null)
     openConflict(null)
+    heldRef.current = new Map()
+    setHeld(heldRef.current)
+    deferred.current.clear()
     setSelected(null)
     setDiffMarks(null)
     setShowChanges(false)
@@ -408,6 +460,10 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const run = useCallback(async (ops: Op[], opts: { force?: boolean; record?: boolean; session?: string; beforeApply?: (res: BatchResult) => void } = {}): Promise<BatchResult | null> => {
     const before = stateRef.current
     setSending((n) => n + 1)
+    const ids = ops.flatMap((op) => (op.block_id ? [op.block_id] : []))
+    ids.forEach((id) => writing.current.set(id, (writing.current.get(id) ?? 0) + 1))
+    const inserts = ops.some((op) => op.op === 'insert' || op.op === 'insert_markdown')
+    if (inserts) inserting.current++
     try {
       const res = await api.ops(ws, paperId, ops, opts.force ?? false)
       opts.beforeApply?.(res)
@@ -450,6 +506,16 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       return null
     } finally {
       setSending((n) => n - 1)
+      for (const id of ids) {
+        const n = (writing.current.get(id) ?? 1) - 1
+        if (n > 0) writing.current.set(id, n)
+        else writing.current.delete(id)
+      }
+      if (inserts && --inserting.current === 0 && deferred.current.size) {
+        const late = [...deferred.current.values()]
+        deferred.current.clear()
+        receive(late, [], undefined, false)
+      }
     }
   }, [ws, paperId, receive, commit, onChanged, refreshStatus, t, toast, openConflict])
 
@@ -458,14 +524,15 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   /** Resolves a block ID that may still be a temporary key. */
   const realId = useCallback(async (id: string) => (id.startsWith('tmp:') ? pending.current.get(id) ?? Promise.resolve(undefined) : id), [])
 
-  const startEdit = useCallback((b: Block, caret: Caret = 'end') => {
+  const startEdit = useCallback((from: Block, caret: Caret = 'end') => {
     if (readOnlyVersion) return
+    const b = shownOf(from)
     const cur = editingRef.current
     if (cur && cur.id !== b.id) finishRef.current(cur.id)
     if (conflictRef.current && conflictRef.current.blockId !== b.id) openConflict(null)
     setSelected(null)
     setEdit({ id: b.id, draft: b.content, type: b.type, props: b.props, base: b.rev, orig: { content: b.content, type: b.type, props: b.props }, textChanged: false, session: sessionId(), caret })
-  }, [readOnlyVersion, setEdit, openConflict])
+  }, [readOnlyVersion, setEdit, openConflict, shownOf])
 
   /** Sends run one after another, so each is based on the revisions the one before produced. */
   const serial = useCallback(<T,>(fn: () => Promise<T>): Promise<T> => {
@@ -525,8 +592,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     if (conflictRef.current && conflictRef.current.blockId === ed.id) return null
     const id = await realId(ed.id)
     if (!id) return []
-    const changed = ed.textChanged || ed.orig.type !== ed.type || JSON.stringify(ed.orig.props) !== JSON.stringify(ed.props)
-    if (!changed) return []
+    if (!isDirty(ed)) return []
     return [{ op: 'update', block_id: id, content: ed.draft, type: ed.type === ed.orig.type ? undefined : ed.type, props: ed.props, base_rev: baseFor(id, ed.base) }]
   }, [realId, baseFor])
 
@@ -558,6 +624,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     const ed = editingRef.current
     if (!ed || conflictRef.current?.blockId === ed.id) return
     if (from !== undefined && from !== ed.id) return
+    // Another block may take the editor before this send is answered.
+    const release = isDirty(ed) ? hold(ed.id, { content: ed.draft, type: ed.type, props: ed.props }) : () => undefined
     void serial(async () => {
       const ops = await opsFor(ed)
       if (ops === null) return
@@ -566,8 +634,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       const ok = !ops.length || !!(await run(ops, { session: ed.session }).finally(() => inflight.current.delete(target)))
       if (!ok) return
       if (editingRef.current?.session === ed.session) setEdit(null)
-    })
-  }, [opsFor, run, setEdit, serial])
+    }).finally(release)
+  }, [opsFor, run, setEdit, serial, hold])
   const finishRef = useRef(finishEdit)
   finishRef.current = finishEdit
 
@@ -586,7 +654,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     return extra.length ? [...list, ...extra].sort(byOrder) : list
   }, [state, conflict, diffMarks, readOnlyVersion, showChanges])
   const live = useMemo(() => (state ? topLevel(state) : []), [state])
-  const numbers = useMemo(() => listNumbers(ordered), [ordered])
+  // Blocks just left show the text being sent for them.
+  const shownList = useMemo(() => (held.size ? ordered.map((b) => shownOf(b, held)) : ordered), [ordered, held, shownOf])
+  const numbers = useMemo(() => listNumbers(shownList), [shownList])
 
   // Enter in the middle of a block: update it with the text before the
   // caret and insert a block with the rest after it, in one batch. The new
@@ -604,16 +674,23 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     const type = continuing ? ed.type : 'paragraph'
     const props: BlockProps = continuing ? { indent: ed.props.indent ?? 0, ...(ed.type === 'todo' ? { checked: false } : {}) } : {}
     const prev = { ...ed, draft: before, textChanged: ed.textChanged || before !== ed.draft }
-    // The old block's text goes with the insert, not through its editor's blur.
+    // The old block's text goes with the insert, not through its editor's
+    // blur, and it shows that text until the batch is answered.
     editingRef.current = null
+    const release = isDirty(prev) ? hold(prev.id, { content: before, type: prev.type, props: prev.props }) : () => undefined
+    let sent = ''
     void insertShown({ op: 'insert', type, content: after, props, after: ed.id }, async () => {
       const id = await realId(prev.id)
-      if (!id) return []
-      return prev.textChanged || prev.orig.type !== prev.type || JSON.stringify(prev.orig.props) !== JSON.stringify(prev.props)
-        ? [{ op: 'update', block_id: id, content: before, type: prev.type === prev.orig.type ? undefined : prev.type, props: prev.props, base_rev: baseFor(id, prev.base) }]
-        : []
-    }, true, 'start')
-  }, [insertShown, realId, flushEdit, setEdit, baseFor])
+      if (!id || !isDirty(prev)) return []
+      // Its echo in the feed is mine, should the block be edited again meanwhile.
+      sent = id
+      inflight.current.set(id, before)
+      return [{ op: 'update', block_id: id, content: before, type: prev.type === prev.orig.type ? undefined : prev.type, props: prev.props, base_rev: baseFor(id, prev.base) }]
+    }, true, 'start').finally(() => {
+      if (sent && inflight.current.get(sent) === before) inflight.current.delete(sent)
+      release()
+    })
+  }, [insertShown, realId, flushEdit, setEdit, baseFor, hold])
 
   // Backspace at the start: a list item becomes text first; text joins the block above.
   const join = useCallback((text: string) => {
@@ -1432,8 +1509,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: '' })
                   }} />
                 <div className="blocks">
-                  {ordered.map((b, i) => (
-                    <BlockView key={viewKeys.current.get(b.id) ?? b.id} block={b} prev={ordered[i - 1]} ctx={ctx} />
+                  {shownList.map((b, i) => (
+                    <BlockView key={viewKeys.current.get(b.id) ?? b.id} block={b} prev={shownList[i - 1]} ctx={ctx} />
                   ))}
                 </div>
                 {canEdit && (

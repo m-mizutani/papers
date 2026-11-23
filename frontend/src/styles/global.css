@@ -262,7 +262,6 @@ a.vmark:hover { background: var(--surface-2); }
 .blk.flash .bd { animation: flash 1.4s ease-out; }
 @keyframes flash { 0% { background: var(--ai-weak); } 100% { background: transparent; } }
 .blk.pres .bd { box-shadow: -3px 0 0 0 var(--pc); }
-.blk.pending { opacity: 0.85; }
 .ptag { position: absolute; right: 0; top: -9px; font-size: 10.5px; font-weight: 600; color: var(--on-color); background: var(--pc); padding: 1px var(--sp-3); border-radius: 4px; z-index: 2; white-space: nowrap; pointer-events: none; }
 .mark-added .bd { box-shadow: -3px 0 0 0 var(--ok); }
 .mark-changed .bd { box-shadow: -3px 0 0 0 var(--warn); }
