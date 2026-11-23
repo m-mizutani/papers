@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
-  blocks, body, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
+  blocks, body, call, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
 } from './helpers'
 import type { Block } from '../src/api/types'
 
@@ -199,4 +199,55 @@ test('T26 undo and redo step through typing, Enter and typing', async ({ page, r
   await redo(['start A', ''])
   await redo(['start A', 'B'])
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'start A|B', 'redone on the server')
+})
+
+test('the title is sent while typing, without leaving the field', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Before') })
+  await call(request, 'PUT', `/workspaces/${WS}/papers/${paper.id}/favorite`, { after: null })
+  await openPaper(page, paper.id)
+  const title = unique('Typed')
+  await titleField(page).fill(title)
+  await expect(titleField(page)).toBeFocused()
+  // the breadcrumb follows at once; the server and the sidebar after a pause
+  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(title)
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(title)
+  await expect(page.locator('.sb').getByText(title)).not.toHaveCount(0)
+  await expect(titleField(page)).toBeFocused()
+
+  // the sends of one focus are one undo step back to the title before it
+  await titleField(page).press('End')
+  await titleField(page).pressSequentially(' more', { delay: 50 })
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(`${title} more`)
+  await titleField(page).blur()
+  await synced(page)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
+  await expect(titleField(page)).toHaveValue(paper.title)
+})
+
+test('a title typed back to what it was is sent even while the earlier send is on its way', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Back') })
+  await openPaper(page, paper.id)
+  // hold the first title send until the second one has been decided
+  let release: () => void = () => undefined
+  const held = new Promise<void>((r) => { release = r })
+  let first = true
+  await page.route(`**/papers/${paper.id}/ops`, async (route) => {
+    if (first) {
+      first = false
+      await held
+    }
+    await route.continue()
+  })
+  await titleField(page).click()
+  await titleField(page).press('End')
+  await titleField(page).pressSequentially('X')
+  await page.waitForTimeout(1000)
+  await titleField(page).press('Backspace')
+  await page.waitForTimeout(1000)
+  release()
+  // still in the field: the server ends with the title shown, not the held one
+  await synced(page)
+  await expect(titleField(page)).toBeFocused()
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
 })
