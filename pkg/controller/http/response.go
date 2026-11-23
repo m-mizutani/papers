@@ -18,8 +18,9 @@ const maxRequestBody = 4 << 20
 
 // maxHTMLRequestBody bounds the JSON of requests that may carry an HTML
 // paper's document (creating a paper, a batch): the document is at most
-// model.MaxHTMLSize bytes, and escaping in JSON may make it longer.
-const maxHTMLRequestBody = 12 << 20
+// model.MaxHTMLSize bytes, and escaping in JSON may make it up to six times
+// longer (\u003c for <). Cloud Run accepts requests up to 32 MiB.
+const maxHTMLRequestBody = 32 << 20
 
 type errorBody struct {
 	Error errorDetail `json:"error"`

@@ -14,7 +14,7 @@ describe('HtmlPage', () => {
     await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
     expect(fetchHTML).toHaveBeenCalledWith('team', 'p1', 'a2')
     const frame = container.querySelector('iframe')
-    expect(frame?.getAttribute('sandbox')).toBe('allow-scripts allow-popups allow-popups-to-escape-sandbox')
+    expect(frame?.getAttribute('sandbox')).toBe('allow-scripts')
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin')
     expect(frame?.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(frame?.getAttribute('srcdoc')).toBe('<h1>Weekly</h1><script>run()</script>')

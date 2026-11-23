@@ -520,7 +520,7 @@ func TestHTMLPaperAPI(t *testing.T) {
 	resp := bob.do("GET", base+"/html/"+string(doc.AttachmentID), nil)
 	gt.Equal(t, resp.StatusCode, http.StatusOK)
 	gt.Equal(t, resp.Header.Get("Content-Type"), "text/html; charset=utf-8")
-	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'")
+	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts; frame-ancestors 'self'")
 	gt.Equal(t, resp.Header.Get("Cache-Control"), "private, max-age=31536000, immutable")
 	gt.Equal(t, resp.Header.Get("X-Content-Type-Options"), "nosniff")
 	gt.Equal(t, string(gt.R1(io.ReadAll(resp.Body)).NoError(t)), "<p>nine incidents</p>")
@@ -585,7 +585,7 @@ func TestHTMLPaperSandboxSetting(t *testing.T) { // T54
 	alice.expect("GET", "/api/v1/workspaces/other/papers/"+string(p.ID)+"/html", nil, http.StatusOK, &doc)
 	resp := alice.do("GET", "/api/v1/workspaces/other/papers/"+string(p.ID)+"/html/"+string(doc.AttachmentID), nil)
 	gt.Equal(t, resp.StatusCode, http.StatusOK)
-	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'; "+model.SandboxCSP)
+	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts; frame-ancestors 'self'; "+model.SandboxCSP)
 }
 
 func TestHTMLPaperRequestLimit(t *testing.T) { // T61
@@ -595,9 +595,12 @@ func TestHTMLPaperRequestLimit(t *testing.T) { // T61
 	doc := "<p>" + strings.Repeat("a", model.MaxHTMLSize-7) + "</p>"
 	var p model.Paper
 	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Big", "kind": "html", "html": doc}, http.StatusCreated, &p)
-	// a body over 12 MiB is refused
+	// a document escaped to six times its size (Go escapes < as \u003c) is accepted
+	var esc model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Escaped", "kind": "html", "html": strings.Repeat("<", model.MaxHTMLSize)}, http.StatusCreated, &esc)
+	// a body over 32 MiB is refused
 	// each escaped character is six bytes of JSON but one of HTML
-	huge := strings.Repeat("\\u0041", (12<<20)/6+1)
+	huge := strings.Repeat("\\u0041", (32<<20)/6+1)
 	req := gt.R1(http.NewRequest("POST", ts.srv.URL+"/api/v1/workspaces/team/papers/"+string(p.ID)+"/ops", strings.NewReader(`{"ops":[{"op":"set_html","base_rev":1,"html":"`+huge+`"}]}`))).NoError(t)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "papers")

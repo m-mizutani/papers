@@ -15,8 +15,8 @@ const BASE_STYLE = `<style>html,body{margin:0;padding:0;background:transparent}b
 /** The policy for a workspace whose HTML may not load anything it does not embed (model.SandboxCSP). */
 export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:"
 
-/** The sandbox flags of every frame that runs AI-authored HTML: scripts and new tabs, never papers' origin. */
-export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox'
+/** The sandbox flags of an HTML paper's frame: scripts only; no popups, never papers' origin. */
+export const FRAME_SANDBOX = 'allow-scripts'
 
 const DOCTYPE = /^\s*<!doctype[^>]*>/i
 

@@ -544,7 +544,7 @@ func (s *Server) handleReadHTML(w http.ResponseWriter, r *http.Request) {
 // htmlFrameCSP is the Content-Security-Policy of an HTML paper's document
 // served on its own: it runs as an opaque origin with scripts, whatever
 // opens it, and only papers' own pages may frame it.
-const htmlFrameCSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'"
+const htmlFrameCSP = "sandbox allow-scripts; frame-ancestors 'self'"
 
 // handleHTML serves one document of an HTML paper. It always streams the
 // bytes through the server, unlike images, which may be redirected to a
