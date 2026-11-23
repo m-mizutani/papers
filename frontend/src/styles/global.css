@@ -171,7 +171,7 @@ textarea.inp { height: auto; padding: var(--sp-4) var(--sp-5); resize: vertical;
 .field { display: flex; flex-direction: column; gap: 5px; margin: var(--sp-5) 0; }
 .field > label, .field > .flabel { font-size: var(--text-sm); font-weight: 600; color: var(--fg); }
 .chk { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-2) 0; color: var(--fg); }
-.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: var(--r-sm); overflow: hidden; }
+.seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--line-2); border-radius: var(--r-sm); overflow: hidden; }
 .seg button { padding: 5px var(--sp-6); font-size: 13px; color: var(--fg-2); }
 .seg button.on { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
 .seg button + button { border-left: 1px solid var(--line-2); }
