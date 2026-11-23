@@ -1,0 +1,143 @@
+import { useEffect, useState } from 'react'
+import { api } from '../api/client'
+import type { ApiToken } from '../api/types'
+import { ago, useTranslation } from '../i18n'
+import { Modal } from '../ui/Modal'
+import { useToast } from '../ui/Toast'
+import { MOD_LABEL } from '../utils/keyboard'
+import { setLang, setTheme, storedTheme, type Theme } from '../utils/prefs'
+
+export function mcpConfig(secret: string, origin: string): string {
+  return `claude mcp add --transport http papers ${origin}/mcp --header "Authorization: Bearer ${secret}"`
+}
+
+export function ShortcutList() {
+  const { t } = useTranslation()
+  const rows: [string, string][] = [
+    [`${MOD_LABEL} K`, t('keySearch')], [`${MOD_LABEL} S`, t('keySave')], [`${MOD_LABEL} ⇧ H`, t('keyHistory')], [`${MOD_LABEL} \\`, t('keySidebar')],
+    [`${MOD_LABEL} Z / ${MOD_LABEL} ⇧ Z`, t('keyUndo')], ['/', t('keySlash')], ['#  -  1.  []  >  ```', t('keyMarkdown')], [`${MOD_LABEL} B / ${MOD_LABEL} I`, t('keyBold')],
+    ['Tab / ⇧Tab', t('keyIndent')], ['Esc', t('keyEscape')], ['?', t('keyHelp')],
+  ]
+  return (
+    <div className="list">
+      {rows.map(([k, l]) => <div key={k} className="lr" style={{ padding: '8px 14px' }}><span className="lm">{l}</span><span className="kbd" style={{ fontSize: 12, padding: '2px 6px' }}>{k}</span></div>)}
+    </div>
+  )
+}
+
+function NewToken({ onClose, onCreated }: { onClose: () => void; onCreated: (secret: string) => void }) {
+  const { t } = useTranslation()
+  const [name, setName] = useState('Claude')
+  const [kind, setKind] = useState<ApiToken['kind']>('agent')
+  const [scope, setScope] = useState<ApiToken['scope']>('write')
+  const [days, setDays] = useState(90)
+  const [error, setError] = useState('')
+  return (
+    <Modal title={t('createToken')} onClose={onClose} actions={[{ label: t('cancel') }, {
+      label: t('createToken'), kind: 'primary', disabled: !name.trim(), onClick: async () => {
+        try {
+          const res = await api.createToken({ name: name.trim(), kind, scope, ttl_hours: days * 24 })
+          onCreated(res.secret)
+          return true
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e))
+          return false
+        }
+      },
+    }]}>
+      <div className="field"><label htmlFor="tkname">{t('tokenName')}</label><input id="tkname" className="inp" value={name} onChange={(e) => setName(e.target.value)} /></div>
+      <div className="field">
+        <span className="flabel">{t('tokenKind')}</span>
+        {([['agent', t('tokenAgent'), t('tokenAgentDesc')], ['personal', t('tokenPersonal'), t('tokenPersonalDesc')]] as const).map(([k, l, d]) => (
+          <label key={k} className="chk"><input type="radio" name="tkkind" checked={kind === k} onChange={() => setKind(k)} /><span>{l}<span className="muted" style={{ display: 'block', fontSize: 12 }}>{d}</span></span></label>
+        ))}
+      </div>
+      <div className="field">
+        <span className="flabel">{t('tokenScope')}</span>
+        <label className="chk"><input type="radio" name="tkscope" checked={scope === 'write'} onChange={() => setScope('write')} />{t('readWrite')}</label>
+        <label className="chk"><input type="radio" name="tkscope" checked={scope === 'read'} onChange={() => setScope('read')} />{t('readOnly')}</label>
+      </div>
+      <div className="field"><label htmlFor="tkdays">{t('tokenExpiry')}</label>
+        <select id="tkdays" className="inp" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+          {[7, 30, 90, 365].map((n) => <option key={n} value={n}>{t('days', { n })}</option>)}
+        </select>
+      </div>
+      {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+    </Modal>
+  )
+}
+
+/** API tokens, MCP setup, theme, language and the keyboard shortcuts (spec: R15). */
+export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
+  const { t, lang } = useTranslation()
+  const toast = useToast()
+  const [tab, setTab] = useState<'tokens' | 'appearance'>('tokens')
+  const [tokens, setTokens] = useState<ApiToken[]>([])
+  const [creating, setCreating] = useState(false)
+  const [secret, setSecret] = useState<string>()
+  const [theme, setThemeState] = useState<Theme>(storedTheme)
+  const reload = () => void api.listTokens().then(setTokens).catch(() => setTokens([]))
+  useEffect(reload, [])
+  const copy = (s: string) => void navigator.clipboard?.writeText(s).then(() => toast(t('copied')), () => undefined)
+  return (
+    <section className="main">
+      {layoutTop}
+      <div className="scroll"><div className="col wide">
+        <h1 className="page-h">{t('settings')}</h1>
+        <div className="tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'tokens'} className={tab === 'tokens' ? 'on' : ''} onClick={() => setTab('tokens')}>{t('tokens')}</button>
+          <button type="button" role="tab" aria-selected={tab === 'appearance'} className={tab === 'appearance' ? 'on' : ''} onClick={() => setTab('appearance')}>{t('appearance')}</button>
+        </div>
+        {tab === 'tokens' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><button type="button" className="btn primary" onClick={() => setCreating(true)}>＋ {t('createToken')}</button></div>
+            <div className="list">
+              {tokens.length === 0 && <div className="empty">{t('noTokens')}</div>}
+              {tokens.map((tk) => (
+                <div key={tk.id} className="lr">
+                  <span className={`face solo${tk.kind === 'agent' ? ' ai' : ''}`} style={{ background: tk.kind === 'agent' ? 'var(--ai)' : 'var(--accent)' }}>{tk.kind === 'agent' ? '✦' : '⌘'}</span>
+                  <div className="lm">
+                    <div className="lt">{tk.name}</div>
+                    <div className="ls">{[tk.kind === 'agent' ? t('tokenAgent') : t('tokenPersonal'), tk.scope === 'read' ? t('readOnly') : t('readWrite'), tk.last_used_at ? t('lastUsed', { when: ago(tk.last_used_at) }) : t('neverUsed')].join(' · ')}</div>
+                  </div>
+                  <button type="button" className="btn sm danger" onClick={() => void api.revokeToken(tk.id).then(reload)}>{t('revoke')}</button>
+                </div>
+              ))}
+            </div>
+            <h3 style={{ margin: '28px 0 6px', fontSize: 15 }}>{t('mcpSetup')}</h3>
+            <pre className="out">{mcpConfig('pap_…', window.location.origin)}</pre>
+          </>
+        )}
+        {tab === 'appearance' && (
+          <>
+            <div className="field">
+              <span className="flabel">{t('theme')}</span>
+              <div className="seg" role="group" aria-label={t('theme')}>
+                {([['system', t('themeSystem')], ['light', t('themeLight')], ['dark', t('themeDark')]] as const).map(([v, l]) => (
+                  <button key={v} type="button" className={theme === v ? 'on' : ''} aria-pressed={theme === v} onClick={() => { setTheme(v); setThemeState(v) }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
+              <span className="flabel">{t('language')}</span>
+              <div className="seg" role="group" aria-label={t('language')}>
+                <button type="button" className={lang === 'ja' ? 'on' : ''} aria-pressed={lang === 'ja'} onClick={() => setLang('ja')}>日本語</button>
+                <button type="button" className={lang === 'en' ? 'on' : ''} aria-pressed={lang === 'en'} onClick={() => setLang('en')}>English</button>
+              </div>
+            </div>
+            <div className="field"><span className="flabel">{t('shortcuts')}</span><ShortcutList /></div>
+          </>
+        )}
+      </div></div>
+      {creating && <NewToken onClose={() => setCreating(false)} onCreated={(s) => { setSecret(s); reload() }} />}
+      {secret && (
+        <Modal title={t('createToken')} onClose={() => setSecret(undefined)} actions={[{ label: t('done') }, { label: t('copy'), kind: 'primary', onClick: () => { copy(secret); return false } }]}>
+          <p className="banner warn" style={{ margin: '0 0 10px' }}>{t('tokenOnce')}</p>
+          <pre className="out">{secret}</pre>
+          <p style={{ marginBottom: 4 }}>{t('mcpSetup')}</p>
+          <pre className="out">{mcpConfig(secret, window.location.origin)}</pre>
+        </Modal>
+      )}
+    </section>
+  )
+}

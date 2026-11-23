@@ -1,6 +1,6 @@
 import type {
-  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, Forward, Me, Op, Paper, PaperRef, PaperStatusInfo,
-  PaperView, SearchHit, Sidebar, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
+  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, Forward, Me, Op, Paper, PaperListItem, PaperListQuery, PaperRef,
+  PaperStatusInfo, PaperView, SearchHit, Sidebar, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
 } from './types'
 
 export class ApiError extends Error {
@@ -22,6 +22,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired when an API call finds the sign-in gone (the session expired). */
+export const UNAUTHORIZED = 'papers:unauthorized'
+
 async function request<T>(method: string, path: string, body?: unknown, raw?: { type: string; data: Blob }): Promise<T> {
   const headers: Record<string, string> = { 'X-Requested-With': 'papers' }
   let payload: BodyInit | undefined
@@ -33,6 +36,7 @@ async function request<T>(method: string, path: string, body?: unknown, raw?: { 
     payload = JSON.stringify(body)
   }
   const res = await fetch(path, { method, headers, credentials: 'same-origin', body: payload })
+  if (res.status === 401 && path.startsWith('/api/v1/')) window.dispatchEvent(new Event(UNAUTHORIZED))
   if (res.status === 204) return undefined as T
   const text = await res.text()
   if (!res.ok) {
@@ -68,8 +72,16 @@ export const api = {
   search: (ws: string, q: string, under = '') =>
     request<{ hits: SearchHit[] }>('GET', `${wsPath(ws)}/search?q=${enc(q)}${under ? `&under=${enc(under)}` : ''}`).then((r) => r.hits),
   trash: (ws: string) => request<{ papers: PaperRef[] }>('GET', `${wsPath(ws)}/trash`).then((r) => r.papers),
+  /** Without a parent a public paper is created unfiled. */
   createPaper: (ws: string, input: { title: string; visibility?: Visibility; parent?: string; after?: string }) =>
     request<Paper>('POST', `${wsPath(ws)}/papers`, { title: input.title, visibility: input.visibility ?? 'public', parent: input.parent ?? '', after: input.after ?? null, markdown: '' }),
+  listPapers: (ws: string, q: PaperListQuery = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(q).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') params.set(k, String(v))
+    })
+    return request<{ papers: PaperListItem[]; next_cursor: string }>('GET', `${wsPath(ws)}/papers?${params.toString()}`)
+  },
 
   getPaper: (ws: string, paper: string) => request<PaperView>('GET', paperPath(ws, paper)),
   blocks: (ws: string, paper: string, after = '', limit = 200) =>
@@ -87,14 +99,17 @@ export const api = {
     request<Diff>('GET', `${paperPath(ws, paper)}/diff?from=${enc(from)}&to=${enc(to)}`),
   move: (ws: string, paper: string, input: { parent: string; after?: string; workspace?: string }) =>
     request<BatchResult>('POST', `${paperPath(ws, paper)}/move`, { parent: input.parent, after: input.after ?? null, workspace: input.workspace ?? '' }),
+  /** Takes a paper without children out of the tree (it becomes unfiled). */
+  unfile: (ws: string, paper: string) => request<BatchResult>('POST', `${paperPath(ws, paper)}/move`, { unfiled: true }),
+  /** Public without a parent makes the paper unfiled. */
   setVisibility: (ws: string, paper: string, visibility: Visibility, parent = '') =>
     request<BatchResult>('PUT', `${paperPath(ws, paper)}/visibility`, { visibility, parent, after: null }),
   archive: (ws: string, paper: string, archived: boolean, subtree: boolean) =>
     request<BatchResult>('POST', `${paperPath(ws, paper)}/${archived ? 'archive' : 'unarchive'}`, { subtree }),
   trashPaper: (ws: string, paper: string) => request<BatchResult>('POST', `${paperPath(ws, paper)}/trash`),
   restorePaper: (ws: string, paper: string) => request<BatchResult>('POST', `${paperPath(ws, paper)}/restore`),
-  pin: (ws: string, paper: string) => request<void>('PUT', `${paperPath(ws, paper)}/pin`, { after: null }),
-  unpin: (ws: string, paper: string) => request<void>('DELETE', `${paperPath(ws, paper)}/pin`),
+  favorite: (ws: string, paper: string) => request<void>('PUT', `${paperPath(ws, paper)}/favorite`, { after: null }),
+  unfavorite: (ws: string, paper: string) => request<void>('DELETE', `${paperPath(ws, paper)}/favorite`),
   presence: (ws: string, paper: string, blockId: string, leaving: boolean) =>
     request<void>('POST', `${paperPath(ws, paper)}/presence`, { block_id: blockId, leaving }),
   upload: (ws: string, paper: string, file: File) =>

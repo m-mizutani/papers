@@ -1,162 +1,158 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink, useNavigate } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router'
 import { api } from '../api/client'
 import type { Me, PaperRef, Sidebar as SidebarData, Workspace, WorkspaceGroup } from '../api/types'
 import { useTranslation } from '../i18n'
+import { Menu, type MenuItem } from '../ui/Menu'
+import { actorColor, initials } from '../utils/actors'
+import { MOD_LABEL } from '../utils/keyboard'
 
-/** A sidebar entry whose children load when it is opened. */
-function TreeItem({ ws, paper, depth = 0, extra }: { ws: string; paper: PaperRef; depth?: number; extra?: ReactNode }) {
+/** A tree entry whose children load when it is opened. */
+function TreeItem({ ws, paper, depth, current, expand, version, label, icon, onUnfavorite, onNewInside }: {
+  ws: string
+  paper: PaperRef
+  depth: number
+  current?: string
+  /** Papers to open: the ancestors of the open paper. */
+  expand: Set<string>
+  version: number
+  label?: string
+  icon?: string
+  onUnfavorite?: () => void
+  onNewInside: (parent: string) => void
+}) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(expand.has(paper.id))
   const [kids, setKids] = useState<PaperRef[]>()
-  const toggle = () => {
-    if (!open && !kids) void api.children(ws, paper.id).then(setKids).catch(() => setKids([]))
-    setOpen(!open)
-  }
+  useEffect(() => {
+    if (expand.has(paper.id)) setOpen(true)
+  }, [expand, paper.id])
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    void api.children(ws, paper.id).then((k) => { if (live) setKids(k.filter((x) => x.status !== 'archived')) }).catch(() => { if (live) setKids([]) })
+    return () => { live = false }
+  }, [open, ws, paper.id, version])
+  const canHaveChildren = paper.visibility === 'public' && (!!paper.parent_id || label !== undefined)
+  const leaf = kids !== undefined && kids.length === 0
+  const to = label !== undefined ? `/ws/${ws}` : `/ws/${ws}/p/${paper.id}`
   return (
-    <li>
-      <div className="tree-row" style={{ paddingLeft: `${depth * 0.75}rem` }}>
-        <button type="button" className="twisty" aria-label={open ? t('collapse') : t('expand')} aria-expanded={open} onClick={toggle}>{open ? '▾' : '▸'}</button>
-        <NavLink className="nav-item" to={`/ws/${ws}/p/${paper.id}`} end>{paper.title || t('untitled')}</NavLink>
-        {extra}
+    <div>
+      <div className={`tree-item${current === paper.id ? ' active' : ''}`} style={{ paddingLeft: depth * 14 }}>
+        <button type="button" className={`tw${leaf || !canHaveChildren ? ' leaf' : ''}`} aria-label={open ? t('collapse') : t('expand')} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'}</button>
+        {icon && <span className="ticon" aria-hidden>{icon}</span>}
+        <Link className="tl" to={to}>{label ?? (paper.title || t('untitled'))}</Link>
+        <span className="ta">
+          {canHaveChildren && <button type="button" title={t('newInside', { title: label ?? (paper.title || t('untitled')) })} aria-label={t('newInside', { title: label ?? (paper.title || t('untitled')) })} onClick={() => onNewInside(paper.id)}>＋</button>}
+          {onUnfavorite && <button type="button" title={t('removeFavorite')} aria-label={t('removeFavorite')} onClick={onUnfavorite}>✕</button>}
+        </span>
       </div>
-      {open && kids && (
-        <ul className="nav-list">
-          {kids.length === 0 && <li className="tree-empty" style={{ paddingLeft: `${(depth + 2) * 0.75}rem` }}>{t('noChildren')}</li>}
-          {kids.map((k) => <TreeItem key={k.id} ws={ws} paper={k} depth={depth + 1} />)}
-        </ul>
-      )}
-    </li>
+      {open && kids?.map((k) => <TreeItem key={k.id} ws={ws} paper={k} depth={depth + 1} current={current} expand={expand} version={version} onNewInside={onNewInside} />)}
+    </div>
   )
 }
 
-function groupWorkspaces(workspaces: Workspace[], groups: WorkspaceGroup[]): { name: string; items: Workspace[] }[] {
+export function groupWorkspaces(workspaces: Workspace[], groups: WorkspaceGroup[], other: string): { name: string; items: Workspace[] }[] {
   const byId = new Map(workspaces.map((w) => [w.id, w]))
   const grouped = new Set(groups.flatMap((g) => g.workspaces))
-  const out = groups.map((g) => ({ name: g.name, items: g.workspaces.flatMap((id) => byId.get(id) ?? []) }))
+  const out = groups.map((g) => ({ name: g.name, items: g.workspaces.flatMap((id) => byId.get(id) ?? []) })).filter((g) => g.items.length)
   const rest = workspaces.filter((w) => !grouped.has(w.id))
-  if (rest.length) out.push({ name: '', items: rest })
+  if (rest.length) out.push({ name: out.length ? other : '', items: rest })
   return out
 }
 
-export function Sidebar({ me, workspaces, groups, current, version, onSearch }: {
+export function Sidebar({ me, workspaces, ws, data, current, expand, version, active, onSearch, onNew, onNewInside, onSignOut, onChanged }: {
   me: Me
   workspaces: Workspace[]
-  groups: WorkspaceGroup[]
+  ws: string
+  data?: SidebarData
   current?: string
-  /** Bumped by the page when the tree or pins may have changed. */
+  expand: Set<string>
   version: number
-  onSearch: (q: string) => void
+  active?: 'papers' | 'trash' | 'settings'
+  onSearch: () => void
+  onNew: () => void
+  onNewInside: (parent: string) => void
+  onSignOut: () => void
+  onChanged: () => void
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [data, setData] = useState<SidebarData>()
-  const [q, setQ] = useState('')
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; items: MenuItem[] } | null>(null)
+  const w = workspaces.find((x) => x.id === ws)
 
-  useEffect(() => {
-    if (!current) {
-      setData(undefined)
-      return
-    }
-    void api.sidebar(current).then(setData).catch(() => setData(undefined))
-  }, [current, version])
-
-  const signOut = async () => {
-    await api.logout()
-    window.location.href = '/login'
-  }
-
-  const newPaper = async (visibility: 'public' | 'private') => {
-    if (!current) return
-    const title = window.prompt(t('newPaperTitle'))
-    if (title === null) return
-    const p = await api.createPaper(current, { title, visibility })
-    navigate(`/ws/${current}/p/${p.id}`)
-  }
-
-  const unpin = async (id: string) => {
-    if (!current) return
-    await api.unpin(current, id)
-    setData(await api.sidebar(current))
-  }
+  const wsMenu = (anchor: HTMLElement) => setMenu({
+    anchor,
+    items: [
+      { head: t('workspaces') },
+      ...workspaces.map((x) => ({ label: x.name, icon: x.emoji ?? '▦', desc: x.id === ws ? '✓' : undefined, onSelect: () => navigate(`/ws/${x.id}`) })),
+      '-',
+      { label: t('allWorkspaces'), icon: '▦', onSelect: () => navigate('/workspaces') },
+    ],
+  })
+  const meMenu = (anchor: HTMLElement) => setMenu({
+    anchor,
+    items: [
+      { note: me.user.email || me.user.name },
+      { label: t('allWorkspaces'), icon: '▦', onSelect: () => navigate('/workspaces') },
+      { label: t('signOut'), icon: '⎋', onSelect: onSignOut },
+    ],
+  })
+  const unfavorite = (id: string) => void api.unfavorite(ws, id).then(onChanged).catch(() => undefined)
+  const count = data?.unfiled_count ?? 0
 
   return (
-    <nav className="sidebar" aria-label={t('navigation')}>
-      <div className="brand"><span className="brand-mark" aria-hidden />{t('appName')}</div>
-
-      <section>
-        <h2>{t('workspaces')}</h2>
-        {groupWorkspaces(workspaces, groups).map((g) => (
-          <div key={g.name || '-'}>
-            {g.name && <h3 className="group-name">{g.name}</h3>}
-            <ul className="nav-list">
-              {g.items.map((w) => (
-                <li key={w.id}>
-                  <NavLink className="nav-item" to={`/ws/${w.id}`} aria-current={w.id === current ? 'page' : undefined}>
-                    <span aria-hidden className="ws-mark" style={w.color ? { background: w.color } : undefined}>{w.emoji || '▤'}</span>
-                    {w.name}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </section>
-
-      {current && data && (
-        <>
-          <form className="inline-form" role="search" onSubmit={(e) => { e.preventDefault(); if (q.trim()) onSearch(q.trim()) }}>
-            <input className="field" type="search" value={q} placeholder={t('searchPlaceholder')} aria-label={t('searchPlaceholder')} onChange={(e) => setQ(e.target.value)} />
-          </form>
-          <section>
-            <ul className="nav-list">
-              {data.home && <li><NavLink className="nav-item" to={`/ws/${current}`} end>⌂ {t('home')}</NavLink></li>}
-            </ul>
-          </section>
-          <section>
-            <h2>{t('pins')}</h2>
-            {data.pins.length === 0 && <p className="nav-empty">{t('noPins')}</p>}
-            <ul className="nav-list tree">
-              {data.pins.map((p) => (
-                <TreeItem key={p.id} ws={current} paper={p} extra={
-                  <button type="button" className="tool" title={t('unpin')} aria-label={t('unpin')} onClick={() => void unpin(p.id)}>×</button>
-                } />
-              ))}
-            </ul>
-          </section>
-          <section>
-            <h2>{t('recent')}</h2>
-            <ul className="nav-list">
-              {data.recent.map((p) => (
-                <li key={p.id}><NavLink className="nav-item" to={`/ws/${current}/p/${p.id}`}>{p.title || t('untitled')}</NavLink></li>
-              ))}
-            </ul>
-          </section>
-          <section>
-            <h2>{t('privatePapers')}</h2>
-            <ul className="nav-list">
-              {data.private.map((p) => (
-                <li key={p.id}><NavLink className="nav-item" to={`/ws/${current}/p/${p.id}`}>🔒 {p.title || t('untitled')}</NavLink></li>
-              ))}
-            </ul>
-            <button type="button" className="nav-item" onClick={() => void newPaper('private')}>+ {t('newPrivatePaper')}</button>
-          </section>
-          <section>
-            <button type="button" className="nav-item" onClick={() => void newPaper('public')}>+ {t('newPaper')}</button>
-            <NavLink className="nav-item" to={`/ws/${current}/trash`}>{t('trash')}</NavLink>
-          </section>
-        </>
-      )}
-
-      <div className="sidebar-foot">
-        {me.no_authn && <span className="dev-banner">{me.demo ? t('demoMode') : t('devMode')}</span>}
-        <NavLink className="nav-item" to="/settings/tokens">{t('tokens')}</NavLink>
-        <div className="me">
-          {me.user.avatar_url ? <img className="avatar" src={me.user.avatar_url} alt="" referrerPolicy="no-referrer" /> : <span className="avatar" aria-hidden />}
-          <span>{me.user.name || me.user.email}</span>
-        </div>
-        {!me.no_authn && <button type="button" className="nav-item" onClick={() => void signOut()}>{t('signOut')}</button>}
+    <aside className="sb" aria-label={t('workspace')}>
+      <div className="sb-top">
+        <button type="button" className="ws-btn" aria-haspopup="menu" onClick={(e) => wsMenu(e.currentTarget)}>
+          <span className="ws-emoji">{w?.emoji ?? '▦'}</span>
+          <span className="ws-name">{w?.name ?? ws}</span>
+          <span className="muted" aria-hidden>⌄</span>
+        </button>
+        <Link className={`sb-row${active === 'papers' ? ' active' : ''}`} to={`/ws/${ws}/papers`}>
+          <span className="ic" aria-hidden>☰</span><span className="lbl">{t('papers')}</span>
+          {count > 0 && <span className="badge" title={t('unfiledCount', { n: count >= 100 ? '99+' : count })}>{count >= 100 ? '99+' : count}</span>}
+        </Link>
+        <button type="button" className="sb-row" onClick={onSearch}>
+          <span className="ic" aria-hidden>⌕</span><span className="lbl">{t('search')}</span><span className="kbd">{MOD_LABEL}K</span>
+        </button>
+        <button type="button" className="sb-row" onClick={onNew}>
+          <span className="ic" aria-hidden>＋</span><span className="lbl">{t('newPaper')}</span>
+        </button>
       </div>
-    </nav>
+      <div className="sb-scroll">
+        {data?.home && (
+          <div className="sb-sec first">
+            <TreeItem ws={ws} paper={data.home} depth={0} current={current} expand={expand} version={version} label={t('home')} icon="⌂" onNewInside={onNewInside} />
+          </div>
+        )}
+        {!!data?.favorites.length && (
+          <div className="sb-sec">
+            <div className="sb-h">{t('favorites')}</div>
+            {data.favorites.map((f) => <TreeItem key={f.id} ws={ws} paper={f} depth={0} current={current} expand={expand} version={version} onUnfavorite={() => unfavorite(f.id)} onNewInside={onNewInside} />)}
+          </div>
+        )}
+        {!!data?.recent.length && (
+          <div className="sb-sec">
+            <div className="sb-h">{t('recent')}</div>
+            {data.recent.slice(0, 5).map((r) => (
+              <div key={r.id} className={`tree-item${current === r.id ? ' active' : ''}`}>
+                <span className="tw leaf" />
+                <Link className="tl" to={`/ws/${ws}/p/${r.id}`}>{r.visibility === 'private' ? '🔒 ' : ''}{r.title || t('untitled')}</Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="sb-foot">
+        <Link className={`sb-row${active === 'trash' ? ' active' : ''}`} to={`/ws/${ws}/trash`}><span className="ic" aria-hidden>🗑</span><span className="lbl">{t('trash')}</span></Link>
+        <Link className={`sb-row${active === 'settings' ? ' active' : ''}`} to="/settings"><span className="ic" aria-hidden>⚙</span><span className="lbl">{t('settings')}</span></Link>
+        <button type="button" className="sb-row" onClick={(e) => meMenu(e.currentTarget)}>
+          <span className="face solo" style={{ background: actorColor({ kind: 'human', user_id: me.user.id, name: me.user.name }) }}>{initials(me.user.name)}</span>
+          <span className="lbl">{me.user.name}</span>
+        </button>
+      </div>
+      {menu && <Menu anchor={menu.anchor} items={menu.items} onClose={() => setMenu(null)} />}
+    </aside>
   )
 }

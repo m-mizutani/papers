@@ -2,7 +2,7 @@ import type {
   Actor, BatchResult, Block, BlockProps, BlockType, Conflict, Diff, Op, Paper, PaperEvent, PaperRef, TableLine, VersionSummary,
 } from '../api/types'
 import { normalize as normalizeMarkup } from '../markup/markup'
-import { keyBetween } from './order'
+import { keyBetween } from '../utils/order'
 import { ALICE, BOB, ME, claudeFor, human, seed } from './seed'
 
 // An in-browser stand-in for the Go server, used by the demo build. It keeps
@@ -39,8 +39,9 @@ const data = seed()
 const workspaces = new Map(data.workspaces.map((w) => [w.id, w]))
 const papers = new Map<string, PaperData>()
 for (const p of data.papers) papers.set(p.paper.id, { paper: p.paper, blocks: new Map(p.blocks.map((b) => [b.id, b])), versions: [] })
-const pins = new Map<string, string[]>()
+const favorites = new Map<string, string[]>()
 const recents = new Map<string, string[]>()
+const opened = new Map<string, string>()
 const sockets = new Set<Socket>()
 
 const ALNUM = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
@@ -82,7 +83,8 @@ function normalizeProps(type: BlockType, p: BlockProps): BlockProps {
     case 'table': return { rows: p.rows, cols: p.cols, header_row: p.header_row }
     case 'table_cell': return { row_id: p.row_id, col_id: p.col_id }
     case 'paper': return { paper_id: p.paper_id }
-    case 'html': case 'svg': case 'mermaid': return { height: p.height }
+    case 'html': case 'svg': return { height: p.height, fields: p.fields }
+    case 'mermaid': return { height: p.height }
     default: return {}
   }
 }
@@ -324,6 +326,60 @@ function childRefs(blocks: Block[]): Record<string, PaperRef> {
   return out
 }
 
+/** A paper in the tree: the home or a public paper under it (unfiled papers have no parent). */
+function filed(p: Paper, home: string): boolean {
+  return p.id === home || (p.visibility === 'public' && !!p.parent_id)
+}
+
+function listPapers(ws: string, home: string, q: URLSearchParams) {
+  const place = q.get('place') ?? 'unfiled'
+  const creator = q.get('creator') ?? 'me'
+  const vis = q.get('visibility') ?? 'all'
+  const archived = q.get('archived') === 'true'
+  const sort = q.get('sort') === 'created' ? 'created_at' : 'updated_at'
+  const limit = Number(q.get('limit') ?? 50) || 50
+  const offset = Number(q.get('cursor') ?? 0) || 0
+  const rows = [...papers.values()].map((x) => x.paper).filter((x) => x.workspace_id === ws && x.id !== home && sees(x) && !x.deleted_at
+    && (place === 'all' || (place === 'unfiled') === !filed(x, home))
+    && (creator === 'all' || x.created_by.user_id === ME.id)
+    && (vis === 'all' || x.visibility === vis)
+    && (archived || !x.archived_at))
+    .sort((a, b) => (a[sort] < b[sort] ? 1 : a[sort] > b[sort] ? -1 : 0))
+  const page = rows.slice(offset, offset + limit).map((x) => {
+    const parent = x.parent_id ? papers.get(x.parent_id)?.paper : undefined
+    return { ...refOf(x), created_at: x.created_at, updated_at: x.updated_at, parent: parent ? { id: parent.id, title: parent.title } : null }
+  })
+  return { papers: page, next_cursor: offset + limit < rows.length ? String(offset + limit) : '' }
+}
+
+/** Moves a paper under another one, or takes it out of the tree (unfiled). */
+function move(d: PaperData, ws: string, b: Record<string, unknown>): BatchResult {
+  const home = workspaces.get(ws)?.home_paper_id ?? ''
+  if (d.paper.id === home) throw new HttpError(400, 'invalid_argument', 'the home paper cannot be moved')
+  if (b.workspace && b.workspace !== ws) throw new HttpError(400, 'invalid_argument', 'not available in the demo')
+  if (!b.unfiled && !b.parent) throw new HttpError(400, 'invalid_argument', 'parent is required')
+  if (b.unfiled && kidsOf(d).length) throw new HttpError(400, 'invalid_argument', 'a paper with children cannot be unfiled')
+  const old = papers.get(d.paper.parent_id ?? '')
+  const pb = old && [...old.blocks.values()].find((x) => x.type === 'paper' && x.props.paper_id === d.paper.id)
+  if (old && pb) {
+    // The paper itself moves; only its block in the old parent goes.
+    old.blocks.delete(pb.id)
+    publish(old.paper.id, { type: 'block_deleted', block_id: pb.id })
+  }
+  if (b.unfiled) {
+    d.paper = { ...d.paper, parent_id: undefined, visibility: 'public', updated_at: now() }
+    return { paper: d.paper, blocks: [], deleted: [], refs: {} }
+  }
+  const parent = papers.get(String(b.parent))
+  if (!parent || parent.paper.id === d.paper.id || !filed(parent.paper, home)) throw new HttpError(400, 'invalid_argument', 'parent not found')
+  const order = keyBetween(childrenOf(parent.blocks, '').at(-1)?.order ?? '', '')
+  const nb: Block = { id: newId(), workspace_id: ws, paper_id: parent.paper.id, order, type: 'paper', content: '', props: { paper_id: d.paper.id }, rev: 1, created_by: human(ME), created_at: now(), updated_by: human(ME), updated_at: now() }
+  parent.blocks.set(nb.id, nb)
+  publish(parent.paper.id, { type: 'block_put', block: clone(nb) })
+  d.paper = { ...d.paper, parent_id: parent.paper.id, visibility: 'public', updated_at: now() }
+  return { paper: d.paper, blocks: [], deleted: [], refs: {} }
+}
+
 // ---------------------------------------------------------------- HTTP
 
 export function handle(method: string, url: URL, body: unknown): { status: number; json?: unknown } {
@@ -336,7 +392,13 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
     if (p === '/api/v1/tokens' && method === 'GET') return { status: 200, json: { tokens: [{ id: 't-claude', name: 'Claude', kind: 'agent', agent_name: 'Claude', scope: 'write', created_at: now(), last_used_at: now() }] } }
     if (p === '/api/v1/tokens' && method === 'POST') return { status: 201, json: { token: { id: newId(), name: b.name, kind: b.kind, scope: b.scope, created_at: now() }, secret: 'pap_demo-token.this-is-not-a-real-secret' } }
     if (p.startsWith('/api/v1/tokens/')) return { status: 204 }
-    if (p === '/api/v1/workspaces') return { status: 200, json: { workspaces: [...workspaces.values()], groups: [{ name: 'Teams', workspaces: ['security'] }] } }
+    if (p === '/api/v1/workspaces') {
+      const list = [...workspaces.values()].map((w) => {
+        const last = (recents.get(w.id) ?? []).map((id) => papers.get(id)?.paper).find((x): x is Paper => !!x && sees(x) && !x.deleted_at)
+        return { ...w, last_opened: last ? { paper_id: last.id, title: last.title, opened_at: opened.get(last.id) ?? now() } : null }
+      })
+      return { status: 200, json: { workspaces: list, groups: [{ name: 'Teams', workspaces: ['security'] }] } }
+    }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/sidebar$/))) {
       const ws = workspaces.get(m[1] ?? '')
       if (!ws) throw new HttpError(404, 'not_found', 'workspace not found')
@@ -344,9 +406,10 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
       const list = (ids: string[]) => ids.map(live).filter((x): x is Paper => !!x && sees(x) && !x.deleted_at).map(refOf)
       return { status: 200, json: {
         home: refOf(papers.get(ws.home_paper_id)?.paper as Paper),
-        pins: list(pins.get(ws.id) ?? []),
+        favorites: list(favorites.get(ws.id) ?? []),
         recent: list(recents.get(ws.id) ?? []),
-        private: [...papers.values()].filter((x) => x.paper.workspace_id === ws.id && x.paper.visibility === 'private' && x.paper.created_by.user_id === ME.id && !x.paper.deleted_at).map((x) => refOf(x.paper)),
+        unfiled_count: Math.min(100, [...papers.values()].filter((x) => x.paper.workspace_id === ws.id && !x.paper.parent_id && x.paper.id !== ws.home_paper_id
+          && x.paper.created_by.user_id === ME.id && !x.paper.deleted_at && !x.paper.archived_at).length),
       } }
     }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/search$/))) {
@@ -365,16 +428,22 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/papers$/)) && method === 'POST') {
       const ws = workspaces.get(m[1] ?? '')
       if (!ws) throw new HttpError(404, 'not_found', 'workspace not found')
-      if (b.visibility === 'private') {
-        const paper: Paper = { id: newId(), workspace_id: ws.id, title: String(b.title ?? ''), visibility: 'private', version_number: 0, created_by: human(ME), created_at: now(), updated_by: human(ME), updated_at: now() }
+      if (b.visibility === 'private' || !b.parent) {
+        // Private papers and public papers without a parent stand alone (unfiled).
+        const paper: Paper = { id: newId(), workspace_id: ws.id, title: String(b.title ?? ''), visibility: b.visibility === 'private' ? 'private' : 'public', version_number: 0, created_by: human(ME), created_at: now(), updated_by: human(ME), updated_at: now() }
         papers.set(paper.id, { paper, blocks: new Map(), versions: [] })
         return { status: 201, json: paper }
       }
-      const parent = papers.get(String(b.parent || ws.home_paper_id)) ?? papers.get(ws.home_paper_id)
-      if (!parent) throw new HttpError(400, 'invalid_argument', 'parent not found')
+      const parent = papers.get(String(b.parent))
+      if (!parent || !filed(parent.paper, ws.home_paper_id)) throw new HttpError(400, 'invalid_argument', 'parent not found')
       const r = apply(parent, human(ME), [{ op: 'insert', type: 'paper', title: String(b.title ?? ''), after: (b.after as string | null) ?? undefined }])
       const child = r.blocks?.find((x) => x.type === 'paper')?.props.paper_id ?? ''
       return { status: 201, json: papers.get(child)?.paper }
+    }
+    if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/papers$/)) && method === 'GET') {
+      const ws = workspaces.get(m[1] ?? '')
+      if (!ws) throw new HttpError(404, 'not_found', 'workspace not found')
+      return { status: 200, json: listPapers(ws.id, ws.home_paper_id, url.searchParams) }
     }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/papers\/([^/]+)(\/.*)?$/))) {
       const ws = m[1] ?? ''
@@ -391,6 +460,7 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
         }
         const w = workspaces.get(ws)
         recents.set(ws, [d.paper.id, ...(recents.get(ws) ?? []).filter((x) => x !== d.paper.id)].slice(0, 10))
+        opened.set(d.paper.id, now())
         return ok({ workspace: w, paper: d.paper, path, is_home: w?.home_paper_id === d.paper.id })
       }
       if (rest === '/blocks') {
@@ -448,13 +518,15 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
         }
         return ok({ paper: d.paper, refs: {} })
       }
-      if (rest === '/pin') {
-        const list = (pins.get(ws) ?? []).filter((x) => x !== d.paper.id)
-        pins.set(ws, method === 'DELETE' ? list : [...list, d.paper.id])
+      if (rest === '/favorite') {
+        if (workspaces.get(ws)?.home_paper_id === d.paper.id || d.paper.visibility === 'private') throw new HttpError(400, 'invalid_argument', 'the home and private papers cannot be favorites')
+        const list = (favorites.get(ws) ?? []).filter((x) => x !== d.paper.id)
+        favorites.set(ws, method === 'DELETE' ? list : [...list, d.paper.id])
         return { status: 204 }
       }
+      if (rest === '/move') return ok(move(d, ws, b))
       if (rest === '/presence') return { status: 204 }
-      if (rest === '/visibility' || rest === '/move' || rest.startsWith('/attachments')) {
+      if (rest === '/visibility' || rest.startsWith('/attachments')) {
         throw new HttpError(400, 'invalid_argument', 'not available in the demo')
       }
     }
