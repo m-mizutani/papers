@@ -17,7 +17,7 @@ type Repository interface {
 	WorkspaceRepository
 	PaperRepository
 	SearchRepository
-	PinRepository
+	FavoriteRepository
 	AttachmentRepository
 	JobRepository
 	Close() error
@@ -71,7 +71,14 @@ type PaperRepository interface {
 	ListChildren(ctx context.Context, ws model.WorkspaceID, parent model.PaperID) ([]*model.Paper, error)
 	// ListChildrenOf lists the papers whose ParentID is any of parents.
 	ListChildrenOf(ctx context.Context, ws model.WorkspaceID, parents []model.PaperID) ([]*model.Paper, error)
-	ListPrivatePapers(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error)
+	// ListPapers reads a page of the workspace's papers: only those
+	// without a parent when q.Unfiled, only q.Creator's when set, ordered
+	// by q.Sort descending and then by ID descending, after q.Cursor. It
+	// returns the cursor of the next page, or "" when there is none.
+	ListPapers(ctx context.Context, ws model.WorkspaceID, q model.PaperQuery) ([]*model.Paper, string, error)
+	// GetPapersIn reads papers of several workspaces in one round trip.
+	// Missing ones are omitted.
+	GetPapersIn(ctx context.Context, keys []model.PaperKey) ([]*model.Paper, error)
 	// ListTrash lists the owner's papers that are in the trash.
 	ListTrash(ctx context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error)
 	// ListTrashedBefore lists papers whose DeletedAt is before t.
@@ -153,11 +160,18 @@ type SearchRepository interface {
 	Search(ctx context.Context, ws model.WorkspaceID, q model.SearchQuery, limit int) ([]*model.SearchEntry, error)
 }
 
-type PinRepository interface {
-	ListPins(ctx context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Pin, error)
-	PutPin(ctx context.Context, pin *model.Pin) error
-	DeletePin(ctx context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error
+// FavoriteRepository keeps what each user keeps at hand: favorites and
+// recently opened papers.
+type FavoriteRepository interface {
+	// ListFavorites lists the user's favorites in the workspace by order
+	// key.
+	ListFavorites(ctx context.Context, user model.UserID, ws model.WorkspaceID) ([]*model.Favorite, error)
+	PutFavorite(ctx context.Context, f *model.Favorite) error
+	DeleteFavorite(ctx context.Context, user model.UserID, ws model.WorkspaceID, paper model.PaperID) error
 	GetRecent(ctx context.Context, user model.UserID, ws model.WorkspaceID) (*model.Recent, error)
+	// GetRecents reads the user's recent lists of several workspaces in
+	// one round trip. Workspaces without one are omitted.
+	GetRecents(ctx context.Context, user model.UserID, wss []model.WorkspaceID) ([]*model.Recent, error)
 	PutRecent(ctx context.Context, r *model.Recent) error
 }
 

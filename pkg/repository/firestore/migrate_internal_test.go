@@ -396,7 +396,13 @@ func TestMigrateReportsUnmanagedIndexes(t *testing.T) {
 		gt.NoError(t, err)
 		gt.Equal(t, statuses(r)[IndexDeleted], 1)
 		gt.Equal(t, f.calls["DeleteIndex"], 1)
-		gt.Equal(t, len(f.indexes[parentOf(colPapers)]), 4)
+		wantPapers := 0
+		for _, s := range RequiredIndexes {
+			if s.CollectionGroup == colPapers {
+				wantPapers++
+			}
+		}
+		gt.Equal(t, len(f.indexes[parentOf(colPapers)]), wantPapers)
 		for _, p := range f.listed {
 			found := false
 			for _, s := range RequiredIndexes {

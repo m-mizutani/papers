@@ -143,6 +143,47 @@ type VersionView struct {
 	Version *VersionSummary `json:"version"`
 	Paper   *model.Paper    `json:"paper"`
 	Blocks  []*model.Block  `json:"blocks"`
+	// Children says what restoring this version does with each child paper
+	// it has, so that the UI can warn before restoring.
+	Children []*ChildOutcome `json:"children"`
+}
+
+// What restoring a version does with one of its child papers.
+const (
+	ChildKept      = "kept"       // still a child here
+	ChildFromTrash = "from_trash" // comes back from the caller's trash
+	ChildMoved     = "moved"      // now under another parent: not restored
+	ChildTrashed   = "trashed"    // in someone else's trash: not restored
+	ChildMissing   = "missing"    // gone for good: not restored
+)
+
+// ChildOutcome is what restoring a version does with one child paper. The
+// title is given only for papers the caller may see.
+type ChildOutcome struct {
+	PaperID model.PaperID `json:"paper_id"`
+	Title   string        `json:"title,omitempty"`
+	Outcome string        `json:"outcome"`
+}
+
+// childOutcome mirrors childBack without changing anything.
+func childOutcome(p *model.Principal, parent model.PaperID, id model.PaperID, q *model.Paper) *ChildOutcome {
+	out := &ChildOutcome{PaperID: id}
+	switch {
+	case q == nil:
+		out.Outcome = ChildMissing
+	case q.ParentID != parent:
+		out.Outcome = ChildMoved
+	case !q.IsTrashed():
+		out.Outcome = ChildKept
+	case p.Owns(q):
+		out.Outcome = ChildFromTrash
+	default:
+		out.Outcome = ChildTrashed
+	}
+	if q != nil && p.SeesPaper(q) {
+		out.Title = q.Title
+	}
+	return out
 }
 
 func assemble(paper *model.Paper, vbs []model.VersionBlock, snaps []*model.BlockSnapshot) []*model.Block {
@@ -210,7 +251,28 @@ func (u *UseCases) GetVersion(ctx context.Context, p *model.Principal, ws model.
 	}
 	view := paper.Clone()
 	view.Title = v.Title
-	return &VersionView{Version: summarize(v), Paper: view, Blocks: assemble(paper, v.Blocks, snaps)}, nil
+	blocks := assemble(paper, v.Blocks, snaps)
+	var ids []model.PaperID
+	for _, b := range blocks {
+		if b.Type == model.BlockPaper && b.Props.PaperID != "" {
+			ids = append(ids, b.Props.PaperID)
+		}
+	}
+	children := []*ChildOutcome{}
+	if len(ids) > 0 {
+		kids, err := u.repo.GetPapers(ctx, ws, ids)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to get child papers")
+		}
+		byID := make(map[model.PaperID]*model.Paper, len(kids))
+		for _, k := range kids {
+			byID[k.ID] = k
+		}
+		for _, cid := range ids {
+			children = append(children, childOutcome(p, paper.ID, cid, byID[cid]))
+		}
+	}
+	return &VersionView{Version: summarize(v), Paper: view, Blocks: blocks, Children: children}, nil
 }
 
 // Status tells whether the current state differs from the latest version.

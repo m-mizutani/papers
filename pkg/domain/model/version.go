@@ -15,9 +15,12 @@ type Version struct {
 	Number      int            `json:"number"`
 	Title       string         `json:"title"`
 	Blocks      []VersionBlock `json:"blocks"`
-	Note        string         `json:"note,omitempty"`
-	CreatedBy   Actor          `json:"created_by"`
-	CreatedAt   time.Time      `json:"created_at"`
+	// Note says what changed in this version. Agents write one through
+	// save_version; people's saves leave it empty for now. It is kept so
+	// that people can be given a way to write one later.
+	Note      string    `json:"note,omitempty"`
+	CreatedBy Actor     `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // VersionBlock places one block in a version. Its contents are the

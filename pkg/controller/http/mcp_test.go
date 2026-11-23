@@ -204,3 +204,60 @@ func TestMCPInDevModeActsAsAgent(t *testing.T) {
 	gt.True(t, ok)
 	gt.Equal(t, vo.Versions[0].By, "MCP client (for Dev)")
 }
+
+func TestMCPUnfiledAndFields(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice, bob, ws, runbook := setupPaper(t, ts)
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	session := connectMCP(t, ts, agent.bearer)
+
+	type guideOut struct {
+		Guide string `json:"guide"`
+	}
+	g, ok := callTool[guideOut](t, session, "papers_guide", map[string]any{})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(g.Guide, "unfiled"))
+	gt.True(t, strings.Contains(g.Guide, "data-field"))
+	gt.True(t, strings.Contains(g.Guide, "props.fields"))
+
+	// without a parent the paper is unfiled and takes no child papers
+	type created struct {
+		ID model.PaperID `json:"id"`
+	}
+	cp, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Loose"})
+	gt.True(t, ok)
+	var view paperView
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(cp.ID), nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.ParentID, model.PaperID(""))
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(cp.ID), "ops": []map[string]any{{"op": "insert", "type": "paper", "title": "Sub"}}})
+	gt.False(t, ok)
+
+	// move it under Runbook and back to unfiled with the batch op
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(cp.ID), "ops": []map[string]any{{"op": "move_paper", "parent": "Runbook"}}})
+	gt.True(t, ok)
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(cp.ID), nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.ParentID, runbook)
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(cp.ID), "ops": []map[string]any{{"op": "move_paper", "unfiled": true}}})
+	gt.True(t, ok)
+	view = paperView{}
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(cp.ID), nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.ParentID, model.PaperID(""))
+
+	// an html block with fields: the value is kept and searchable
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(cp.ID), "ops": []map[string]any{
+		{"op": "insert", "type": "html", "content": `<p>RTO <span data-field="rto">15m</span></p>`, "props": map[string]any{"fields": map[string]string{"rto": "15m"}}},
+	}})
+	gt.True(t, ok)
+	type readOut struct {
+		Blocks []struct {
+			Props model.BlockProps `json:"props"`
+		} `json:"blocks"`
+	}
+	rp, ok := callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": ws, "paper": string(cp.ID)})
+	gt.True(t, ok)
+	gt.Equal(t, rp.Blocks[0].Props.Fields, map[string]string{"rto": "15m"})
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(cp.ID), "ops": []map[string]any{
+		{"op": "insert", "type": "svg", "content": "<svg></svg>", "props": map[string]any{"fields": map[string]string{"Bad-Key": "x"}}},
+	}})
+	gt.False(t, ok)
+}

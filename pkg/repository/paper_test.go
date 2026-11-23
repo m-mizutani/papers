@@ -98,11 +98,9 @@ func TestPaperTree(t *testing.T) {
 		gt.A(t, children).Length(1)
 		gt.Equal(t, children[0].ID, child.ID)
 
-		mine := gt.R1(repo.ListPrivatePapers(ctx, ws, private.Owner())).NoError(t)
-		gt.A(t, mine).Length(1)
-		gt.Equal(t, mine[0].ID, private.ID)
-		others := gt.R1(repo.ListPrivatePapers(ctx, ws, child.Owner())).NoError(t)
-		gt.A(t, others).Length(0)
+		// a private paper has no parent, so it is in no list of children
+		none := gt.R1(repo.ListChildren(ctx, ws, private.ID)).NoError(t)
+		gt.A(t, none).Length(0)
 
 		got := gt.R1(repo.GetPapers(ctx, ws, []model.PaperID{child.ID, model.NewPaperID(), home.ID})).NoError(t)
 		gt.A(t, got).Length(2)
@@ -317,20 +315,43 @@ func TestForwards(t *testing.T) {
 	})
 }
 
-func TestPinsAndRecents(t *testing.T) {
-	runRepositoryTest(t, "pins and recents", func(t *testing.T, repo interfaces.Repository) {
+func TestFavoritesAndRecents(t *testing.T) {
+	runRepositoryTest(t, "favorites round trip", func(t *testing.T, repo interfaces.Repository) {
+		// T41
 		ctx := context.Background()
 		home, child := homeAndChild(t, repo)
 		ws, user := home.WorkspaceID, model.NewUserID()
-		gt.NoError(t, repo.PutPin(ctx, &model.Pin{UserID: user, WorkspaceID: ws, PaperID: child.ID, Order: "a2"}))
-		gt.NoError(t, repo.PutPin(ctx, &model.Pin{UserID: user, WorkspaceID: ws, PaperID: home.ID, Order: "a1"}))
-		pins := gt.R1(repo.ListPins(ctx, user, ws)).NoError(t)
-		gt.A(t, pins).Length(2)
-		gt.Equal(t, pins[0].PaperID, home.ID)
-		gt.NoError(t, repo.DeletePin(ctx, user, ws, home.ID))
-		pins = gt.R1(repo.ListPins(ctx, user, ws)).NoError(t)
-		gt.A(t, pins).Length(1)
+		second := paperIn(ws, home.ID, "Second")
+		gt.NoError(t, repo.PutFavorite(ctx, &model.Favorite{UserID: user, WorkspaceID: ws, PaperID: child.ID, Order: "a2"}))
+		gt.NoError(t, repo.PutFavorite(ctx, &model.Favorite{UserID: user, WorkspaceID: ws, PaperID: second.ID, Order: "a1"}))
+		// another user's and another workspace's favorites stay apart
+		gt.NoError(t, repo.PutFavorite(ctx, &model.Favorite{UserID: model.NewUserID(), WorkspaceID: ws, PaperID: child.ID, Order: "a1"}))
+		gt.NoError(t, repo.PutFavorite(ctx, &model.Favorite{UserID: user, WorkspaceID: newWorkspaceID(), PaperID: child.ID, Order: "a1"}))
 
+		favorites := gt.R1(repo.ListFavorites(ctx, user, ws)).NoError(t)
+		gt.A(t, favorites).Length(2)
+		gt.Equal(t, *favorites[0], model.Favorite{UserID: user, WorkspaceID: ws, PaperID: second.ID, Order: "a1"})
+		gt.Equal(t, *favorites[1], model.Favorite{UserID: user, WorkspaceID: ws, PaperID: child.ID, Order: "a2"})
+
+		// putting again moves it
+		gt.NoError(t, repo.PutFavorite(ctx, &model.Favorite{UserID: user, WorkspaceID: ws, PaperID: child.ID, Order: "Zz"}))
+		favorites = gt.R1(repo.ListFavorites(ctx, user, ws)).NoError(t)
+		gt.Equal(t, favorites[0].PaperID, child.ID)
+
+		gt.NoError(t, repo.DeleteFavorite(ctx, user, ws, child.ID))
+		favorites = gt.R1(repo.ListFavorites(ctx, user, ws)).NoError(t)
+		gt.A(t, favorites).Length(1)
+		gt.Equal(t, favorites[0].PaperID, second.ID)
+		gt.NoError(t, repo.DeleteFavorite(ctx, user, ws, child.ID)) // gone already
+
+		gt.Error(t, repo.PutFavorite(ctx, &model.Favorite{UserID: user, WorkspaceID: ws, PaperID: child.ID, Order: ""}))
+		gt.Error(t, repo.PutFavorite(ctx, &model.Favorite{UserID: user, WorkspaceID: ws, Order: "a1"}))
+	})
+
+	runRepositoryTest(t, "recents", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		home, child := homeAndChild(t, repo)
+		ws, user := home.WorkspaceID, model.NewUserID()
 		empty := gt.R1(repo.GetRecent(ctx, user, ws)).NoError(t)
 		gt.A(t, empty.PaperIDs).Length(0)
 		rec := &model.Recent{UserID: user, WorkspaceID: ws}
@@ -338,6 +359,57 @@ func TestPinsAndRecents(t *testing.T) {
 		gt.NoError(t, repo.PutRecent(ctx, rec))
 		got := gt.R1(repo.GetRecent(ctx, user, ws)).NoError(t)
 		gt.Equal(t, got.PaperIDs, []model.PaperID{child.ID})
+	})
+
+	runRepositoryTest(t, "batch reads across workspaces", func(t *testing.T, repo interfaces.Repository) {
+		// T55: GetRecents and GetPapersIn return what was written and leave
+		// out what is not there
+		ctx := context.Background()
+		homeA, childA := homeAndChild(t, repo)
+		homeB, childB := homeAndChild(t, repo)
+		wsA, wsB, wsC := homeA.WorkspaceID, homeB.WorkspaceID, newWorkspaceID()
+		user := model.NewUserID()
+		at := time.Now().UTC()
+		recA := &model.Recent{UserID: user, WorkspaceID: wsA}
+		recA.Touch(childA.ID, at)
+		recB := &model.Recent{UserID: user, WorkspaceID: wsB}
+		recB.Touch(homeB.ID, at)
+		recB.Touch(childB.ID, at.Add(time.Second))
+		gt.NoError(t, repo.PutRecent(ctx, recA))
+		gt.NoError(t, repo.PutRecent(ctx, recB))
+		// someone else's list is not read
+		other := &model.Recent{UserID: model.NewUserID(), WorkspaceID: wsC}
+		other.Touch(childA.ID, at)
+		gt.NoError(t, repo.PutRecent(ctx, other))
+
+		recents := gt.R1(repo.GetRecents(ctx, user, []model.WorkspaceID{wsA, wsB, wsC})).NoError(t)
+		gt.A(t, recents).Length(2)
+		byWS := map[model.WorkspaceID]*model.Recent{}
+		for _, r := range recents {
+			gt.Equal(t, r.UserID, user)
+			byWS[r.WorkspaceID] = r
+		}
+		gt.Equal(t, byWS[wsA].PaperIDs, []model.PaperID{childA.ID})
+		gt.True(t, timeEq(byWS[wsA].UpdatedAt, at))
+		gt.Equal(t, byWS[wsB].PaperIDs, []model.PaperID{childB.ID, homeB.ID})
+		gt.True(t, timeEq(byWS[wsB].UpdatedAt, at.Add(time.Second)))
+		gt.A(t, gt.R1(repo.GetRecents(ctx, user, nil)).NoError(t)).Length(0)
+
+		papers := gt.R1(repo.GetPapersIn(ctx, []model.PaperKey{
+			{WorkspaceID: wsA, PaperID: childA.ID},
+			{WorkspaceID: wsB, PaperID: childB.ID},
+			{WorkspaceID: wsB, PaperID: childA.ID}, // in another workspace
+			{WorkspaceID: wsC, PaperID: model.NewPaperID()},
+		})).NoError(t)
+		gt.A(t, papers).Length(2)
+		byID := map[model.PaperID]*model.Paper{}
+		for _, p := range papers {
+			byID[p.ID] = p
+		}
+		gt.Equal(t, byID[childA.ID].WorkspaceID, wsA)
+		gt.Equal(t, byID[childA.ID].Title, childA.Title)
+		gt.Equal(t, byID[childB.ID].WorkspaceID, wsB)
+		gt.A(t, gt.R1(repo.GetPapersIn(ctx, nil)).NoError(t)).Length(0)
 	})
 }
 
@@ -378,5 +450,186 @@ func TestPaperBlocks(t *testing.T) {
 		gt.A(t, got).Length(2)
 		gt.Equal(t, got[0].Props.PaperID, second.ID) // "Z" sorts before "a1"
 		gt.Equal(t, got[1].Props.PaperID, child.ID)
+	})
+}
+
+func TestListPapers(t *testing.T) {
+	// papers of one workspace: the home, two unfiled papers of alice, one of
+	// bob, a private one of alice and a filed one of bob, with known times
+	setup := func(t *testing.T, repo interfaces.Repository) (model.WorkspaceID, model.UserID, map[string]*model.Paper) {
+		t.Helper()
+		ctx := context.Background()
+		ws := newWorkspaceID()
+		base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		alice, bob := model.NewUserID(), model.NewUserID()
+		mk := func(title string, owner model.UserID, parent model.PaperID, created, updated int) *model.Paper {
+			p := paperIn(ws, parent, title)
+			p.CreatedBy, p.UpdatedBy = humanActor(owner), humanActor(owner)
+			p.CreatedAt, p.UpdatedAt = base.Add(time.Duration(created)*time.Minute), base.Add(time.Duration(updated)*time.Minute)
+			return p
+		}
+		home := mk("Home", model.NewUserID(), "", 0, 0)
+		gt.R1(repo.EnsureHome(ctx, ws, home)).NoError(t)
+		ps := map[string]*model.Paper{
+			"home":  home,
+			"a1":    mk("a1", alice, "", 1, 9),
+			"a2":    mk("a2", alice, "", 2, 5),
+			"b1":    mk("b1", bob, "", 3, 7),
+			"memo":  mk("memo", alice, "", 4, 6),
+			"filed": mk("filed", bob, home.ID, 5, 8),
+		}
+		ps["memo"].Visibility = model.VisibilityPrivate
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			for k, p := range ps {
+				if k == "home" {
+					continue
+				}
+				if err := tx.PutPaper(p); err != nil {
+					return err
+				}
+			}
+			return tx.PutBlock(paperLink(home, ps["filed"], "a1"))
+		}))
+		return ws, alice, ps
+	}
+	titles := func(papers []*model.Paper) []string {
+		out := []string{}
+		for _, p := range papers {
+			out = append(out, p.Title)
+		}
+		return out
+	}
+
+	runRepositoryTest(t, "conditions and order", func(t *testing.T, repo interfaces.Repository) {
+		// T30
+		ctx := context.Background()
+		ws, alice, ps := setup(t, repo)
+		list := func(q model.PaperQuery) []string {
+			t.Helper()
+			q.Limit = 100
+			got, next := gt.R2(repo.ListPapers(ctx, ws, q)).NoError(t)
+			gt.Equal(t, next, "")
+			return titles(got)
+		}
+		gt.Equal(t, list(model.PaperQuery{Sort: model.SortUpdated}), []string{"a1", "filed", "b1", "memo", "a2", "Home"})
+		gt.Equal(t, list(model.PaperQuery{Sort: model.SortCreated}), []string{"filed", "memo", "b1", "a2", "a1", "Home"})
+		gt.Equal(t, list(model.PaperQuery{Sort: model.SortUpdated, Unfiled: true}), []string{"a1", "b1", "memo", "a2", "Home"})
+		gt.Equal(t, list(model.PaperQuery{Sort: model.SortUpdated, Creator: alice}), []string{"a1", "memo", "a2"})
+		gt.Equal(t, list(model.PaperQuery{Sort: model.SortCreated, Unfiled: true, Creator: alice}), []string{"memo", "a2", "a1"})
+		gt.Equal(t, list(model.PaperQuery{Sort: model.SortCreated, Creator: model.NewUserID()}), []string{})
+
+		// ties are broken by ID, descending
+		same := ps["a2"].Clone()
+		same.ID = model.NewPaperID()
+		same.Title = "a2 twin"
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(same) }))
+		got := list(model.PaperQuery{Sort: model.SortUpdated, Creator: alice})
+		want := []string{"a1", "memo", "a2", "a2 twin"}
+		if same.ID > ps["a2"].ID {
+			want = []string{"a1", "memo", "a2 twin", "a2"}
+		}
+		gt.Equal(t, got, want)
+
+		// the paper is read back as written
+		full, _ := gt.R2(repo.ListPapers(ctx, ws, model.PaperQuery{Sort: model.SortUpdated, Creator: alice, Limit: 1})).NoError(t)
+		gt.Equal(t, full[0].ID, ps["a1"].ID)
+		gt.Equal(t, full[0].CreatedBy, ps["a1"].CreatedBy)
+		gt.True(t, timeEq(full[0].UpdatedAt, ps["a1"].UpdatedAt))
+		gt.True(t, timeEq(full[0].CreatedAt, ps["a1"].CreatedAt))
+
+		// other workspaces are not listed; bad queries are refused
+		empty, _ := gt.R2(repo.ListPapers(ctx, newWorkspaceID(), model.PaperQuery{Sort: model.SortUpdated, Limit: 10})).NoError(t)
+		gt.A(t, empty).Length(0)
+		for _, bad := range []model.PaperQuery{
+			{Sort: "title", Limit: 10}, {Sort: model.SortUpdated}, {Sort: model.SortUpdated, Limit: 101}, {Sort: model.SortUpdated, Limit: 1, Cursor: "x"},
+		} {
+			_, _, err := repo.ListPapers(ctx, ws, bad)
+			gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+		}
+	})
+
+	runRepositoryTest(t, "cursor paging", func(t *testing.T, repo interfaces.Repository) {
+		// T31: limit 2 reads six papers in three pages without duplicates
+		// or gaps
+		ctx := context.Background()
+		ws, _, _ := setup(t, repo)
+		for _, sort := range []model.PaperSort{model.SortUpdated, model.SortCreated} {
+			all, _ := gt.R2(repo.ListPapers(ctx, ws, model.PaperQuery{Sort: sort, Limit: 100})).NoError(t)
+			gt.A(t, all).Length(6)
+			var paged []*model.Paper
+			cursor, pages := "", 0
+			for {
+				got, next := gt.R2(repo.ListPapers(ctx, ws, model.PaperQuery{Sort: sort, Limit: 2, Cursor: cursor})).NoError(t)
+				gt.A(t, got).Length(2)
+				paged = append(paged, got...)
+				pages++
+				if next == "" {
+					break
+				}
+				gt.True(t, pages < 3)
+				cursor = next
+			}
+			gt.V(t, pages).Equal(3)
+			gt.Equal(t, titles(paged), titles(all))
+		}
+		// a filter keeps working across pages
+		first, next := gt.R2(repo.ListPapers(ctx, ws, model.PaperQuery{Sort: model.SortUpdated, Unfiled: true, Limit: 3})).NoError(t)
+		gt.Equal(t, titles(first), []string{"a1", "b1", "memo"})
+		rest, end := gt.R2(repo.ListPapers(ctx, ws, model.PaperQuery{Sort: model.SortUpdated, Unfiled: true, Limit: 3, Cursor: next})).NoError(t)
+		gt.Equal(t, titles(rest), []string{"a2", "Home"})
+		gt.Equal(t, end, "")
+	})
+}
+
+func TestBlockFields(t *testing.T) {
+	runRepositoryTest(t, "fields round trip", func(t *testing.T, repo interfaces.Repository) {
+		// T13
+		ctx := context.Background()
+		_, p := homeAndChild(t, repo)
+		ws := p.WorkspaceID
+		b := blockIn(p, "", "a1", `<p>RTO <span data-field="rto">15m</span></p>`)
+		b.Type = model.BlockHTML
+		b.Props = model.BlockProps{Height: 240, Fields: map[string]string{"rto": "15m", "owner": "SRE チーム"}}
+		plain := blockIn(p, "", "a2", "no fields")
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			if err := tx.PutBlock(b); err != nil {
+				return err
+			}
+			got, err := tx.GetBlock(p.ID, b.ID)
+			if err != nil || !got.Props.Equal(b.Props) {
+				return errors.New("staged fields not visible")
+			}
+			return tx.PutBlock(plain)
+		}))
+		got := gt.R1(repo.GetBlocks(ctx, ws, p.ID, []model.BlockID{b.ID, plain.ID})).NoError(t)
+		gt.A(t, got).Length(2)
+		byID := map[model.BlockID]*model.Block{}
+		for _, x := range got {
+			byID[x.ID] = x
+		}
+		gt.Equal(t, byID[b.ID].Props.Fields, b.Props.Fields)
+		gt.V(t, byID[b.ID].Props.Height).Equal(240)
+		gt.True(t, model.SameContents(byID[b.ID], b))
+		gt.Nil(t, byID[plain.ID].Props.Fields)
+
+		// a version snapshot keeps them too
+		snap := model.SnapshotOf(b)
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutSnapshot(p.ID, snap) }))
+		snaps := gt.R1(repo.GetSnapshots(ctx, ws, p.ID, []model.SnapshotRef{{BlockID: b.ID, Rev: b.Rev}})).NoError(t)
+		gt.Equal(t, snaps[0].Props.Fields, b.Props.Fields)
+
+		// the values are searchable
+		if canSearch(repo) {
+			hits := gt.R1(repo.Search(ctx, ws, mustQuery(t, "15m SRE"), 10)).NoError(t)
+			gt.A(t, hits).Length(1)
+			gt.Equal(t, hits[0].BlockID, b.ID)
+		}
+
+		// changing one value is a change of contents
+		b.Props.Fields = map[string]string{"rto": "10m", "owner": "SRE チーム"}
+		b.Rev++
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutBlock(b) }))
+		again := gt.R1(repo.GetBlocks(ctx, ws, p.ID, []model.BlockID{b.ID})).NoError(t)
+		gt.Equal(t, again[0].Props.Fields["rto"], "10m")
 	})
 }

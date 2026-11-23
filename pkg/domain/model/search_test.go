@@ -63,6 +63,14 @@ func TestSearchText(t *testing.T) {
 		`<svg viewBox="0 0 10 10"><path d="M0 0L10 10"/><text x="1">Load balancer</text></svg>`)),
 		"Load balancer")
 	gt.Equal(t, model.SearchText(block(model.BlockMermaid, "graph TD; A-->B")), "graph TD; A-->B")
+
+	// the values of html and svg fields follow the text nodes, in name order
+	withFields := block(model.BlockHTML, `<p>RTO <b data-field="rto">15m</b></p>`)
+	withFields.Props.Fields = map[string]string{"rto": "10m", "owner": "  sre   team "}
+	gt.Equal(t, model.SearchText(withFields), "RTO 15m sre team 10m")
+	onlyFields := block(model.BlockSVG, `<svg></svg>`)
+	onlyFields.Props.Fields = map[string]string{"a": "x"}
+	gt.Equal(t, model.SearchText(onlyFields), "x")
 }
 
 func TestSearchEntries(t *testing.T) {

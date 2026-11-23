@@ -1,5 +1,5 @@
 import type { Actor, Block, BlockProps, BlockType, Paper, TableLine, User, Workspace } from '../api/types'
-import { keyBetween } from './order'
+import { keyBetween } from '../utils/order'
 
 // Sample content for the in-browser demo. Everything here is made up.
 
@@ -107,6 +107,13 @@ export function seed() {
       ['table', [['Risk', 'Likelihood', 'Mitigation'], ['Key reuse across merchants', 'Medium', 'Per-merchant scoped keys'], ['Replay of webhooks', 'Low', 'Signed timestamps']]],
       ['code', 'POST /v1/charges\nAuthorization: Bearer <merchant key>\nIdempotency-Key: <uuid>', { language: 'http' }],
     ], { parent_id: 'p-home-sec' }),
+    paper('security', 'p-standup', 'Weekly sync notes', human(ME), [
+      ['paragraph', 'Notes from this week. Not filed yet.'],
+      ['todo', 'Follow up on the scanner alerts'],
+    ]),
+    paper('security', 'p-alice-idea', 'Idea: secret scanning in CI', human(ALICE), [
+      ['paragraph', 'Run the scanner on every pull request, not only nightly.'],
+    ]),
     paper('product', 'p-home-prod', 'Product Notes', system, [
       ['paragraph', 'What we are building and why.'],
       ['paper', '', { paper_id: 'p-ideas' }],
