@@ -561,19 +561,32 @@ func (s *Server) handleHTML(w http.ResponseWriter, r *http.Request) {
 		writeError(r.Context(), w, err)
 		return
 	}
-	defer safe.Close(r.Context(), c.Body)
-	csp := htmlFrameCSP
+	csp, mode := htmlFrameCSP, "open"
 	if !c.ExternalResources {
-		csp += "; " + model.SandboxCSP
+		csp, mode = csp+"; "+model.SandboxCSP, "closed"
 	}
 	h := w.Header()
-	h.Set("Content-Type", model.HTMLObjectContentType)
-	h.Set("Content-Length", strconv.FormatInt(c.Attachment.Size, 10))
-	// immutable: a document never changes
-	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	// The document never changes, but its policy follows the workspace's
+	// sandbox setting, which a deploy may change: browsers revalidate every
+	// time, and the ETag (document and setting) answers 304 while both stay.
+	etag := `"` + string(c.Attachment.ID) + "." + mode + `"`
+	h.Set("Cache-Control", "private, no-cache")
+	h.Set("ETag", etag)
 	h.Set("Content-Security-Policy", csp)
 	h.Set("X-Content-Type-Options", "nosniff")
-	safe.Copy(r.Context(), w, c.Body)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	body, err := c.Open(r.Context())
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	defer safe.Close(r.Context(), body)
+	h.Set("Content-Type", model.HTMLObjectContentType)
+	h.Set("Content-Length", strconv.FormatInt(c.Attachment.Size, 10))
+	safe.Copy(r.Context(), w, body)
 }
 
 func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {

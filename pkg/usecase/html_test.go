@@ -39,11 +39,12 @@ func setHTML(doc string, base int64) usecase.Op {
 func (e *env) storedHTML(t *testing.T, ws model.WorkspaceID, paper model.PaperID, att model.AttachmentID) string {
 	t.Helper()
 	c := gt.R1(e.uc.OpenHTML(context.Background(), &model.Principal{User: &model.User{ID: e.paper(t, ws, paper).CreatedBy.UserID}}, ws, paper, att)).NoError(t)
-	defer func() { _ = c.Body.Close() }()
+	body := gt.R1(c.Open(context.Background())).NoError(t)
+	defer func() { _ = body.Close() }()
 	var sb strings.Builder
 	buf := make([]byte, 4096)
 	for {
-		n, err := c.Body.Read(buf)
+		n, err := body.Read(buf)
 		sb.Write(buf[:n])
 		if err != nil {
 			break
@@ -358,7 +359,6 @@ func TestOpenHTML(t *testing.T) { // T47 (use case)
 	p := e.htmlPaper(t, alice, wsA, "Report", docV1)
 	att := e.page(t, wsA, p.ID).Props.AttachmentID
 	c := gt.R1(e.uc.OpenHTML(ctx, bob, wsA, p.ID, att)).NoError(t)
-	_ = c.Body.Close()
 	gt.Equal(t, c.Attachment.ID, att)
 	gt.False(t, c.ExternalResources) // the test workspaces are static, with no sandbox setting
 
@@ -498,8 +498,8 @@ func TestOpenHTMLNeverSigns(t *testing.T) { // T46 (use case)
 	alice := e.user(t, "alice")
 	p := gt.R1(uc.CreatePaper(ctx, alice, wsA, usecase.CreateInput{Title: "Report", Kind: model.PaperKindHTML, HTML: docV1})).NoError(t)
 	c := gt.R1(uc.OpenHTML(ctx, alice, wsA, p.ID, e.page(t, wsA, p.ID).Props.AttachmentID)).NoError(t)
-	gt.NotEqual(t, c.Body, nil)
-	_ = c.Body.Close()
+	body := gt.R1(c.Open(ctx)).NoError(t)
+	_ = body.Close()
 }
 
 func TestHTMLRejectedBeforeStoring(t *testing.T) { // review: refuse what the transaction would refuse, before storing

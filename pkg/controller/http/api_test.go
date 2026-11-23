@@ -515,15 +515,24 @@ func TestHTMLPaperAPI(t *testing.T) {
 	// T35: no Markdown form
 	bob.expect("GET", base+"/markdown", nil, http.StatusBadRequest, nil)
 
-	// T46: the document is served raw, sandboxed and immutable
+	// T46: the document is served raw and sandboxed, revalidated every time
 	bob.expect("GET", base+"/html", nil, http.StatusOK, &doc)
 	resp := bob.do("GET", base+"/html/"+string(doc.AttachmentID), nil)
 	gt.Equal(t, resp.StatusCode, http.StatusOK)
 	gt.Equal(t, resp.Header.Get("Content-Type"), "text/html; charset=utf-8")
 	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts; frame-ancestors 'self'")
-	gt.Equal(t, resp.Header.Get("Cache-Control"), "private, max-age=31536000, immutable")
+	gt.Equal(t, resp.Header.Get("Cache-Control"), "private, no-cache")
+	etag := resp.Header.Get("ETag")
+	gt.Equal(t, etag, `"`+string(doc.AttachmentID)+`.open"`)
 	gt.Equal(t, resp.Header.Get("X-Content-Type-Options"), "nosniff")
 	gt.Equal(t, string(gt.R1(io.ReadAll(resp.Body)).NoError(t)), "<p>nine incidents</p>")
+	// revalidation answers 304 without the body while document and setting stay
+	req304 := gt.R1(http.NewRequest("GET", ts.srv.URL+base+"/html/"+string(doc.AttachmentID), nil)).NoError(t)
+	req304.Header.Set("If-None-Match", etag)
+	not := gt.R1(bob.hc.Do(req304)).NoError(t)
+	defer func() { _ = not.Body.Close() }()
+	gt.Equal(t, not.StatusCode, http.StatusNotModified)
+	gt.Equal(t, len(gt.R1(io.ReadAll(not.Body)).NoError(t)), 0)
 
 	// T47: another paper's or an image attachment is not served here
 	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(home)+"/html/"+string(doc.AttachmentID), nil, http.StatusNotFound, nil)
@@ -586,6 +595,8 @@ func TestHTMLPaperSandboxSetting(t *testing.T) { // T54
 	resp := alice.do("GET", "/api/v1/workspaces/other/papers/"+string(p.ID)+"/html/"+string(doc.AttachmentID), nil)
 	gt.Equal(t, resp.StatusCode, http.StatusOK)
 	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts; frame-ancestors 'self'; "+model.SandboxCSP)
+	// the setting is part of the ETag, so changing it makes browsers fetch again
+	gt.Equal(t, resp.Header.Get("ETag"), `"`+string(doc.AttachmentID)+`.closed"`)
 }
 
 func TestHTMLPaperRequestLimit(t *testing.T) { // T61

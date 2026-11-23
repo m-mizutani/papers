@@ -213,11 +213,12 @@ func (u *UseCases) ReadHTML(ctx context.Context, p *model.Principal, ws model.Wo
 }
 
 // HTMLContent is an HTML document to serve, with whether the workspace lets
-// it load external resources.
+// it load external resources. Open reads its bytes; a caller that answers
+// "not modified" never opens them.
 type HTMLContent struct {
 	Attachment        *model.Attachment
-	Body              io.ReadCloser
 	ExternalResources bool
+	Open              func(ctx context.Context) (io.ReadCloser, error)
 }
 
 // OpenHTML returns one HTML document (an attachment) of an HTML paper the
@@ -237,9 +238,12 @@ func (u *UseCases) OpenHTML(ctx context.Context, p *model.Principal, ws model.Wo
 	if !a.IsHTML() {
 		return nil, notFound("attachment", att)
 	}
-	body, err := u.store.Get(ctx, a.StoreKey())
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to read the HTML document")
+	open := func(ctx context.Context) (io.ReadCloser, error) {
+		body, err := u.store.Get(ctx, a.StoreKey())
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to read the HTML document")
+		}
+		return body, nil
 	}
-	return &HTMLContent{Attachment: a, Body: body, ExternalResources: w.Sandbox.ExternalResources}, nil
+	return &HTMLContent{Attachment: a, ExternalResources: w.Sandbox.ExternalResources, Open: open}, nil
 }
