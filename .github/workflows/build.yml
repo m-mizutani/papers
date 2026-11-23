@@ -35,10 +35,3 @@ jobs:
           pnpm build
           pnpm build:demo
       - run: go build -o papers .
-
-  docker:
-    name: Docker image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t papers:ci .

@@ -25,7 +25,7 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - `cd frontend && pnpm build` – type check + bundle into `frontend/dist`
 - `task test:e2e` – Playwright end-to-end tests (`frontend/e2e/`) against a freshly built server; add a test there for every new user-facing flow
 - `golangci-lint run` (`.golangci.yml`), `cd frontend && pnpm typecheck` – lint and type checks
-- CI runs one workflow per concern in `.github/workflows/`: `go-test.yml` (race tests, and the repository contract tests on the Firestore emulator), `ui-test.yml` (Vitest), `e2e.yml` (Playwright), `lint.yml` (golangci-lint, go vet, go mod tidy, ESLint, TypeScript), `security.yml` (govulncheck, gosec, Trivy, pnpm audit; also weekly) and `build.yml` (UI, binary, Docker image). It fails when `go.mod`/`go.sum` are not tidy
+- CI runs one workflow per concern in `.github/workflows/`: `go-test.yml` (race tests, and the repository contract tests on the Firestore emulator), `ui-test.yml` (Vitest), `e2e.yml` (Playwright), `lint.yml` (golangci-lint, go vet, go mod tidy, ESLint, TypeScript), `security.yml` (govulncheck, gosec, Trivy, pnpm audit; also weekly), `build.yml` (UI, binary) and `docker.yml` (Docker image: build only on pull requests, build and push to GHCR on `main`). It fails when `go.mod`/`go.sum` are not tidy
 
 ## Architecture
 
