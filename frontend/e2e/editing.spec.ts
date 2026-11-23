@@ -251,3 +251,67 @@ test('a title typed back to what it was is sent even while the earlier send is o
   await expect(titleField(page)).toBeFocused()
   await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
 })
+
+test('T59 typing and Enter keep every line shown while the server answers', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Steady'), markdown: 'first' })
+  await openPaper(page, paper.id)
+  // A slow server: the change feed and the answer both come well after the keys.
+  await page.route('**/ops', async (route) => {
+    await new Promise((r) => setTimeout(r, 500))
+    await route.continue()
+  })
+  // Every state the blocks pass through, so a flicker between two checks is caught.
+  await page.evaluate(() => {
+    const w = window as unknown as { shownStates: string[] }
+    w.shownStates = []
+    const root = document.querySelector('.blocks')
+    if (!root) throw new Error('no blocks')
+    const snap = () => [...root.querySelectorAll(':scope > .blk')]
+      .map((b) => `${b.classList.contains('editing') ? '*' : ''}${b.classList.contains('flash') ? '!' : ''}${(b.querySelector('.bd') as HTMLElement | null)?.innerText.trim() ?? ''}`).join('|')
+    new MutationObserver(() => w.shownStates.push(snap())).observe(root, { subtree: true, childList: true, characterData: true, attributes: true })
+  })
+
+  await editBlock(page, 0)
+  await page.keyboard.type(' typed')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('second')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('third')
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first typed|second|third', 'saved')
+  await expect(blocks(page).locator('.bd')).toHaveText(['first typed', 'second', 'third'])
+
+  const states = await page.evaluate(() => (window as unknown as { shownStates: string[] }).shownStates)
+  for (const s of states) {
+    const lines = s.split('|')
+    // a block that is not being edited shows the whole text typed into it
+    const left = lines.filter((l) => !l.startsWith('*')).map((l) => l.replace(/^!/, ''))
+    expect(left.filter((l) => !['first', 'first typed', 'second', 'third'].includes(l)), s).toEqual([])
+    if (lines.length > 1) expect(lines[0], s).not.toBe('first')
+    // no line shows twice, and my own lines do not flash as someone else's change
+    expect(lines.length, s).toBeLessThanOrEqual(3)
+    expect(new Set(left).size, s).toBe(left.length)
+    expect(lines.filter((l) => l.startsWith('!') || l.startsWith('*!')), s).toEqual([])
+  }
+})
+
+test('T60 going back into a block right after Enter keeps editing it without a conflict', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Back'), markdown: 'first' })
+  await openPaper(page, paper.id)
+  await page.route('**/ops', async (route) => {
+    await new Promise((r) => setTimeout(r, 500))
+    await route.continue()
+  })
+  await editBlock(page, 0)
+  await page.keyboard.type(' typed')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('ArrowUp')
+  await expect(blocks(page).nth(0)).toHaveClass(/editing/)
+  await expect(editor(page)).toHaveText('first typed')
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await page.waitForTimeout(1500)
+  await expect(page.locator('.conf')).toHaveCount(0)
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first typed!|', 'saved')
+})
