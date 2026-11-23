@@ -200,3 +200,46 @@ test('T26 undo and redo step through typing, Enter and typing', async ({ page, r
   await redo(['start A', 'B'])
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'start A|B', 'redone on the server')
 })
+
+test('T59 a click anywhere from the add line down continues the paper', async ({ page, request }) => {
+  // wide enough for an empty margin beside the column
+  await page.setViewportSize({ width: 1400, height: 800 })
+  const paper = await createPaper(request, { title: unique('Add area'), markdown: 'first' })
+  await openPaper(page, paper.id)
+  const line = page.locator('.addline')
+  const box = await line.boundingBox()
+  if (!box) throw new Error('no add line')
+
+  // far right of the line and well below the label, inside the column
+  await page.mouse.click(box.x + box.width - 4, box.y + box.height - 8)
+  await expect(blocks(page)).toHaveCount(2)
+  await expect(editor(page)).toBeFocused()
+  await page.keyboard.type('second')
+  await finishEditing(page)
+
+  // the empty margin beside the column, below the line
+  const after = await line.boundingBox()
+  if (!after) throw new Error('no add line')
+  await page.mouse.click(after.x + after.width + 40, after.y + 20)
+  await expect(blocks(page)).toHaveCount(3)
+  await expect(editor(page)).toBeFocused()
+  await finishEditing(page)
+
+  // the label itself reuses the empty last paragraph rather than adding another
+  await line.click({ position: { x: 4, y: 4 } })
+  await expect(blocks(page)).toHaveCount(3)
+  await expect(editor(page)).toBeFocused()
+  await finishEditing(page)
+
+  // selecting the title by dragging out of it into the margin adds nothing
+  const title = await titleField(page).boundingBox()
+  if (!title) throw new Error('no title')
+  await page.mouse.move(title.x + 4, title.y + title.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(after.x + after.width + 40, after.y + 60, { steps: 5 })
+  await page.mouse.up()
+  await expect(titleField(page)).toBeFocused()
+  await expect(editor(page)).toHaveCount(0)
+  await expect(blocks(page)).toHaveCount(3)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first|second|', 'saved')
+})
