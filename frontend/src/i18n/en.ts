@@ -302,4 +302,8 @@ export const en: Record<MsgKey, string> = {
   viaApi: 'via API',
   renderFailed: 'Could not draw the diagram',
   forUser: 'for {name}',
+  htmlBadge: 'HTML',
+  htmlFrameTitle: 'Contents of {title}',
+  htmlLoadFailed: 'Could not load the contents.',
+  openHtml: 'Open HTML in a new tab',
 }

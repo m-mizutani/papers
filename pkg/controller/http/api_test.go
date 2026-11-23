@@ -435,3 +435,177 @@ func TestWorkspacesLastOpenedAPI(t *testing.T) {
 	body := string(gt.R1(io.ReadAll(resp.Body)).NoError(t))
 	gt.True(t, strings.Contains(body, `"last_opened":null`))
 }
+
+const reportHTML = `<!doctype html><html><body><h1>Weekly</h1><p>fourteen incidents</p><script>document.body.dataset.ran = "1"</script></body></html>`
+
+type htmlDoc struct {
+	BlockID      model.BlockID      `json:"block_id"`
+	Rev          int64              `json:"rev"`
+	AttachmentID model.AttachmentID `json:"attachment_id"`
+	Size         int64              `json:"size"`
+	HTML         string             `json:"html"`
+}
+
+func TestHTMLPaperAPI(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	bob := ts.login("bob@example.com")
+	home := homeOf(alice, ws)
+
+	// T7: create with kind and html, under the home, in one request
+	var p model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Weekly", "parent": string(home), "kind": "html", "html": reportHTML}, http.StatusCreated, &p)
+	gt.Equal(t, p.Kind, model.PaperKindHTML)
+	base := "/api/v1/workspaces/team/papers/" + string(p.ID)
+	var view paperView
+	bob.expect("GET", base, nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.Kind, model.PaperKindHTML)
+	// PaperRef in the parent's blocks says the kind too
+	var raw map[string]any
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(home)+"/blocks", nil, http.StatusOK, &raw)
+	refs := raw["papers"].(map[string]any)
+	gt.Equal(t, refs[string(p.ID)].(map[string]any)["kind"], "html")
+
+	// T8: html with markdown, html for a blocks paper, html_paper without html
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "x", "kind": "html", "html": reportHTML, "markdown": "# x"}, http.StatusBadRequest, nil)
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "x", "html": reportHTML}, http.StatusBadRequest, nil)
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "x", "kind": "html"}, http.StatusBadRequest, nil)
+
+	// T23: read the document as JSON
+	var doc htmlDoc
+	bob.expect("GET", base+"/html", nil, http.StatusOK, &doc)
+	gt.Equal(t, doc.HTML, reportHTML)
+	gt.Equal(t, doc.Rev, int64(1))
+	gt.Equal(t, doc.Size, int64(len(reportHTML)))
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(home)+"/html", nil, http.StatusBadRequest, nil)
+
+	// T18: title and HTML in one batch
+	var res batchResp
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{
+		{"op": "set_title", "title": "Weekly report"},
+		{"op": "set_html", "html": "<p>nine incidents</p>", "base_rev": doc.Rev},
+	}}, http.StatusOK, &res)
+	gt.Equal(t, res.Paper.Title, "Weekly report")
+	gt.A(t, res.Blocks).Length(1)
+	gt.Equal(t, res.Blocks[0].Rev, int64(2))
+	gt.Equal(t, res.Blocks[0].Type, model.BlockHTMLPage)
+
+	// T19: a stale base answers 409 like any conflict, and changes nothing
+	var conflict struct {
+		Error struct {
+			Code      string `json:"code"`
+			Conflicts []struct {
+				BlockID model.BlockID `json:"block_id"`
+				Current model.Block   `json:"current"`
+			} `json:"conflicts"`
+		} `json:"error"`
+	}
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{
+		{"op": "set_title", "title": "lost"},
+		{"op": "set_html", "html": "<p>lost</p>", "base_rev": 1},
+	}}, http.StatusConflict, &conflict)
+	gt.Equal(t, conflict.Error.Code, "conflict")
+	gt.Equal(t, conflict.Error.Conflicts[0].Current.Rev, int64(2))
+	bob.expect("GET", base, nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.Title, "Weekly report")
+
+	// block ops on an HTML paper are refused
+	alice.expect("POST", base+"/ops", map[string]any{"ops": []map[string]any{{"op": "insert", "type": "paragraph", "content": "x"}}}, http.StatusBadRequest, nil)
+
+	// T35: no Markdown form
+	bob.expect("GET", base+"/markdown", nil, http.StatusBadRequest, nil)
+
+	// T46: the document is served raw, sandboxed and immutable
+	bob.expect("GET", base+"/html", nil, http.StatusOK, &doc)
+	resp := bob.do("GET", base+"/html/"+string(doc.AttachmentID), nil)
+	gt.Equal(t, resp.StatusCode, http.StatusOK)
+	gt.Equal(t, resp.Header.Get("Content-Type"), "text/html; charset=utf-8")
+	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'")
+	gt.Equal(t, resp.Header.Get("Cache-Control"), "private, max-age=31536000, immutable")
+	gt.Equal(t, resp.Header.Get("X-Content-Type-Options"), "nosniff")
+	gt.Equal(t, string(gt.R1(io.ReadAll(resp.Body)).NoError(t)), "<p>nine incidents</p>")
+
+	// T47: another paper's or an image attachment is not served here
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(home)+"/html/"+string(doc.AttachmentID), nil, http.StatusNotFound, nil)
+	bob.expect("GET", base+"/html/"+string(model.NewAttachmentID()), nil, http.StatusNotFound, nil)
+	var mine model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Mine", "visibility": "private", "kind": "html", "html": reportHTML}, http.StatusCreated, &mine)
+	var mineDoc htmlDoc
+	alice.expect("GET", "/api/v1/workspaces/team/papers/"+string(mine.ID)+"/html", nil, http.StatusOK, &mineDoc)
+	bob.expect("GET", "/api/v1/workspaces/team/papers/"+string(mine.ID)+"/html/"+string(mineDoc.AttachmentID), nil, http.StatusNotFound, nil)
+
+	// T45: HTML cannot be uploaded as an attachment
+	req := gt.R1(http.NewRequest("POST", ts.srv.URL+"/api/v1/workspaces/team/papers/"+string(home)+"/attachments?name=a.html", strings.NewReader("<p>x</p>"))).NoError(t)
+	req.Header.Set("Content-Type", "text/html")
+	req.Header.Set("X-Requested-With", "papers")
+	up := gt.R1(alice.hc.Do(req)).NoError(t)
+	defer func() { _ = up.Body.Close() }()
+	gt.Equal(t, up.StatusCode, http.StatusBadRequest)
+
+	// block types list html_page as not editable by people
+	var meta struct {
+		BlockTypes []struct {
+			Type          model.BlockType `json:"type"`
+			HumanEditable bool            `json:"human_editable"`
+		} `json:"block_types"`
+	}
+	alice.expect("GET", "/api/v1/block-types", nil, http.StatusOK, &meta)
+	found := false
+	for _, bt := range meta.BlockTypes {
+		if bt.Type == model.BlockHTMLPage {
+			found = true
+			gt.False(t, bt.HumanEditable)
+		}
+	}
+	gt.True(t, found)
+}
+
+func TestHTMLPaperSandboxSetting(t *testing.T) { // T54
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	var list struct {
+		Workspaces []struct {
+			ID      model.WorkspaceID `json:"id"`
+			Sandbox struct {
+				ExternalResources bool `json:"external_resources"`
+			} `json:"sandbox"`
+		} `json:"workspaces"`
+	}
+	alice.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, &list)
+	open := map[model.WorkspaceID]bool{}
+	for _, w := range list.Workspaces {
+		open[w.ID] = w.Sandbox.ExternalResources
+	}
+	gt.True(t, open["team"])
+	gt.False(t, open["other"])
+
+	var p model.Paper
+	alice.expect("POST", "/api/v1/workspaces/other/papers", map[string]any{"title": "Closed", "kind": "html", "html": reportHTML}, http.StatusCreated, &p)
+	var doc htmlDoc
+	alice.expect("GET", "/api/v1/workspaces/other/papers/"+string(p.ID)+"/html", nil, http.StatusOK, &doc)
+	resp := alice.do("GET", "/api/v1/workspaces/other/papers/"+string(p.ID)+"/html/"+string(doc.AttachmentID), nil)
+	gt.Equal(t, resp.StatusCode, http.StatusOK)
+	gt.Equal(t, resp.Header.Get("Content-Security-Policy"), "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'; "+model.SandboxCSP)
+}
+
+func TestHTMLPaperRequestLimit(t *testing.T) { // T61
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	// a document of 5 MiB, sent as JSON larger than the usual 4 MiB, is accepted
+	doc := "<p>" + strings.Repeat("a", model.MaxHTMLSize-7) + "</p>"
+	var p model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Big", "kind": "html", "html": doc}, http.StatusCreated, &p)
+	// a body over 12 MiB is refused
+	// each escaped character is six bytes of JSON but one of HTML
+	huge := strings.Repeat("\\u0041", (12<<20)/6+1)
+	req := gt.R1(http.NewRequest("POST", ts.srv.URL+"/api/v1/workspaces/team/papers/"+string(p.ID)+"/ops", strings.NewReader(`{"ops":[{"op":"set_html","base_rev":1,"html":"`+huge+`"}]}`))).NoError(t)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "papers")
+	resp := gt.R1(alice.hc.Do(req)).NoError(t)
+	defer func() { _ = resp.Body.Close() }()
+	gt.Equal(t, resp.StatusCode, http.StatusBadRequest)
+	gt.S(t, string(gt.R1(io.ReadAll(resp.Body)).NoError(t))).Contains("too large")
+	// other requests keep the 4 MiB limit
+	big := strings.Repeat("a", 5<<20)
+	alice.expect("PUT", "/api/v1/workspaces/team/papers/"+string(p.ID)+"/visibility", map[string]any{"visibility": "public", "parent": big}, http.StatusBadRequest, nil)
+}

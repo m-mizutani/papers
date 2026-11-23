@@ -22,7 +22,22 @@ type Workspace struct {
 	Language string `json:"language,omitempty"`
 	// Group is the display group from the global configuration.
 	Group string `json:"group,omitempty"`
+	// Sandbox is what AI-authored HTML drawn in a sandboxed frame may do in
+	// this workspace (HTML papers, html and svg blocks).
+	Sandbox Sandbox `json:"sandbox"`
 }
+
+// Sandbox limits the AI-authored HTML of a workspace.
+type Sandbox struct {
+	// ExternalResources lets the HTML load scripts, styles, images, fonts
+	// and connections from other hosts. Without it only what the HTML
+	// embeds runs. The configuration defaults it to true.
+	ExternalResources bool `json:"external_resources"`
+}
+
+// SandboxCSP is the Content-Security-Policy that keeps HTML from loading
+// anything it does not embed, for a workspace without external resources.
+const SandboxCSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:"
 
 // Validate checks a workspace definition loaded from configuration.
 func (w *Workspace) Validate() error {

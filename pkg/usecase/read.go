@@ -17,6 +17,7 @@ type PaperRef struct {
 	ID            model.PaperID     `json:"id"`
 	WorkspaceID   model.WorkspaceID `json:"workspace_id"`
 	Title         string            `json:"title"`
+	Kind          model.PaperKind   `json:"kind"`
 	ParentID      model.PaperID     `json:"parent_id,omitempty"`
 	Visibility    model.Visibility  `json:"visibility"`
 	Status        model.PaperStatus `json:"status"`
@@ -26,7 +27,7 @@ type PaperRef struct {
 
 func refOf(p *model.Paper) *PaperRef {
 	return &PaperRef{
-		ID: p.ID, WorkspaceID: p.WorkspaceID, Title: p.Title, ParentID: p.ParentID, Visibility: p.Visibility,
+		ID: p.ID, WorkspaceID: p.WorkspaceID, Title: p.Title, Kind: p.Kind.Or(), ParentID: p.ParentID, Visibility: p.Visibility,
 		Status: p.Status(), VersionNumber: p.VersionNumber, CreatedBy: p.CreatedBy,
 	}
 }
@@ -722,6 +723,9 @@ func (u *UseCases) Export(ctx context.Context, p *model.Principal, ws model.Work
 	_, paper, err := u.paperFor(ctx, p, ws, id)
 	if err != nil {
 		return "", err
+	}
+	if paper.IsHTML() {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "an HTML paper has no Markdown form; read its HTML instead", goerr.V("paper_id", id))
 	}
 	page, err := u.ListBlocks(ctx, p, ws, id, "", 0)
 	if err != nil {

@@ -135,6 +135,9 @@ type Tx interface {
 	PutSnapshot(paper model.PaperID, s *model.BlockSnapshot) error
 
 	PutForward(f *model.Forward) error
+	// PutAttachment stores an attachment's metadata with the rest of the
+	// transaction (its bytes are put in the AttachmentStore beforehand).
+	PutAttachment(a *model.Attachment) error
 	AddEvent(ev *model.Event) error
 
 	GetJob(id model.JobID) (*model.Job, error)

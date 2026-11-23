@@ -12,6 +12,24 @@ const SIZE_SCRIPT = `<script>(function(){function s(){parent.postMessage({papers
 
 const BASE_STYLE = `<style>html,body{margin:0;padding:0;background:transparent}body{font-family:system-ui,sans-serif;color:#1a2230}@media (prefers-color-scheme:dark){body{color:#e6e9ee}}svg{max-width:100%;height:auto;display:block;margin:0 auto}</style>`
 
+/** The policy for a workspace whose HTML may not load anything it does not embed (model.SandboxCSP). */
+export const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:"
+
+/** The sandbox flags of every frame that runs AI-authored HTML: scripts and new tabs, never papers' origin. */
+export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox'
+
+const DOCTYPE = /^\s*<!doctype[^>]*>/i
+
+/**
+ * Puts the Content-Security-Policy that keeps a document from loading
+ * anything from other hosts before everything the document has, right
+ * after the doctype, so nothing in it runs or loads first. A policy can only
+ * be tightened later, so the document cannot lift it.
+ */
+export function withSandboxCSP(doc: string): string {
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">${doc.replace(DOCTYPE, '')}`
+}
+
 const FIELD_NAME = /^[a-z][a-z0-9_]{0,31}$/
 export const MAX_FIELD_BYTES = 200
 
@@ -24,8 +42,12 @@ function fieldScript(fields: Record<string, string>, editable: boolean): string 
   return `<style>[data-field][contenteditable]{border-radius:4px;cursor:text;outline:none}[data-field][contenteditable]:hover{box-shadow:0 0 0 1px rgba(44,87,214,.5)}[data-field][contenteditable]:focus{box-shadow:0 0 0 2px #2c57d6}</style><script>(function(){var F=${json};document.querySelectorAll('[data-field]').forEach(function(el){var k=el.getAttribute('data-field');if(!Object.prototype.hasOwnProperty.call(F,k))return;el.textContent=F[k];${edit}})})()</script>`
 }
 
-export function buildSrcDoc(kind: 'html' | 'svg', content: string, fields: Record<string, string> = {}, editable = false): string {
-  const extra = SIZE_SCRIPT + fieldScript(fields, editable)
+export function buildSrcDoc(kind: 'html' | 'svg', content: string, fields: Record<string, string> = {}, editable = false, external = true): string {
+  const doc = frameDoc(kind, content, SIZE_SCRIPT + fieldScript(fields, editable))
+  return external ? doc : withSandboxCSP(doc)
+}
+
+function frameDoc(kind: 'html' | 'svg', content: string, extra: string): string {
   if (kind === 'svg') {
     return `<!doctype html><html><head><meta charset="utf-8">${BASE_STYLE}</head><body>${content}${extra}</body></html>`
   }
@@ -52,19 +74,21 @@ export function acceptField(data: unknown, fields: Record<string, string> | unde
   return { name: d.k, value: d.v }
 }
 
-export function RichFrame({ kind, content, height, title, fields, onField }: {
+export function RichFrame({ kind, content, height, title, fields, onField, external = true }: {
   kind: 'html' | 'svg'
   content: string
   height?: number
   title: string
   fields?: Record<string, string>
+  /** Whether the workspace lets the HTML load from other hosts. */
+  external?: boolean
   /** Set where people may edit the values. */
   onField?: (name: string, value: string) => void
 }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [auto, setAuto] = useState(160)
   const editable = !!onField
-  const srcDoc = useMemo(() => buildSrcDoc(kind, content, fields, editable), [kind, content, fields, editable])
+  const srcDoc = useMemo(() => buildSrcDoc(kind, content, fields, editable, external), [kind, content, fields, editable, external])
   const fieldsRef = useRef(fields)
   fieldsRef.current = fields
   const onFieldRef = useRef(onField)

@@ -12,6 +12,7 @@ import { BlockView, type BlockContext, type EditingState, type Mark } from '../c
 import { CONTINUING, TEXT_TYPES, TURN_INTO, matchChoices, type TypeChoice } from '../components/blockTypes'
 import type { ConflictChoice, ConflictState } from '../components/ConflictPanel'
 import { HistoryDrawer, totalOf, type ChangeCounts } from '../components/HistoryDrawer'
+import { HtmlPage } from '../components/HtmlPage'
 import { MoveDialog } from '../components/MoveDialog'
 import type { Caret, Slash } from '../components/RichEditor'
 import { SlashMenu } from '../components/SlashMenu'
@@ -1267,6 +1268,10 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const hasChildren = live.some((b) => b.type === 'paper')
   const favorite = !!sidebar?.favorites.some((f) => f.id === paperId)
   const workspace = workspaces.find((w) => w.id === ws)
+  // HTML papers show their one document; nothing in the body is edited here.
+  const isHTML = paper?.kind === 'html'
+  const htmlPage = isHTML ? live.find((b) => b.type === 'html_page') : undefined
+  const external = workspace?.sandbox?.external_resources ?? true
 
   // Enter sends the title and moves on, and the blur that follows must not send it again.
   const sentTitle = useRef<string | null>(null)
@@ -1310,7 +1315,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     if (!paper) return []
     const items: MenuItem[] = [
       { label: t('copyLink'), icon: '🔗', onSelect: () => void navigator.clipboard?.writeText(`${window.location.origin}${base}`).then(() => toast(t('copied')), () => undefined) },
-      { label: t('exportMarkdown'), icon: '⇩', onSelect: () => { window.location.href = api.markdownURL(ws, paperId) } },
+      isHTML
+        ? { label: t('openHtml'), icon: '↗', disabled: !htmlPage?.props.attachment_id, onSelect: () => { if (htmlPage?.props.attachment_id) window.open(api.htmlURL(ws, paperId, htmlPage.props.attachment_id), '_blank', 'noopener,noreferrer') } }
+        : { label: t('exportMarkdown'), icon: '⇩', onSelect: () => { window.location.href = api.markdownURL(ws, paperId) } },
       { label: t('print'), icon: '⎙', onSelect: () => void print() },
       { label: t('latestVersion'), icon: 'v', disabled: !paper.version_number, onSelect: () => navigate(`${base}/latest`) },
       '-',
@@ -1381,7 +1388,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const marks = readOnlyVersion || (showChanges && !readOnlyVersion) ? diffMarks?.marks : undefined
 
   const ctx: BlockContext | null = state ? {
-    ws, state, canEdit, editing, conflict, recent, numbers, selected, menuFor: blockMenu?.block.id ?? null, marks, slashOpen: !!slash && slash.mode === 'type',
+    ws, state, canEdit, editing, conflict, recent, numbers, selected, menuFor: blockMenu?.block.id ?? null, marks, slashOpen: !!slash && slash.mode === 'type', external,
     actions: {
       startEdit, setDraft, setDraftProps, finishEdit, split, join, arrowOut, indent, pasteLines, pasteImage, pickImage, run: runOk,
       openBlockMenu: (b, anchor) => setBlockMenu({ block: b, anchor }), startDrag, resolveConflict,
@@ -1456,7 +1463,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
           )}
         </header>
         <div className="scroll" onScroll={(e) => setScrolled((e.target as HTMLElement).scrollTop > 4)}>
-          <div className="col">
+          <div className={`col${isHTML ? ' html' : ''}`}>
             {!state && slow && (
               <div aria-busy="true"><div className="skel" style={{ width: '30%' }} /><div className="skel t" /><div className="skel" /><div className="skel" style={{ width: '85%' }} /><div className="skel" style={{ width: '60%' }} /></div>
             )}
@@ -1468,6 +1475,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     {paper.version_number > 0
                       ? <Link className="vmark" to={`${base}/latest`} title={t('latestVersion')}><span className="vdot" /><span className="vnum">v{paper.version_number}</span></Link>
                       : <span className="vmark"><span className="vdot open" /><span>{t('draft')}</span></span>}
+                    {isHTML && <><span className="mdot" /><span className="kind-badge">{t('htmlBadge')}</span></>}
                     {paper.visibility === 'private' && <><span className="mdot" /><span>🔒 {t('private')}</span><button type="button" className="linkbtn" onClick={() => void doPaper(() => api.setVisibility(ws, paperId, 'public'), t('publishedUnfiled'))}>{t('makePublic')}</button></>}
                     {unfiled && <><span className="mdot" /><span>{t('unfiled')}</span><button type="button" className="linkbtn" onClick={() => setDialog({ kind: 'move' })}>{t('moveEllipsis')}</button></>}
                     {paper.archived_at && <><span className="mdot" /><span>{t('archived')}</span></>}
@@ -1504,16 +1512,19 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     if (!isEnter(e)) return
                     e.preventDefault()
                     saveTitle()
+                    if (isHTML) return
                     const first = live.find((b) => TEXT_TYPES.has(b.type))
                     if (first) flushSync(() => startEdit(first, 'start'))
                     else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: '' })
                   }} />
-                <div className="blocks">
-                  {shownList.map((b, i) => (
-                    <BlockView key={viewKeys.current.get(b.id) ?? b.id} block={b} prev={shownList[i - 1]} ctx={ctx} />
-                  ))}
-                </div>
-                {canEdit && (
+                {!isHTML && (
+                  <div className="blocks">
+                    {shownList.map((b, i) => (
+                      <BlockView key={viewKeys.current.get(b.id) ?? b.id} block={b} prev={shownList[i - 1]} ctx={ctx} />
+                    ))}
+                  </div>
+                )}
+                {canEdit && !isHTML && (
                   <div className="addline">
                     <button type="button" onClick={() => {
                       const last = live[live.length - 1]
@@ -1525,6 +1536,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
               </>
             )}
           </div>
+          {state && paper && isHTML && (
+            <HtmlPage ws={ws} paperId={paperId} attachmentId={htmlPage?.props.attachment_id} title={paper.title || t('untitled')} external={external} />
+          )}
         </div>
       </section>
       {layout.drawer && paper && (

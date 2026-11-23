@@ -74,6 +74,7 @@ flowchart LR
 | Job                     | A background job: work on a whole subtree, or a move across workspaces, in transactions of 200 papers; any instance can continue it | `usecase/job*.go`                        |
 | Conflict                | An op whose base Rev is older than a change by someone else. The whole batch returns 409 with the current state                     | `usecase/ops.go`                         |
 | Version / BlockSnapshot | A version saved on purpose, and snapshots of only the blocks that changed                                                           | `model/version.go`, `usecase/version.go` |
+| HTML paper              | A paper of kind html: one `html_page` block pointing to a `text/html` attachment. `set_html` and atomic creation store the bytes before the transaction | `model/paper.go` (`PaperKind`), `usecase/html.go` |
 | markup                  | The markup of block text (Markdown + `[text]{.colour}`): normalizing, validating, plain text. A twin in TypeScript                  | `domain/markup`, `frontend/src/markup`   |
 | Order key               | A string key that always fits between two siblings, so inserting never rewrites other blocks                                        | `model/order.go`                         |
 
@@ -141,7 +142,7 @@ Overview
 
 ### An AI writes
 
-An agent reads the workspace's rules and the home's text with MCP's `papers_guide`, gets Revs with `papers_read` (papers may be given by path), and writes with `papers_write`. At a good point it saves a version with `papers_save_version`. Only AI writes HTML, SVG and Mermaid blocks; the UI only renders them in a sandboxed iframe (`RichFrame`).
+An agent reads the workspace's rules and the home's text with MCP's `papers_guide`, gets Revs with `papers_read` (papers may be given by path), and writes with `papers_write`. At a good point it saves a version with `papers_save_version`. Only AI writes HTML, SVG and Mermaid blocks; the UI only renders them in a sandboxed iframe (`RichFrame`). An HTML paper is created with its document (`papers_create_paper` with `kind` html) and replaced with `set_html`; the UI shows it whole in `HtmlPage`.
 
 ## Frontend
 
@@ -152,7 +153,7 @@ There is no state management library. The state of the open paper is updated by 
 | `src/api/`              | The REST client (`client.ts`: 409 conflicts, `moved` and `ambiguous` become an `ApiError`; a 401 sends the page to sign-in), the WebSocket (`live.ts`), the paper state (`paperState.ts`: Rev, table rows and columns, presence), types (`types.ts`)                                              |
 | `src/markup/`           | The TypeScript markup (`markup.ts`, passing the same `cases.json` as Go) and the conversion to and from Tiptap documents (`tiptap.ts`)                                                                                                                                                             |
 | `src/pages/`            | The paper page (`PaperPage`: temporary keys, the Rev an edit started from, conflicts, undo, one-click save, the history drawer, versions and restore, printing), the papers list (`PapersPage`), trash, settings (tokens, MCP example, theme, language, shortcuts), sign-in and the workspace chooser |
-| `src/components/`       | Blocks (`BlockView`, `RichEditor` with its floating format bar, `TableBlock`, `SlashMenu`, `blockTypes`, `spacing` for the gaps between blocks), `ConflictPanel`, `HistoryDrawer`, `MoveDialog`, the sidebar (papers list, search, new, home tree, favorites, recent, trash), the `Palette` (Mod+K), `RichFrame`, `Mermaid` |
+| `src/components/`       | Blocks (`BlockView`, `RichEditor` with its floating format bar, `TableBlock`, `SlashMenu`, `blockTypes`, `spacing` for the gaps between blocks), `ConflictPanel`, `HistoryDrawer`, `MoveDialog`, the sidebar (papers list, search, new, home tree, favorites, recent, trash), the `Palette` (Mod+K), `RichFrame`, `HtmlPage` (an HTML paper's document), `Mermaid` |
 | `src/editing/`          | The undo history: what each send changed, and the inverse ops                                                                                                                                                                                                                                      |
 | `src/ui/`               | Popovers, menus, modals and toasts                                                                                                                                                                                                                                                                 |
 | `src/utils/`            | Keyboard (the platform's primary modifier, IME), order keys, preferences (theme, language), actors                                                                                                                                                                                                 |
@@ -173,7 +174,7 @@ Only the ones easy to break when changing code. The full list is in `CLAUDE.md`.
 - **The paper document is not written on every write.** Its updated time moves at most once a minute; contents live on blocks.
 - **A new query needs its index.** Add it to `RequiredIndexes` in `indexes.go`; `papers firestore migrate` creates it (`migrate.go`). `reset.go` empties a database for `papers firestore reset`.
 - **Reads are batched.** Child papers, favorites and search hits are read with one `GetPapers`; the papers list reads its parents with one `GetPapers`, and the workspace list reads every "continue" paper with one `GetRecents` and one `GetPapersIn`. Use-case tests count reads.
-- **AI-written HTML/SVG renders only inside RichFrame.** Block markup is rendered as React elements, never inserted as HTML.
+- **AI-written HTML/SVG renders only inside a sandboxed frame** (`RichFrame` for blocks, `HtmlPage` for HTML papers; never same-origin). Block markup is rendered as React elements, never inserted as HTML. A workspace's `[sandbox] external_resources` false puts a policy first in every such frame.
 - **Storage contract tests run on both implementations.** `pkg/repository/*_test.go`. The markup cases run in both Go and TypeScript.
 - **Documents in the repository are Markdown, in English.** The model's source of truth is [model.md](model.md); the implementation design is [design.md](design.md). Designs under discussion are shown as specs on claude.ai, not kept in the repository.
 

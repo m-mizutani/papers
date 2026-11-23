@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -29,6 +30,42 @@ func (v Visibility) Validate() error {
 	return goerr.Wrap(ErrInvalidArgument, "visibility must be public or private", goerr.V("visibility", v))
 }
 
+// PaperKind is how a paper's body is held. It is set when the paper is
+// created and never changes.
+type PaperKind string
+
+const (
+	// PaperKindBlocks papers have a body of blocks people and AI edit.
+	PaperKindBlocks PaperKind = "blocks"
+	// PaperKindHTML papers have one html_page block pointing to an HTML
+	// document written through the API; the Web UI only shows it.
+	PaperKindHTML PaperKind = "html"
+)
+
+// Validate accepts the two kinds, and empty (a record written before kinds
+// existed, read as blocks).
+func (k PaperKind) Validate() error {
+	switch k {
+	case "", PaperKindBlocks, PaperKindHTML:
+		return nil
+	}
+	return goerr.Wrap(ErrInvalidArgument, "kind must be blocks or html", goerr.V("kind", k))
+}
+
+// Or returns the kind, reading empty as blocks.
+func (k PaperKind) Or() PaperKind {
+	if k == "" {
+		return PaperKindBlocks
+	}
+	return k
+}
+
+// MarshalJSON always names the kind, so that readers never see an empty
+// one from an older record.
+func (k PaperKind) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(k.Or()))
+}
+
 // PaperStatus is derived from VersionNumber, ArchivedAt and DeletedAt.
 type PaperStatus string
 
@@ -46,7 +83,10 @@ const (
 type Paper struct {
 	ID          PaperID     `json:"id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
-	Title       string      `json:"title"`
+	// Kind is blocks or html; empty in records written before kinds
+	// existed, which are blocks (see IsHTML).
+	Kind  PaperKind `json:"kind"`
+	Title string    `json:"title"`
 	// ParentID is the paper whose body holds this paper's paper block. It
 	// is empty for the home, for unfiled papers and for private papers.
 	ParentID   PaperID    `json:"parent_id,omitempty"`
@@ -98,6 +138,9 @@ func (p *Paper) Validate() error {
 	if err := ValidateTitle(p.Title); err != nil {
 		return err
 	}
+	if err := p.Kind.Validate(); err != nil {
+		return err
+	}
 	if err := p.Visibility.Validate(); err != nil {
 		return err
 	}
@@ -144,6 +187,7 @@ func (p *Paper) IsTrashed() bool  { return p.DeletedAt != nil }
 func (p *Paper) IsArchived() bool { return p.ArchivedAt != nil }
 func (p *Paper) IsPrivate() bool  { return p.Visibility == VisibilityPrivate }
 func (p *Paper) IsBusy() bool     { return p.JobID != "" }
+func (p *Paper) IsHTML() bool     { return p.Kind == PaperKindHTML }
 
 // Owner is the user the paper belongs to: the creator, or the user an agent
 // acted for.

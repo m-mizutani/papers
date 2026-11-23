@@ -301,6 +301,10 @@ export const keys = {
   viaApi: 'viaApi',
   renderFailed: 'renderFailed',
   forUser: 'forUser',
+  htmlBadge: 'htmlBadge',
+  htmlFrameTitle: 'htmlFrameTitle',
+  htmlLoadFailed: 'htmlLoadFailed',
+  openHtml: 'openHtml',
 } as const
 
 export type MsgKey = keyof typeof keys

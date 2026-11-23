@@ -29,6 +29,8 @@ export interface Workspace {
   language?: string
   group?: string
   home_paper_id: string
+  /** What AI-authored HTML drawn in a sandboxed frame may do here. */
+  sandbox?: { external_resources: boolean }
   /** The paper the user opened last in this workspace, if it can still be shown. */
   last_opened?: { paper_id: string; title: string; opened_at: string } | null
 }
@@ -40,10 +42,13 @@ export interface WorkspaceGroup {
 
 export type Visibility = 'public' | 'private'
 export type PaperStatus = 'draft' | 'canonical' | 'archived' | 'trashed'
+/** blocks: a body people edit; html: one HTML document written through the API. */
+export type PaperKind = 'blocks' | 'html'
 
 export interface Paper {
   id: string
   workspace_id: string
+  kind?: PaperKind
   title: string
   parent_id?: string
   visibility: Visibility
@@ -62,6 +67,7 @@ export interface Paper {
 export interface PaperRef {
   id: string
   workspace_id: string
+  kind?: PaperKind
   title: string
   parent_id?: string
   visibility: Visibility
@@ -87,6 +93,7 @@ export type BlockType =
   | 'html'
   | 'svg'
   | 'mermaid'
+  | 'html_page'
 
 export interface TableLine {
   id: string

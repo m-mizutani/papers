@@ -109,13 +109,15 @@ func TestAllowAnonymous(t *testing.T) {
 func TestLoadRejectsBadConfiguration(t *testing.T) {
 	ctx := context.Background()
 	cases := map[string]map[string]string{
-		"bad id":          {"a.toml": "[workspace]\nid = \"Bad_ID\"\n"},
-		"duplicated id":   {"a.toml": "[workspace]\nid = \"x\"\n", "b.toml": "[workspace]\nid = \"x\"\n"},
-		"unknown key":     {"a.toml": "[workspace]\nid = \"x\"\nowner = \"me\"\n"},
-		"emoji and color": {"a.toml": "[workspace]\nid = \"x\"\nemoji = \"a\"\ncolor = \"red\"\n"},
-		"missing policy":  {"a.toml": "[workspace]\nid = \"x\"\n[authz]\npolicy = [\"nope.rego\"]\n"},
-		"bad rego":        {"a.toml": "[workspace]\nid = \"x\"\n[authz]\npolicy = [\"p.rego\"]\n", "p.rego": "package papers.authz\nallow if {"},
-		"empty authz":     {"a.toml": "[workspace]\nid = \"x\"\n[authz]\n"},
+		"bad id":           {"a.toml": "[workspace]\nid = \"Bad_ID\"\n"},
+		"duplicated id":    {"a.toml": "[workspace]\nid = \"x\"\n", "b.toml": "[workspace]\nid = \"x\"\n"},
+		"unknown key":      {"a.toml": "[workspace]\nid = \"x\"\nowner = \"me\"\n"},
+		"emoji and color":  {"a.toml": "[workspace]\nid = \"x\"\nemoji = \"a\"\ncolor = \"red\"\n"},
+		"missing policy":   {"a.toml": "[workspace]\nid = \"x\"\n[authz]\npolicy = [\"nope.rego\"]\n"},
+		"bad rego":         {"a.toml": "[workspace]\nid = \"x\"\n[authz]\npolicy = [\"p.rego\"]\n", "p.rego": "package papers.authz\nallow if {"},
+		"empty authz":      {"a.toml": "[workspace]\nid = \"x\"\n[authz]\n"},
+		"sandbox not bool": {"a.toml": "[workspace]\nid = \"x\"\n[sandbox]\nexternal_resources = \"no\"\n"},
+		"sandbox unknown":  {"a.toml": "[workspace]\nid = \"x\"\n[sandbox]\nnetwork = false\n"},
 	}
 	for name, files := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -147,4 +149,23 @@ func TestNonBooleanAllowIsAnError(t *testing.T) {
 	r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
 	_, err := r.Allow(ctx, &model.User{ID: model.NewUserID(), Email: "a@b.c"}, "x")
 	gt.Error(t, err)
+}
+
+func TestSandboxExternalResources(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	write(t, dir, "closed.toml", "[workspace]\nid = \"closed\"\n[sandbox]\nexternal_resources = false\n")
+	write(t, dir, "open.toml", "[workspace]\nid = \"open\"\n")
+	write(t, dir, "explicit.toml", "[workspace]\nid = \"explicit\"\n[sandbox]\nexternal_resources = true\n")
+	r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+
+	closed, ok := r.Get("closed")
+	gt.True(t, ok)
+	gt.False(t, closed.Sandbox.ExternalResources)
+	open, ok := r.Get("open")
+	gt.True(t, ok)
+	gt.True(t, open.Sandbox.ExternalResources) // default
+	explicit, ok := r.Get("explicit")
+	gt.True(t, ok)
+	gt.True(t, explicit.Sandbox.ExternalResources)
 }

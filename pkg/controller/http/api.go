@@ -57,6 +57,8 @@ func (s *Server) routeAPI(r chi.Router) {
 			r.Get("/markdown", s.handleMarkdown)
 			r.Post("/attachments", s.handleUpload)
 			r.Get("/attachments/{att}", s.handleAttachment)
+			r.Get("/html", s.handleReadHTML)
+			r.Get("/html/{att}", s.handleHTML)
 			r.Get("/live", s.handleLive)
 		})
 	})
@@ -256,16 +258,20 @@ type createPaperRequest struct {
 	Parent     string           `json:"parent"`
 	After      *string          `json:"after"`
 	Markdown   string           `json:"markdown"`
+	// Kind is blocks (default) or html; an HTML paper needs HTML.
+	Kind model.PaperKind `json:"kind"`
+	HTML string          `json:"html"`
 }
 
 func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 	var req createPaperRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSONLimit(r, &req, maxHTMLRequestBody); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
 	p, err := s.uc.CreatePaper(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.CreateInput{
 		Title: req.Title, Visibility: req.Visibility, Parent: req.Parent, After: req.After, Markdown: req.Markdown,
+		Kind: req.Kind, HTML: req.HTML,
 	})
 	respond(w, r, http.StatusCreated, p, err)
 }
@@ -297,7 +303,7 @@ type opsRequest struct {
 
 func (s *Server) handleOps(w http.ResponseWriter, r *http.Request) {
 	var req opsRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSONLimit(r, &req, maxHTMLRequestBody); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
@@ -528,6 +534,46 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Name: r.URL.Query().Get("name"), ContentType: r.Header.Get("Content-Type"), Body: body,
 	})
 	respond(w, r, http.StatusCreated, a, err)
+}
+
+func (s *Server) handleReadHTML(w http.ResponseWriter, r *http.Request) {
+	v, err := s.uc.ReadHTML(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), r.URL.Query().Get("at"))
+	respond(w, r, http.StatusOK, v, err)
+}
+
+// htmlFrameCSP is the Content-Security-Policy of an HTML paper's document
+// served on its own: it runs as an opaque origin with scripts, whatever
+// opens it, and only papers' own pages may frame it.
+const htmlFrameCSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'"
+
+// handleHTML serves one document of an HTML paper. It always streams the
+// bytes through the server, unlike images, which may be redirected to a
+// signed URL. Signed URLs may be added later to keep large documents off
+// the server; doing so needs all of: deciding it for every attachment, the
+// signing permission (iam.serviceAccounts.signBlob) together with a CORS
+// rule on the bucket (the UI fetches the document), signing with
+// response-content-disposition=attachment so that opening the URL never
+// runs the document on the storage origin, and keeping this route for
+// "Open HTML in a new tab".
+func (s *Server) handleHTML(w http.ResponseWriter, r *http.Request) {
+	c, err := s.uc.OpenHTML(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), model.AttachmentID(chi.URLParam(r, "att")))
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	defer safe.Close(r.Context(), c.Body)
+	csp := htmlFrameCSP
+	if !c.ExternalResources {
+		csp += "; " + model.SandboxCSP
+	}
+	h := w.Header()
+	h.Set("Content-Type", model.HTMLObjectContentType)
+	h.Set("Content-Length", strconv.FormatInt(c.Attachment.Size, 10))
+	// immutable: a document never changes
+	h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	h.Set("Content-Security-Policy", csp)
+	h.Set("X-Content-Type-Options", "nosniff")
+	safe.Copy(r.Context(), w, c.Body)
 }
 
 func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {

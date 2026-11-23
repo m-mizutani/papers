@@ -84,7 +84,7 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - No hardcoded colours, spacing or sizes outside the tokens in `frontend/src/styles/global.css`.
 - All user-facing text goes through i18n (`frontend/src/i18n/keys.ts`, `en.ts`, `ja.ts`).
 - Enter-key handlers must respect IME composition: use `isEnter` / `isImeComposing` from `src/utils/keyboard.ts` (enforced by ESLint).
-- AI-authored HTML/SVG renders only inside the sandboxed `RichFrame` (no `allow-same-origin`). Never inject block content as HTML elsewhere.
+- AI-authored HTML/SVG renders only inside the sandboxed `RichFrame` (blocks) or `HtmlPage` (HTML papers), never with `allow-same-origin`. Never inject block content as HTML elsewhere.
 
 ### Language and commits
 - Code comments and string literals in English (UI copy via i18n).

@@ -346,19 +346,20 @@ type blockKey struct {
 // Firestore transactions must perform all reads before any write. Reads
 // overlay the staged writes so fn sees its own changes.
 type fsTx struct {
-	tx        *firestore.Transaction
-	r         *Repository
-	ws        model.WorkspaceID
-	papers    map[model.PaperID]*model.Paper
-	paperRead map[model.PaperID]*model.Paper // nil value: known missing
-	puts      map[blockKey]*model.Block
-	deletes   map[blockKey]bool
-	versions  []*model.Version
-	snapshots map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot
-	forwards  []*model.Forward
-	events    []*model.Event
-	jobs      map[model.JobID]*model.Job
-	items     map[model.JobID]map[model.PaperID]*model.JobItem
+	tx          *firestore.Transaction
+	r           *Repository
+	ws          model.WorkspaceID
+	papers      map[model.PaperID]*model.Paper
+	paperRead   map[model.PaperID]*model.Paper // nil value: known missing
+	puts        map[blockKey]*model.Block
+	deletes     map[blockKey]bool
+	versions    []*model.Version
+	snapshots   map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot
+	forwards    []*model.Forward
+	attachments []*model.Attachment
+	events      []*model.Event
+	jobs        map[model.JobID]*model.Job
+	items       map[model.JobID]map[model.PaperID]*model.JobItem
 }
 
 func (t *fsTx) GetPaper(id model.PaperID) (*model.Paper, error) {
@@ -686,6 +687,21 @@ func (t *fsTx) PutForward(f *model.Forward) error {
 	return nil
 }
 
+func (t *fsTx) PutAttachment(a *model.Attachment) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	if a.WorkspaceID != t.ws || !validKeys(string(a.PaperID), string(a.ID)) {
+		return goerr.Wrap(model.ErrInvalidArgument, "invalid attachment")
+	}
+	if _, err := t.GetPaper(a.PaperID); err != nil {
+		return goerr.Wrap(model.ErrInvalidArgument, "attachment belongs to an unknown paper", goerr.V("paper_id", a.PaperID))
+	}
+	c := *a
+	t.attachments = append(t.attachments, &c)
+	return nil
+}
+
 func (t *fsTx) AddEvent(ev *model.Event) error {
 	if ev.WorkspaceID != t.ws || !validKeys(string(ev.PaperID)) {
 		return goerr.Wrap(model.ErrInvalidArgument, "invalid event")
@@ -741,6 +757,12 @@ func (t *fsTx) flush() error {
 	for _, f := range t.forwards {
 		if err := tx.Set(t.r.forwardDoc(ws, f.PaperID), f); err != nil {
 			return goerr.Wrap(err, "failed to stage forward")
+		}
+	}
+	for _, a := range t.attachments {
+		// Set: an attachment never changes, so writing it again is harmless.
+		if err := tx.Set(t.r.attachmentsCol(ws, a.PaperID).Doc(string(a.ID)), a); err != nil {
+			return goerr.Wrap(err, "failed to stage attachment")
 		}
 	}
 	for _, ev := range t.events {

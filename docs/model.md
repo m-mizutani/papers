@@ -2,7 +2,7 @@
 
 Everything papers handles, defined one by one: what the words mean, what values things hold, the promises kept, and how things live and change. The aim is to know what is stored, and what changes when something happens, without reading the code.
 
-Drafted 2026-11-21. The same day D10 and D11 (text formatting and rich editing) were added and workspaces were decided to be defined in configuration files (as in hecatoncheires). It details the design starting from the [codebase map](codebase.md). Also the same day most of D1–D18 were decided, versions were reduced to "copies saved on purpose" (D15), and the model was drawn (entities and relations, paper states, storage layout). The decisions on organizing papers (nesting, the home, versions, moves) are included. On 2026-11-22, work on whole subtrees and moves across workspaces were decided to run as [background jobs](#background-jobs-job) ([D19](#d19-operations-on-whole-subtrees-and-moves-across-workspaces-run-as-background-jobs-decided-2026-11-22)), and the model was implemented.
+Drafted 2026-11-21. The same day D10 and D11 (text formatting and rich editing) were added and workspaces were decided to be defined in configuration files (as in hecatoncheires). It details the design starting from the [codebase map](codebase.md). Also the same day most of D1–D18 were decided, versions were reduced to "copies saved on purpose" (D15), and the model was drawn (entities and relations, paper states, storage layout). The decisions on organizing papers (nesting, the home, versions, moves) are included. On 2026-11-22, work on whole subtrees and moves across workspaces were decided to run as [background jobs](#background-jobs-job) ([D19](#d19-operations-on-whole-subtrees-and-moves-across-workspaces-run-as-background-jobs-decided-2026-11-22)), and the model was implemented. On 2026-11-23, [HTML papers](#d20-html-papers-decided-2026-11-23) (D20) were added: a paper kind whose body is one HTML document written through the API.
 
 > **This document is the source of truth for papers' model and concepts (decided 2026-11-22)**. On terms, entities and relations, values, invariants, access, storage layout, operations, conflict rules and versions, when another document ([design.md](design.md), [codebase.md](codebase.md)) or the code disagrees, this document wins.
 
@@ -17,6 +17,8 @@ Screens, the API, the code and this document use the same words with the same me
 | Home                   | home          | The root paper; one per workspace. It cannot be deleted or moved.                                                                                                                                 |
 | Paper block            | `paper` block | The block that places a child paper in its parent's body. It holds only the child's ID.                                                                                                           |
 | Parent, child, subtree | `ParentID`    | A paper placed in a body by a paper block is a child; the paper whose body it is, the parent. A paper's subtree is its children, their children, and so on.                                       |
+| HTML paper             | `Kind` `html` | A paper whose whole body is one HTML document written through the API (REST, MCP). People only view it, in a sandboxed frame where its scripts run; everything but the body works as for any paper ([D20](#d20-html-papers-decided-2026-11-23)). |
+| Paper kind             | `PaperKind`   | How a paper's body is held: `blocks` (blocks people and AI edit) or `html` (an HTML paper). Set at creation, never changed.                                                                        |
 | Block                  | `Block`       | The smallest unit of editing and of conflicts: a paragraph, a heading, a table cell, a diagram written by AI, and so on.                                                                          |
 | Contents               | contents      | A block's type, text and properties. "The contents changed" means one of those three changed.                                                                                                     |
 | Position               | position      | A block's parent and order key. Handled apart from the contents; changing a position is never a conflict.                                                                                         |
@@ -65,6 +67,7 @@ erDiagram
   }
   Paper {
     string ID
+    string Kind "blocks / html"
     string ParentID
     string Title
     string Visibility "public / private"
@@ -137,6 +140,9 @@ language    = "en"                  # optional
 
 [authz]                              # who may use this workspace (returns allow)
 policy = ["policies/security.rego"]
+
+[sandbox]                            # optional: what AI-authored HTML may do here
+external_resources = false           # default true
 ```
 
 - **id**: `^[a-z0-9]+(-[a-z0-9]+)*$`, up to 63 characters, unique across workspaces. **Must never change** (it becomes the storage path `workspaces/{id}/…`). To rename, change name.
@@ -145,6 +151,7 @@ policy = ["policies/security.rego"]
 - **emoji / color**: A mark on screen; one or the other.
 - **language**: The default language AI writes in (optional).
 - **authz**: The rule for who may use this workspace: Rego returning `allow` (true / false) ([Access](#access)).
+- **sandbox.external_resources**: Whether AI-authored HTML drawn in a sandboxed frame (HTML papers, `html` and `svg` blocks) may load anything from other hosts (scripts, styles, images, fonts, connections). Optional, true when absent. False keeps the HTML to what it embeds ([D20](#d20-html-papers-decided-2026-11-23)).
 
 
 
@@ -162,6 +169,7 @@ policy = ["policies/security.rego"]
 A title and an ordered list of blocks. People and AI write the same papers with the same operations. What is written becomes the **current state** (the latest, being edited) at once. A [version](#current-state-and-versions) exists only when someone (a person or AI) explicitly saves one, and history is the list of those versions.
 
 - **ID / WorkspaceID**: Never change. A "move" across workspaces is a copy under new IDs plus deleting the original ([Tree](#tree-nested-papers)).
+- **Kind**: `blocks` or `html` ([HTML paper](#d20-html-papers-decided-2026-11-23)). Set when the paper is created and never changed. A record written before kinds existed has none and is `blocks`.
 - **ParentID**: The parent paper. Always matches the paper block for this paper in the parent's body (written in the same transaction). Empty for the home, for unfiled papers and for private papers. No list of ancestors is kept ([Tree](#tree-nested-papers)).
 - **Title**: One line, up to 256 bytes. May be empty ("Untitled" on screen). Included in versions, but has no revision of its own: concurrent changes are last-write-wins ([D1](#d1-titles-are-under-version-history-but-have-no-revision-of-their-own-decided)).
 - **Visibility**: `public` (default) or `private`; meaning in [Access](#access). Only the creator changes it. Private papers are not in the tree; they show in the [papers list](#papers-list), to their creator only.
@@ -218,6 +226,7 @@ There is no container concept (folders). A child paper is placed as a **paper bl
 
 - **Every filed paper sits in exactly one parent's body as exactly one paper block**. The top level is in the home's body. A parent is the home or a filed paper; unfiled and private papers are never parents, so the tree has one root, the home.
 - **Unfiled papers are public but not in the tree**. A paper created without a parent (the UI's "New", REST and MCP without `parent`) is unfiled. "Move…" files it under a parent; "Move to unfiled" (`unfiled` on a move) takes a filed paper out of the tree again, only when it has no children (papers in the trash do not count). Restoring a version of an unfiled paper brings back the children that version has and that are still in the trash, so an unfiled paper can have children that way; it still takes no new ones (no insert, move or create under it), and it is filed or emptied of children before it can be unfiled again.
+- **HTML papers have no children**: their body is one document, so nothing can be placed under them. They can be filed, unfiled or private like any paper.
 - **Private papers are not in the tree**. They have no parent or children. Making a private paper public places it under the parent given, or leaves it unfiled when none is given. Only a public paper without children can be made private.
 - The order of children is the order of the paper blocks in the parent's body; it is not stored separately.
 - Depth is not limited. As a safety valve in the implementation, walking up parents stops at 100 levels.
@@ -322,6 +331,9 @@ The smallest unit of editing, conflicts and search entries. A block has **conten
 | `mermaid`                                   | Mermaid source                                                                                                  | `height`                                                                       | AI only     | source                                               |
 | `svg`                                       | A complete `<svg>` element                                                                                      | `height`, `fields`                                                             | AI only (people edit `fields`) | text nodes, then the `fields` values |
 | `html`                                      | Self-contained HTML                                                                                             | `height`, `fields`                                                             | AI only (people edit `fields`) | text nodes, then the `fields` values |
+| `html_page`                                 | The text nodes of the HTML paper's document (up to 8 KiB), for search                                           | `attachment_id` (required: the paper's `text/html` attachment)                 | no one (the server writes it; `set_html` changes it) | the text |
+
+**html_page** is the whole body of an [HTML paper](#d20-html-papers-decided-2026-11-23) and exists only there: the server creates it with the paper and changes it only through `set_html` and restoring a version. Its ID never changes for the life of the paper, and each document it has pointed to stays as an immutable attachment, so a later comment can name the block and the document it was written on.
 
 "AI only" is a limit of the UI, not of writing. The API and MCP accept them even with a person's token, but the web UI offers no way to edit them and only draws them in a sandboxed iframe.
 
@@ -398,12 +410,13 @@ A writer sends a list of operations (Ops) in one request (a batch). Either all a
 
 | Op                      | Required                                                                                       | Base revision                          | Result                                                                                                                     | When nothing happens                       |
 |-------------------------|------------------------------------------------------------------------------------------------|----------------------------------------|----------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|
-| `insert`                | Type (position by `after`; a temporary name `ref` is optional). For `paper`, the child's title | not needed                             | A block is added (for a table also its cells, for `paper` also the child paper)                                            | —                                          |
+| `insert`                | Type (position by `after`; a temporary name `ref` is optional). For `paper`, the child's title, and `paper_kind` `html` with its `html` for an HTML paper | not needed                             | A block is added (for a table also its cells, for `paper` also the child paper)                                            | —                                          |
 | `update`                | Block                                                                                          | **required**                           | Contents updated (`Rev` +1; cells added or removed when the table's shape changes)                                         | Contents unchanged                         |
 | `delete`                | Block                                                                                          | **required**                           | Deleted (for a table also its cells; for `paper` the child goes to the trash with its subtree by a [background job](#background-jobs-job)) | Someone else already deleted it            |
 | `move`                  | Block (position by `after`)                                                                    | not needed                             | Position changed                                                                                                           | Position unchanged, or already deleted     |
 | `set_title`             | Title                                                                                          | none (last-write-wins, [D1](#d1-titles-are-under-version-history-but-have-no-revision-of-their-own-decided)) | Title changed                                                                                                              | Same title                                 |
 | `insert_markdown`       | Markdown                                                                                       | not needed                             | A series of blocks is added                                                                                                | —                                          |
+| `set_html`              | The HTML (an HTML paper only; at most one per batch)                                           | **required** (the `html_page` block's) | The document is replaced: a new attachment, and the `html_page` block points to it (`Rev` +1)                              | Same document                              |
 | `move_paper`            | New parent (ID or path) and position, or `unfiled` (without a parent or a workspace)          | not needed                             | At most three records rewritten: old parent (none when the paper was unfiled), new parent (none for `unfiled`), the paper itself | Same position under the same parent, or already unfiled |
 | `set_visibility`        | public / private (for public, optionally a parent and position; without a parent the paper becomes unfiled) | not needed                | The paper and its parent (if any) rewritten                                                                                | Same visibility                            |
 | `save_version`          | Note (optional)                                                                                | not needed                             | A version is made                                                                                                          | Nothing changed since the previous version |
@@ -521,7 +534,7 @@ workspaces/{ws}                         HomePaperID (workspaces are configuratio
 │   │   └── snapshots/{rev}             snapshots versions point to (made on save; immutable)
 │   ├── versions/{n}                    versions (saved explicitly; immutable)
 │   ├── events/{id}                     change events (for fan-out only; short-lived)
-│   └── attachments/{id}                attachment metadata (bytes in AttachmentStore)
+│   └── attachments/{id}                attachment metadata: images, and HTML papers' documents (bytes in AttachmentStore)
 ├── search/{paper}_{block | title}      search entries (derived; plain text)
 ├── forwards/{old paper}                where a paper moved across workspaces went
 └── jobs/{job}                          background jobs (removed 7 days after finishing)
@@ -540,7 +553,7 @@ sessions/{session}                      sign-in sessions (secret hash)
 
 ### Search entries
 
-- One for the title and one per block that has plain text, kept per workspace (so the search scope is cut by path). For `html` and `svg` blocks the text is the text nodes followed by the `fields` values, separated by spaces.
+- One for the title and one per block that has plain text, kept per workspace (so the search scope is cut by path). For `html` and `svg` blocks the text is the text nodes followed by the `fields` values, separated by spaces. For an HTML paper it is the `html_page` block's text: the document's text nodes outside `script`, `style`, `template` and `noscript`.
 - Written in the same transaction as the blocks, so a write is searchable at once.
 - Not a source of truth: everything can be rebuilt from papers and blocks.
 - They hold neither access information nor tree information (parent, ancestors). After searching, results are filtered by the paper's visibility, trash and archive state, and "under here" walks up the parents of each hit. Moves rewrite nothing.
@@ -581,6 +594,8 @@ What stored data always satisfies, however it is written. Kept by the repository
 20. The attachment an image block points to belongs to the same paper as the block. Attachment bytes never change.
 21. Once its job has finished, everything under a trashed paper is in the trash from the same or an earlier delete (no live paper block of a trashed paper remains under a parent that is not in the trash).
 22. A paper with a `JobID` and its blocks are written only by that job. A paper with a `JobID` appears in no principal's search, and copies are placed in no parent's body.
+23. An HTML paper's body is exactly one `html_page` block, and an `html_page` block exists only in an HTML paper. Its `attachment_id` always points to a `text/html` attachment of the same paper (an HTML paper's body is never empty). HTML papers have no children and their bodies have no `paper` block.
+24. A paper's kind never changes.
 
 ## Decisions
 
@@ -676,7 +691,7 @@ Writes with a personal token (for scripts) are recorded as a "person", so automa
 Relying only on external URLs for images means internal information may disappear or become unreadable. Papers can hold attachments of their own.
 
 - **ID / PaperID**: A 22-character ID; belongs to exactly one paper.
-- **Name / ContentType / Size**: The original file name, type and size. Images only for now, with a limit (20 MiB, say).
+- **Name / ContentType / Size**: The original file name, type and size. Uploads are images only, with a limit (20 MiB). The documents of [HTML papers](#d20-html-papers-decided-2026-11-23) are `text/html` attachments (up to 5 MiB) that only writing an HTML paper's body creates.
 - **SHA256**: A hash of the bytes. The same bytes in the same paper reuse the same attachment.
 - **CreatedBy / CreatedAt**: The writer who uploaded it, and when.
 
@@ -884,6 +899,18 @@ The concept of user groups is dropped for now. Rules for who may use a workspace
 
 - The stored groups (`Group`) and the group management API and screens are removed.
 - If needed, groups are reconsidered as imported from the organization's source of truth (Google Workspace groups and so on, the IdP). Managing groups inside papers does not come back.
+
+### D20. HTML papers (decided 2026-11-23)
+
+Agents produce whole pages (reports, dashboards, small tools) as one HTML document. Splitting them into blocks loses the page; an `html` block is one block among others, sized to its content and limited to 256 KiB.
+
+> **Decided**. A paper has a kind (`blocks` / `html`). An HTML paper's body is one `html_page` block pointing to a `text/html` attachment of the paper; the document's bytes live in the AttachmentStore (Cloud Storage in production), never in Firestore. Because the body is still a block, versions, conflicts by revision, the change feed, search, moves across workspaces and purging work as for any paper.
+>
+> - **Written through the API only**: the paper is created with its document (`html` is required, so no HTML paper is ever empty), and `set_html` replaces the document with the `html_page` block's base revision. Both are atomic with the rest of the request: the bytes are stored first, then the attachment's metadata and the block are written in the same transaction as everything else of the batch, so a failed request leaves only bytes nothing refers to. At most 5 MiB of UTF-8. The same bytes reuse the paper's existing attachment. Documents a newer one replaced stay (versions may point to them) until the paper is purged.
+> - **People view it** in a sandboxed frame (`allow-scripts allow-popups allow-popups-to-escape-sandbox`, never same-origin): its scripts run but cannot reach papers, its API or the viewer's cookies. The Web UI offers no way to edit the body; the title and everything else work as usual. The document is served through the server with `Content-Security-Policy: sandbox …`, so opening it on its own is sandboxed too.
+> - **External resources are the workspace's choice** (`[sandbox] external_resources`, true by default), for HTML papers and `html` / `svg` blocks alike. Without them the frame's document gets a policy that loads nothing from other hosts.
+> - **Comments later**: the `html_page` block's ID never changes and each document is an immutable attachment, so comments can be attached to the block and the document they were written on.
+> - Serving the documents through signed Cloud Storage URLs may come later, for every attachment at once ([design](design.md#open-questions-and-next-tasks)).
 
 ## What changes once decided
 

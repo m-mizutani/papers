@@ -23,10 +23,29 @@ type Attachment struct {
 // MaxAttachmentSize caps one attachment.
 const MaxAttachmentSize = 20 << 20
 
-// AllowedAttachmentTypes are the content types papers accepts for now.
+// AllowedAttachmentTypes are the image types people and AI may upload.
 var AllowedAttachmentTypes = map[string]bool{
 	"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true,
 }
+
+// HTMLContentType is the type of the attachment that holds an HTML paper's
+// document. Only writing an HTML paper's body creates one; it cannot be
+// uploaded.
+const HTMLContentType = "text/html"
+
+// HTMLObjectContentType is the content type the document's bytes are stored
+// and served with.
+const HTMLObjectContentType = "text/html; charset=utf-8"
+
+// MaxHTMLSize caps one HTML paper's document in bytes.
+const MaxHTMLSize = 5 << 20
+
+// IsImage reports whether the attachment is an image (what image blocks
+// may show).
+func (a *Attachment) IsImage() bool { return AllowedAttachmentTypes[a.ContentType] }
+
+// IsHTML reports whether the attachment holds an HTML paper's document.
+func (a *Attachment) IsHTML() bool { return a.ContentType == HTMLContentType }
 
 // StoreKey is where the attachment's bytes live in the store.
 func (a *Attachment) StoreKey() string { return a.StorePrefix() + string(a.ID) }
@@ -40,10 +59,15 @@ func (a *Attachment) Validate() error {
 	if !ValidID(string(a.ID)) || a.PaperID == "" || a.WorkspaceID == "" {
 		return goerr.Wrap(ErrInvalidArgument, "attachment id, workspace and paper are required")
 	}
-	if !AllowedAttachmentTypes[a.ContentType] {
-		return goerr.Wrap(ErrInvalidArgument, "only images can be attached for now", goerr.V("content_type", a.ContentType))
+	limit := int64(MaxAttachmentSize)
+	switch {
+	case a.IsImage():
+	case a.IsHTML():
+		limit = MaxHTMLSize
+	default:
+		return goerr.Wrap(ErrInvalidArgument, "only images and HTML documents can be stored", goerr.V("content_type", a.ContentType))
 	}
-	if a.Size <= 0 || a.Size > MaxAttachmentSize {
+	if a.Size <= 0 || a.Size > limit {
 		return goerr.Wrap(ErrInvalidArgument, "attachment size out of range", goerr.V("size", a.Size))
 	}
 	return nil

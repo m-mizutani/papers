@@ -90,3 +90,16 @@ func TestSearchEntries(t *testing.T) {
 	gt.True(t, utf8.ValidString(be.Text))
 	gt.True(t, len(be.Text) > model.MaxSearchTextLength-4)
 }
+
+func TestHTMLText(t *testing.T) {
+	got := model.HTMLText("<html><head><title>T</title><style>p{}</style></head><body><h1>Weekly</h1>\n<p>nine   incidents</p><script>var s = 'x'</script><template>t</template></body></html>")
+	gt.Equal(t, got, "T Weekly nine incidents")
+
+	long := model.HTMLText("<p>" + strings.Repeat("あ", model.MaxSearchTextLength) + "</p>")
+	gt.True(t, len(long) <= model.MaxSearchTextLength)
+	gt.True(t, utf8.ValidString(long))
+
+	// the html_page block's content is its search text
+	b := &model.Block{Type: model.BlockHTMLPage, Content: "Weekly nine incidents"}
+	gt.Equal(t, model.SearchText(b), "Weekly nine incidents")
+}

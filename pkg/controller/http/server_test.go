@@ -81,7 +81,7 @@ func newTestServerWith(t *testing.T, devMode bool, tune func(*usecase.Config)) *
 func newTestServerMode(t *testing.T, mode authMode, tune func(*usecase.Config)) *testServer {
 	t.Helper()
 	repo := memory.New(memory.WithEventBuffer(64))
-	wss := workspace.Static(&model.Workspace{ID: "team", Name: "Team", Description: "Write runbooks as numbered lists."}, &model.Workspace{ID: "other", Name: "Other"})
+	wss := workspace.Static(&model.Workspace{ID: "team", Name: "Team", Description: "Write runbooks as numbered lists.", Sandbox: model.Sandbox{ExternalResources: true}}, &model.Workspace{ID: "other", Name: "Other"})
 	cfg := usecase.Config{MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobLease: time.Minute, JobStep: 200}
 	if tune != nil {
 		tune(&cfg)

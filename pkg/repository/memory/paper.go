@@ -291,17 +291,18 @@ type stagedSnapshot struct {
 }
 
 type memTx struct {
-	r         *Repository
-	ws        model.WorkspaceID
-	papers    map[model.PaperID]*model.Paper
-	blocks    map[model.PaperID]map[model.BlockID]*model.Block
-	deleted   map[model.PaperID]map[model.BlockID]bool
-	versions  []*model.Version
-	snapshots []stagedSnapshot
-	forwards  []*model.Forward
-	events    []*model.Event
-	jobs      map[model.JobID]*model.Job
-	items     map[model.JobID]map[model.PaperID]*model.JobItem
+	r           *Repository
+	ws          model.WorkspaceID
+	papers      map[model.PaperID]*model.Paper
+	blocks      map[model.PaperID]map[model.BlockID]*model.Block
+	deleted     map[model.PaperID]map[model.BlockID]bool
+	versions    []*model.Version
+	snapshots   []stagedSnapshot
+	forwards    []*model.Forward
+	attachments []*model.Attachment
+	events      []*model.Event
+	jobs        map[model.JobID]*model.Job
+	items       map[model.JobID]map[model.PaperID]*model.JobItem
 }
 
 func (t *memTx) paperExists(id model.PaperID) bool {
@@ -527,6 +528,17 @@ func (t *memTx) PutSnapshot(paper model.PaperID, s *model.BlockSnapshot) error {
 	return nil
 }
 
+func (t *memTx) PutAttachment(a *model.Attachment) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	if a.WorkspaceID != t.ws || !t.paperExists(a.PaperID) {
+		return goerr.Wrap(model.ErrInvalidArgument, "attachment belongs to an unknown paper", goerr.V("paper_id", a.PaperID))
+	}
+	t.attachments = append(t.attachments, clone(a))
+	return nil
+}
+
 func (t *memTx) PutForward(f *model.Forward) error {
 	t.forwards = append(t.forwards, clone(f))
 	return nil
@@ -601,6 +613,9 @@ func (r *Repository) RunTx(_ context.Context, ws model.WorkspaceID, fn func(tx i
 	}
 	for _, f := range t.forwards {
 		r.forwards[paperKey{f.WorkspaceID, f.PaperID}] = clone(f)
+	}
+	for _, a := range t.attachments {
+		r.papers[paperKey{ws, a.PaperID}].attachments[a.ID] = clone(a)
 	}
 	for id, j := range t.jobs {
 		r.jobs[jobKey{ws, id}] = j.Clone()
