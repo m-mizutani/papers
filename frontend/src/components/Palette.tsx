@@ -77,7 +77,7 @@ export function Palette({ ws, wsName, under, recent, commands, onClose }: {
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="pal" role="dialog" aria-label={t('search')}>
         <div className="pal-in">
-          <span className="muted" aria-hidden style={{ fontSize: 18 }}>⌕</span>
+          <span className="muted" aria-hidden style={{ fontSize: 'var(--text-h3)' }}>⌕</span>
           <input autoFocus value={q} placeholder={t('palettePlaceholder')} aria-label={t('search')} autoComplete="off"
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {

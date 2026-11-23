@@ -68,4 +68,25 @@ describe('History', () => {
     h.record([{ k: 'title', before: 'a', after: 'c' }])
     expect(h.undone).toHaveLength(0)
   })
+
+  it('brings back adjacent deleted blocks in their order', () => {
+    const h = new History()
+    h.record([
+      { k: 'delete', id: 'A', after: 'X', snap: p('a') },
+      { k: 'delete', id: 'B', after: 'A', snap: p('b') },
+    ])
+    const plan = h.plan('undo', store({ X: { rev: 1, snap: p('x') }, Y: { rev: 1, snap: p('y') } }).lookup)
+    if (!plan.ok) throw new Error('expected a plan')
+    expect(plan.ops).toEqual([
+      { op: 'insert', ref: 'h1', type: 'paragraph', content: 'a', props: {}, after: 'X' },
+      { op: 'insert', ref: 'h0', type: 'paragraph', content: 'b', props: {}, after: 'ref:h1' },
+    ])
+  })
+
+  it('refuses to undo a title someone else changed since', () => {
+    const h = new History()
+    h.record([{ k: 'title', before: 'Q3', after: 'Q3 draft' }])
+    expect(h.plan('undo', () => undefined, 'Q3 plan')).toEqual({ ok: false, reason: 'changed', blockId: '' })
+    expect(h.plan('undo', () => undefined, 'Q3 draft').ok).toBe(true)
+  })
 })

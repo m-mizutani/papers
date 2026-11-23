@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api } from '../api/client'
 import type { PaperListItem, PaperListQuery } from '../api/types'
@@ -26,8 +26,13 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
   const [rows, setRows] = useState<PaperListItem[]>()
   const [next, setNext] = useState('')
 
+  // Answers for filters already left (or a "more" asked before they changed) are dropped.
+  const seq = useRef(0)
+  useEffect(() => { seq.current += 1 }, [ws, f])
   const load = useCallback(async (cursor = '') => {
+    const mine = seq.current
     const r = await api.listPapers(ws, { ...f, cursor: cursor || undefined, limit: 50 })
+    if (mine !== seq.current) return
     setRows((prev) => (cursor ? [...(prev ?? []), ...r.papers] : r.papers))
     setNext(r.next_cursor)
   }, [ws, f])
@@ -55,7 +60,7 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
       <div className="scroll"><div className="col wide">
         <div className="all-h">
           <h1 className="page-h" style={{ margin: 0 }}>{t('papers')}</h1>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
             <button type="button" className="btn" onClick={onNewPrivate}>🔒 {t('newPrivate')}</button>
             <button type="button" className="btn primary" onClick={onNew}>＋ {t('newPaper')}</button>
           </div>
@@ -66,12 +71,12 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
           {seg(t('visibilityLabel'), 'visibility', [['all', t('all')], ['public', t('publicLabel')], ['private', t('private')]])}
           <label className="fg"><input type="checkbox" checked={f.archived} onChange={(e) => set({ archived: e.target.checked })} />{t('includeArchived')}</label>
           <span style={{ flex: 1 }} />
-          <select className="inp" style={{ height: 30, width: 'auto', padding: '0 8px' }} aria-label={t('sort')} value={f.sort} onChange={(e) => set({ sort: e.target.value as Filters['sort'] })}>
+          <select className="inp" style={{ height: 'var(--control-h)', width: 'auto', padding: '0 var(--sp-4)' }} aria-label={t('sort')} value={f.sort} onChange={(e) => set({ sort: e.target.value as Filters['sort'] })}>
             <option value="updated">{t('sortUpdated')}</option>
             <option value="created">{t('sortCreated')}</option>
           </select>
         </div>
-        {rows && <div className="muted" style={{ fontSize: 'var(--text-sm)', margin: '0 0 6px' }}>{t('nItems', { n: `${rows.length}${next ? '+' : ''}` })}</div>}
+        {rows && <div className="muted" style={{ fontSize: 'var(--text-sm)', margin: '0 0 var(--sp-3)' }}>{t('nItems', { n: `${rows.length}${next ? '+' : ''}` })}</div>}
         {rows && rows.length === 0 && <div className="list"><div className="empty">{t('noneMatch')}</div></div>}
         {rows && rows.length > 0 && (
           <div className="dbw">
@@ -94,7 +99,7 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
             </table>
           </div>
         )}
-        {next && <div style={{ marginTop: 12 }}><button type="button" className="btn" onClick={() => void load(next)}>{t('loadMore')}</button></div>}
+        {next && <div style={{ marginTop: 'var(--sp-6)' }}><button type="button" className="btn" onClick={() => void load(next)}>{t('loadMore')}</button></div>}
       </div></div>
     </section>
   )

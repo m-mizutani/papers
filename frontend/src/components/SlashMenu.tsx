@@ -24,7 +24,7 @@ export function SlashMenu({ anchor, items, active, onPick, onHover, onClose, fil
   return (
     <Popover anchor={anchor} onClose={onClose} className="slashpop" label={t('turnInto')}>
       {filter && (
-        <input className="inp" style={{ height: 32, margin: '2px 0 4px' }} autoFocus value={filter.value} placeholder={t('filterTypes')} aria-label={t('filterTypes')}
+        <input className="inp" style={{ height: 'var(--control-h)', margin: 'var(--sp-1) 0 var(--sp-2)' }} autoFocus value={filter.value} placeholder={t('filterTypes')} aria-label={t('filterTypes')}
           onChange={(e) => filter.onChange(e.target.value)}
           onKeyDown={(e) => {
             if (['ArrowUp', 'ArrowDown', 'Escape'].includes(e.key) || isEnter(e)) {

@@ -123,7 +123,7 @@ function FormatBar({ editor, anchor }: { editor: TiptapEditor; anchor: DOMRect }
         <span className="vs" />
         <button type="button" title={t('link')} aria-label={t('link')} onClick={() => { setHref((editor.getAttributes('link').href as string | undefined) ?? ''); setSub(sub === 'link' ? null : 'link') }}>🔗</button>
         <button type="button" title={t('color')} aria-label={t('color')} onClick={() => setSub(sub === 'color' ? null : 'color')}>
-          <span style={{ fontWeight: 700, borderBottom: '3px solid var(--mk-red)', lineHeight: 1 }}>A</span> ▾
+          <span style={{ fontWeight: 700, borderBottom: 'var(--sp-1) solid var(--mk-red)', lineHeight: 1 }}>A</span> ▾
         </button>
       </div>
       {sub === 'color' && barRef.current && (
@@ -144,7 +144,7 @@ function FormatBar({ editor, anchor }: { editor: TiptapEditor; anchor: DOMRect }
       )}
       {sub === 'link' && barRef.current && (
         <Popover anchor={barRef.current} onClose={() => setSub(null)} label={t('link')}>
-          <input className="inp" style={{ minWidth: 260 }} autoFocus value={href} placeholder={t('linkPlaceholder')} aria-label={t('link')}
+          <input className="inp" style={{ minWidth: 'var(--input-min)' }} autoFocus value={href} placeholder={t('linkPlaceholder')} aria-label={t('link')}
             onChange={(e) => setHref(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') setSub(null)

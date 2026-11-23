@@ -52,12 +52,12 @@ export function HistoryDrawer({ base, versions, viewing, counts, showChanges, on
           </span>
         </Link>
         {changed && viewing === undefined && (
-          <label className="chk" style={{ padding: '2px 10px 8px 54px', fontSize: 13, color: 'var(--fg-2)' }}>
+          <label className="chk" style={{ padding: 'var(--sp-1) var(--sp-5) var(--sp-4) var(--hist-indent)', fontSize: 'var(--text-sm)', color: 'var(--fg-2)' }}>
             <input type="checkbox" checked={showChanges} onChange={(e) => onShowChanges(e.target.checked)} />
             {t('showChanges')}
           </label>
         )}
-        {versions.length === 0 && <p className="muted" style={{ padding: 10, margin: 0 }}>{t('noVersions')}</p>}
+        {versions.length === 0 && <p className="muted" style={{ padding: 'var(--sp-5)', margin: 0 }}>{t('noVersions')}</p>}
         {versions.map((v) => (
           <Link key={v.number} className={`ver${viewing === v.number ? ' on' : ''}`} to={`${base}/v/${v.number}`}>
             <span className="vn">v{v.number}</span>

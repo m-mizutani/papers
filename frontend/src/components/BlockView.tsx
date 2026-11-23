@@ -119,7 +119,7 @@ function ImageView({ block, ctx, caption }: { block: Block; ctx: BlockContext; c
         {src
           ? <img src={src} alt={plainText(block.content) || t('typeImage')} loading="lazy" referrerPolicy="no-referrer" />
           : (
-            <button type="button" className="empty" style={{ width: '100%', border: '1px dashed var(--line-2)', borderRadius: 'var(--r-md)', padding: 'var(--sp-8)' }}
+            <button type="button" className="empty" style={{ width: '100%', border: 'var(--hair) dashed var(--line-2)', borderRadius: 'var(--r-md)', padding: 'var(--sp-8)' }}
               disabled={!ctx.canEdit} onClick={(e) => { e.stopPropagation(); ctx.actions.pickImage(block) }}>🖼 {t('pickImage')}</button>
           )}
         <figcaption>{caption}</figcaption>

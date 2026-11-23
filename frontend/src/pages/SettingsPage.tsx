@@ -20,7 +20,7 @@ export function ShortcutList() {
   ]
   return (
     <div className="list">
-      {rows.map(([k, l]) => <div key={k} className="lr" style={{ padding: '8px 14px' }}><span className="lm">{l}</span><span className="kbd" style={{ fontSize: 12, padding: '2px 6px' }}>{k}</span></div>)}
+      {rows.map(([k, l]) => <div key={k} className="lr" style={{ padding: 'var(--sp-4) var(--sp-6)' }}><span className="lm">{l}</span><span className="kbd" style={{ fontSize: 'var(--text-sm)', padding: 'var(--sp-1) var(--sp-3)' }}>{k}</span></div>)}
     </div>
   )
 }
@@ -49,7 +49,7 @@ function NewToken({ onClose, onCreated }: { onClose: () => void; onCreated: (sec
       <div className="field">
         <span className="flabel">{t('tokenKind')}</span>
         {([['agent', t('tokenAgent'), t('tokenAgentDesc')], ['personal', t('tokenPersonal'), t('tokenPersonalDesc')]] as const).map(([k, l, d]) => (
-          <label key={k} className="chk"><input type="radio" name="tkkind" checked={kind === k} onChange={() => setKind(k)} /><span>{l}<span className="muted" style={{ display: 'block', fontSize: 12 }}>{d}</span></span></label>
+          <label key={k} className="chk"><input type="radio" name="tkkind" checked={kind === k} onChange={() => setKind(k)} /><span>{l}<span className="muted" style={{ display: 'block', fontSize: 'var(--text-sm)' }}>{d}</span></span></label>
         ))}
       </div>
       <div className="field">
@@ -90,7 +90,7 @@ export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
         </div>
         {tab === 'tokens' && (
           <>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}><button type="button" className="btn primary" onClick={() => setCreating(true)}>＋ {t('createToken')}</button></div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--sp-7)' }}><button type="button" className="btn primary" onClick={() => setCreating(true)}>＋ {t('createToken')}</button></div>
             <div className="list">
               {tokens.length === 0 && <div className="empty">{t('noTokens')}</div>}
               {tokens.map((tk) => (
@@ -104,7 +104,7 @@ export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
                 </div>
               ))}
             </div>
-            <h3 style={{ margin: '28px 0 6px', fontSize: 15 }}>{t('mcpSetup')}</h3>
+            <h3 style={{ margin: 'var(--sp-9) 0 var(--sp-3)', fontSize: 'var(--text-h3)' }}>{t('mcpSetup')}</h3>
             <pre className="out">{mcpConfig('pap_…', window.location.origin)}</pre>
           </>
         )}
@@ -132,9 +132,9 @@ export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
       {creating && <NewToken onClose={() => setCreating(false)} onCreated={(s) => { setSecret(s); reload() }} />}
       {secret && (
         <Modal title={t('createToken')} onClose={() => setSecret(undefined)} actions={[{ label: t('done') }, { label: t('copy'), kind: 'primary', onClick: () => { copy(secret); return false } }]}>
-          <p className="banner warn" style={{ margin: '0 0 10px' }}>{t('tokenOnce')}</p>
+          <p className="banner warn" style={{ margin: '0 0 var(--sp-5)' }}>{t('tokenOnce')}</p>
           <pre className="out">{secret}</pre>
-          <p style={{ marginBottom: 4 }}>{t('mcpSetup')}</p>
+          <p style={{ marginBottom: 'var(--sp-2)' }}>{t('mcpSetup')}</p>
           <pre className="out">{mcpConfig(secret, window.location.origin)}</pre>
         </Modal>
       )}

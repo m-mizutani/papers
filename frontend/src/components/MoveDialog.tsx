@@ -22,6 +22,8 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
   const [target, setTarget] = useState(ws)
   const [q, setQ] = useState('')
   const [rows, setRows] = useState<PaperListItem[]>([])
+  const [next, setNext] = useState('')
+  const [found, setFound] = useState<{ id: string; title: string }[]>([])
   const [home, setHome] = useState<string>('')
   const [sel, setSel] = useState<string | null>(null)
 
@@ -30,17 +32,55 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
     const w = workspaces.find((x) => x.id === target)
     setHome(w?.home_paper_id ?? '')
     setSel(null)
-    void api.listPapers(target, { place: 'filed', creator: 'all', limit: 100 }).then((r) => { if (live) setRows(r.papers) }).catch(() => { if (live) setRows([]) })
+    setRows([])
+    setNext('')
+    void api.listPapers(target, { place: 'filed', creator: 'all', limit: 100 })
+      .then((r) => { if (live) { setRows(r.papers); setNext(r.next_cursor) } })
+      .catch(() => { if (live) setRows([]) })
     return () => { live = false }
   }, [target, workspaces])
 
+  const more = () => {
+    const cursor = next
+    setNext('')
+    void api.listPapers(target, { place: 'filed', creator: 'all', limit: 100, cursor })
+      .then((r) => { setRows((prev) => [...prev, ...r.papers]); setNext(r.next_cursor) })
+      .catch(() => setNext(cursor))
+  }
+
+  // Papers not loaded yet are found by searching their titles.
+  useEffect(() => {
+    const query = q.trim()
+    if (!query) {
+      setFound([])
+      return
+    }
+    let live = true
+    const timer = window.setTimeout(() => {
+      void api.search(target, query).then((hits) => {
+        if (!live) return
+        const seen = new Set<string>()
+        setFound(hits.map((h) => h.paper).filter((p) => p.visibility === 'public' && !!p.parent_id && !seen.has(p.id) && !!seen.add(p.id))
+          .map((p) => ({ id: p.id, title: p.title })))
+      }).catch(() => { if (live) setFound([]) })
+    }, 150)
+    return () => { live = false; window.clearTimeout(timer) }
+  }, [q, target])
+
   const options = useMemo(() => {
     const w = workspaces.find((x) => x.id === target)
-    const list = rows.filter((r) => r.visibility === 'public' && !(target === ws && exclude.has(r.id)) && r.id !== home)
-      .filter((r) => !q || (r.title || t('untitled')).toLowerCase().includes(q.toLowerCase()))
+    const ok = (id: string) => !(target === ws && exclude.has(id)) && id !== home
+    const match = (title: string) => !q || (title || t('untitled')).toLowerCase().includes(q.toLowerCase())
+    const list = rows.filter((r) => r.visibility === 'public' && ok(r.id) && match(r.title))
+    const listed = new Set(list.map((r) => r.id))
+    const extra = found.filter((r) => ok(r.id) && !listed.has(r.id) && match(r.title))
     const homeRow = w && (!q || w.name.toLowerCase().includes(q.toLowerCase())) ? [{ id: home, title: `⌂ ${w.name}`, sub: '' }] : []
-    return [...homeRow, ...list.map((r) => ({ id: r.id, title: r.title || t('untitled'), sub: r.parent?.title ?? '' }))]
-  }, [rows, q, target, ws, exclude, home, workspaces, t])
+    return [
+      ...homeRow,
+      ...list.map((r) => ({ id: r.id, title: r.title || t('untitled'), sub: r.parent?.title ?? '' })),
+      ...extra.map((r) => ({ id: r.id, title: r.title || t('untitled'), sub: '' })),
+    ]
+  }, [rows, found, q, target, ws, exclude, home, workspaces, t])
 
   return (
     <Modal wide title={t('moveTitle', { title: paper.title || t('untitled') })} onClose={onClose}
@@ -66,9 +106,10 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
               {o.sub && <span className="pp">{o.sub}</span>}
             </button>
           ))}
+          {next && <button type="button" className="prow more" onClick={more}>{t('loadMore')}</button>}
         </div>
       </div>
-      {target !== ws && <p className="banner warn" style={{ margin: '8px 0 0' }}>{t('crossWorkspace')}</p>}
+      {target !== ws && <p className="banner warn mv-warn">{t('crossWorkspace')}</p>}
     </Modal>
   )
 }

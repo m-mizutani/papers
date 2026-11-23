@@ -38,7 +38,7 @@ function TreeItem({ ws, paper, depth, current, expand, version, label, icon, onU
   const to = label !== undefined ? `/ws/${ws}` : `/ws/${ws}/p/${paper.id}`
   return (
     <div>
-      <div className={`tree-item${current === paper.id ? ' active' : ''}`} style={{ paddingLeft: depth * 14 }}>
+      <div className={`tree-item${current === paper.id ? ' active' : ''}`} style={{ paddingLeft: `calc(var(--tree-indent) * ${depth})` }}>
         <button type="button" className={`tw${leaf || !canHaveChildren ? ' leaf' : ''}`} aria-label={open ? t('collapse') : t('expand')} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'}</button>
         {icon && <span className="ticon" aria-hidden>{icon}</span>}
         <Link className="tl" to={to}>{label ?? (paper.title || t('untitled'))}</Link>

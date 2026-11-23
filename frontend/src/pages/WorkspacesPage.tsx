@@ -16,15 +16,15 @@ export function WorkspacesPage({ me, workspaces, groups, onSignOut }: { me: Me; 
       <header className="gate-top">
         <div className="wordmark sm"><span className="mark" aria-hidden />papers</div>
         <span style={{ flex: 1 }} />
-        <button type="button" className="face solo" style={{ background: actorColor({ kind: 'human', user_id: me.user.id, name: me.user.name }), width: 30, height: 30 }}
+        <button type="button" className="face solo" style={{ background: actorColor({ kind: 'human', user_id: me.user.id, name: me.user.name }), width: 'var(--control-h)', height: 'var(--control-h)' }}
           aria-label={me.user.name} onClick={(e) => setMenu(e.currentTarget)}>{initials(me.user.name)}</button>
       </header>
       <div className="gate-body">
         <h1 className="page-h">{t('workspaces')}</h1>
         {workspaces.length === 0 && (
           <div className="list"><div className="empty">
-            <p style={{ margin: '0 0 6px', color: 'var(--fg)', fontWeight: 600 }}>{t('noWorkspacesTitle')}</p>
-            <p style={{ margin: '0 0 14px' }}>{t('noWorkspacesBody')}</p>
+            <p style={{ margin: '0 0 var(--sp-3)', color: 'var(--fg)', fontWeight: 600 }}>{t('noWorkspacesTitle')}</p>
+            <p style={{ margin: '0 0 var(--sp-6)' }}>{t('noWorkspacesBody')}</p>
             <button type="button" className="btn" onClick={onSignOut}>{t('signOut')}</button>
           </div></div>
         )}

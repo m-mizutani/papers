@@ -82,20 +82,31 @@ export class History {
   }
 
   /** The ops for undoing (or redoing) the latest entry, or why it cannot be done. */
-  plan(dir: 'undo' | 'redo', lookup: Lookup): Plan {
+  plan(dir: 'undo' | 'redo', lookup: Lookup, title?: string): Plan {
     const stack = dir === 'undo' ? this.done : this.undone
     const entry = stack[stack.length - 1]
     if (!entry) return { ok: false, reason: 'empty' }
     const steps = dir === 'undo' ? [...entry.steps].reverse() : entry.steps
     const ops: Op[] = []
     const refs = new Map<string, string>()
-    const anchor = (id: string) => {
+    // Blocks brought back in this plan, by their recorded ID: one can be the
+    // anchor of another (undoing the delete of adjacent blocks), so inserts
+    // go last, each after the one it follows, referring to it by ref.
+    const inserts: { ref: string; id: string; after: string; snap: Snap }[] = []
+    const back = new Map<string, string>()
+    const existing = (id: string) => {
       if (id === '') return ''
       const real = this.resolve(id)
       return lookup(real) ? real : undefined
     }
+    const anchor = (id: string) => {
+      const r = back.get(id)
+      return r ? `ref:${r}` : existing(id)
+    }
     for (const [i, s] of steps.entries()) {
       if (s.k === 'title') {
+        const want = dir === 'undo' ? s.after : s.before
+        if (title !== undefined && title !== want) return { ok: false, reason: 'changed', blockId: '' }
         ops.push({ op: 'set_title', title: dir === 'undo' ? s.before : s.after })
         continue
       }
@@ -110,7 +121,7 @@ export class History {
       }
       if (s.k === 'move') {
         if (!cur) return { ok: false, reason: 'changed', blockId: id }
-        ops.push({ op: 'move', block_id: id, after: anchor(dir === 'undo' ? s.from : s.to) })
+        ops.push({ op: 'move', block_id: id, after: existing(dir === 'undo' ? s.from : s.to) })
         continue
       }
       const removes = (s.k === 'insert') === (dir === 'undo')
@@ -121,8 +132,17 @@ export class History {
       } else {
         const ref = `h${i}`
         refs.set(ref, s.id)
-        ops.push({ op: 'insert', ref, type: s.snap.type, content: s.snap.content, props: s.snap.props, after: anchor(s.after) })
+        back.set(s.id, ref)
+        inserts.push({ ref, id: s.id, after: s.after, snap: s.snap })
       }
+    }
+    // An insert goes after the insert it is anchored on.
+    const pending = [...inserts]
+    while (pending.length) {
+      const k = pending.findIndex((x) => !pending.some((y) => y !== x && y.id === x.after))
+      const [next] = pending.splice(k < 0 ? 0 : k, 1)
+      if (!next) break
+      ops.push({ op: 'insert', ref: next.ref, type: next.snap.type, content: next.snap.content, props: next.snap.props, after: anchor(next.after) })
     }
     return { ok: true, ops, entry, refs }
   }

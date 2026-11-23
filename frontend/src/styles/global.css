@@ -76,6 +76,10 @@
   --gutter: 28px;
   --bar-h: 48px;
   --control-h: 30px;
+  --tree-indent: 14px;
+  --hist-indent: 54px;
+  --input-min: 260px;
+  --hair: 1px;
 
   /* Block rhythm. Space follows meaning: list items read as one unit, a
      heading sits closer to what it introduces, framed blocks get room. */
@@ -403,6 +407,8 @@ table.tb { border-collapse: collapse; min-width: 100%; font-size: 14.5px; }
 .prow:hover { background: var(--surface-2); }
 .prow.sel { background: var(--accent-weak); }
 .prow .pp { font-size: 12px; color: var(--fg-3); }
+.prow.more { color: var(--accent); align-items: center; }
+.mv-warn { margin: var(--sp-4) 0 0; }
 pre.out { background: var(--surface-2); border-radius: var(--r-md); padding: var(--sp-6); font-family: var(--font-code); font-size: 12.5px; white-space: pre-wrap; word-break: break-all; color: var(--fg); margin: var(--sp-3) 0; max-height: 300px; overflow: auto; }
 .urlrow { display: flex; gap: var(--sp-4); }
 .urlrow .inp { font-family: var(--font-code); font-size: 13px; }

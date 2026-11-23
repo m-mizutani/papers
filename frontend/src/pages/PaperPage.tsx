@@ -987,10 +987,10 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     const plan = history.current.plan(dir, (id) => {
       const b = stateRef.current?.blocks.get(id)
       return b ? { rev: b.rev, snap: snapOf(b) } : undefined
-    })
+    }, stateRef.current?.paper.title)
     if (!plan.ok) {
       if (plan.reason === 'empty') toast(dir === 'undo' ? t('nothingToUndo') : t('nothingToRedo'))
-      else toast(t('undoBlocked', { name: actorName(s.blocks.get(plan.blockId)?.updated_by) || t('someone') }))
+      else toast(t('undoBlocked', { name: actorName(plan.blockId ? s.blocks.get(plan.blockId)?.updated_by : s.paper.updated_by) || t('someone') }))
       return
     }
     const res = await run(plan.ops, { record: false })
@@ -1285,7 +1285,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         <div className="scroll"><div className="col">
           <h1 className="page-h" style={{ paddingLeft: 'var(--gutter)' }}>{t('paperNotFound')}</h1>
           <p className="page-sub" style={{ paddingLeft: 'var(--gutter)' }}>{t('paperNotFoundBody')}</p>
-          <div style={{ display: 'flex', gap: 8, paddingLeft: 'var(--gutter)' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', paddingLeft: 'var(--gutter)' }}>
             <Link className="btn primary" to={`/ws/${ws}/papers`}>{t('openPapers')}</Link>
             <Link className="btn" to={`/ws/${ws}/trash`}>{t('openTrash')}</Link>
           </div>
@@ -1362,7 +1362,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                 : (
                   <span className="btn saved" role="status" title={t('nothingToSave')}>
                     <span className="si" aria-hidden><svg width="14" height="14" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
-                    <span>{t('savedState')}</span><span className="vnum" style={{ fontFamily: 'var(--font-code)', fontSize: 12 }}>v{paper.version_number}</span>
+                    <span>{t('savedState')}</span><span className="vnum" style={{ fontFamily: 'var(--font-code)', fontSize: 'var(--text-sm)' }}>v{paper.version_number}</span>
                   </span>
                 ))}
               {paper.visibility === 'public' && !isHome && (
@@ -1473,7 +1473,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         <Popover anchor={emoji.anchor} onClose={() => setEmoji(null)}>
           <div className="swatches">
             {EMOJI.map((x) => (
-              <button key={x} type="button" className="sw" style={{ fontSize: 16 }} onClick={() => {
+              <button key={x} type="button" className="sw" style={{ fontSize: 'var(--text-body)' }} onClick={() => {
                 const b = emoji.block
                 setEmoji(null)
                 void run([{ op: 'update', block_id: b.id, props: { ...b.props, icon: x }, base_rev: stateRef.current?.blocks.get(b.id)?.rev ?? b.rev }])
@@ -1568,7 +1568,7 @@ function SavedDialog({ n, counts, url, onOpen, onClose }: { n: number; counts: C
         <input className="inp" readOnly value={url} aria-label="URL" onFocus={(e) => e.target.select()} />
         <button type="button" className="btn primary copy-url" onClick={() => void navigator.clipboard?.writeText(url).then(() => setCopied(true), () => undefined)}>{copied ? `✓ ${t('copied')}` : t('copy')}</button>
       </div>
-      <p className="muted" style={{ fontSize: 'var(--text-sm)', margin: '8px 0 0' }}>{t('versionUrlNote')}</p>
+      <p className="muted" style={{ fontSize: 'var(--text-sm)', margin: 'var(--sp-4) 0 0' }}>{t('versionUrlNote')}</p>
     </Modal>
   )
 }
