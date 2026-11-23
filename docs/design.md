@@ -181,7 +181,8 @@ Images only (PNG, JPEG, GIF, WebP; up to 20 MiB). An attachment belongs to one p
 | `e2e.yml` | Playwright against the built server |
 | `lint.yml` | golangci-lint (`.golangci.yml`), go vet, go mod tidy, ESLint, TypeScript (app and e2e) |
 | `security.yml` | govulncheck, gosec, Trivy (dependencies and secrets), pnpm audit; also weekly, since advisories appear without code changes |
-| `build.yml` | UI (app and demo) and the server binary; the Docker image |
+| `build.yml` | UI (app and demo) and the server binary |
+| `docker.yml` | The Docker image: built without pushing on pull requests; built and pushed to `ghcr.io/m-mizutani/papers` (tagged with the commit SHA and `latest`) on `main` |
 
 ## Scale
 
