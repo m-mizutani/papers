@@ -1273,6 +1273,15 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const favorite = !!sidebar?.favorites.some((f) => f.id === paperId)
   const workspace = workspaces.find((w) => w.id === ws)
 
+  // The add line and everything below it continue the paper: an empty last paragraph is reused.
+  const addRef = useRef<HTMLDivElement>(null)
+  const pressedEmpty = useRef(false)
+  const addAtEnd = () => {
+    const last = live[live.length - 1]
+    if (last && last.type === 'paragraph' && !last.content) startEdit(last, 'start')
+    else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: last?.id })
+  }
+
   // The title is sent after a pause in typing, and at once on Enter or blur
   // (without sending the same title twice). The sends of one focus are one
   // undo step, go out in order, and refresh the sidebar when they land.
@@ -1477,8 +1486,16 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             </div>
           )}
         </header>
-        <div className="scroll" onScroll={(e) => setScrolled((e.target as HTMLElement).scrollTop > 4)}>
-          <div className="col">
+        <div className="scroll" onScroll={(e) => setScrolled((e.target as HTMLElement).scrollTop > 4)}
+          onMouseDown={(e) => { pressedEmpty.current = e.target === e.currentTarget || e.target === e.currentTarget.firstElementChild }}
+          onClick={(e) => {
+            // empty space beside or below the add line also adds (the button covers the column);
+            // a press that started elsewhere (a text selection dragged out of a block) does not
+            const line = addRef.current
+            if (!line || !pressedEmpty.current || (e.target !== e.currentTarget && e.target !== e.currentTarget.firstElementChild)) return
+            if (e.clientY >= line.getBoundingClientRect().top) addAtEnd()
+          }}>
+          <div className={canEdit && state ? 'col writable' : 'col'}>
             {!state && slow && (
               <div aria-busy="true"><div className="skel" style={{ width: '30%' }} /><div className="skel t" /><div className="skel" /><div className="skel" style={{ width: '85%' }} /><div className="skel" style={{ width: '60%' }} /></div>
             )}
@@ -1539,12 +1556,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                   ))}
                 </div>
                 {canEdit && (
-                  <div className="addline">
-                    <button type="button" onClick={() => {
-                      const last = live[live.length - 1]
-                      if (last && last.type === 'paragraph' && !last.content) startEdit(last, 'start')
-                      else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: last?.id })
-                    }}>{t('clickToAdd')}</button>
+                  <div className="addline" ref={addRef}>
+                    <button type="button" onClick={addAtEnd}><span>{t('clickToAdd')}</span></button>
                   </div>
                 )}
               </>

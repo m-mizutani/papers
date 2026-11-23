@@ -74,6 +74,7 @@
   --sidebar-w: 264px;
   --drawer-w: 360px;
   --col-w: 720px;
+  --tail-space: 40vh; /* room below the last block of a paper */
   --col-wide: 960px;
   --gutter: 28px;
   --bar-h: 48px;
@@ -237,7 +238,7 @@ a.crumb:hover, button.crumb:hover { background: var(--surface-2); color: var(--f
 @keyframes pulse { 50% { opacity: 0.3; } }
 .faces { display: flex; align-items: center; margin-right: var(--sp-2); }
 .scroll { flex: 1; overflow: auto; position: relative; }
-.col { max-width: var(--col-w); margin: 0 auto; padding-block: var(--sp-9) 40vh; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.col { max-width: var(--col-w); margin: 0 auto; padding-block: var(--sp-9) var(--tail-space); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .col.wide { max-width: var(--col-wide); padding-bottom: var(--sp-10); }
 
 /* paper head */
@@ -315,9 +316,14 @@ a.vmark:hover { background: var(--surface-2); }
 .rich { border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
 .rich .bar { display: flex; align-items: center; gap: var(--sp-3); font-size: 13px; font-weight: 600; color: var(--fg-2); padding: var(--sp-3) var(--sp-6); border-bottom: 1px solid var(--line); background: var(--surface-2); }
 .rich iframe { display: block; width: 100%; border: 0; background: var(--surface); }
-.addline { padding: var(--sp-2) 0 0 calc(var(--gutter) + var(--sp-1) - var(--sp-3)); }
-.addline button { color: var(--fg-4); padding: var(--sp-2) var(--sp-3); border-radius: 4px; }
-.addline button:hover { background: var(--surface-2); color: var(--fg); }
+/* the add line reaches the bottom of the paper: a click anywhere from the line down adds (the column's bottom space moves into it) */
+.col.writable { padding-bottom: 0; }
+.addline { padding-top: var(--sp-2); }
+.addline button { display: flex; align-items: flex-start; width: 100%; min-height: var(--tail-space); padding: 0 0 0 calc(var(--gutter) + var(--sp-1) - var(--sp-3)); color: var(--fg-4); cursor: text; }
+.addline button span { display: inline-block; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); }
+.addline button:hover span, .addline button:focus-visible span { background: var(--surface-2); color: var(--fg); }
+.addline button:focus-visible { outline: none; }
+.addline button:focus-visible span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .empty-hint { padding-left: calc(var(--gutter) + var(--sp-1)); color: var(--fg-3); }
 
 /* block rhythm: the gap above a block depends on its neighbour (spacing.ts) */
