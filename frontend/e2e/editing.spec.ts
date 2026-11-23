@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
-  blocks, body, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
+  blocks, body, call, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
 } from './helpers'
 import type { Block } from '../src/api/types'
 
@@ -201,6 +201,57 @@ test('T26 undo and redo step through typing, Enter and typing', async ({ page, r
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'start A|B', 'redone on the server')
 })
 
+test('the title is sent while typing, without leaving the field', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Before') })
+  await call(request, 'PUT', `/workspaces/${WS}/papers/${paper.id}/favorite`, { after: null })
+  await openPaper(page, paper.id)
+  const title = unique('Typed')
+  await titleField(page).fill(title)
+  await expect(titleField(page)).toBeFocused()
+  // the breadcrumb follows at once; the server and the sidebar after a pause
+  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(title)
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(title)
+  await expect(page.locator('.sb').getByText(title)).not.toHaveCount(0)
+  await expect(titleField(page)).toBeFocused()
+
+  // the sends of one focus are one undo step back to the title before it
+  await titleField(page).press('End')
+  await titleField(page).pressSequentially(' more', { delay: 50 })
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(`${title} more`)
+  await titleField(page).blur()
+  await synced(page)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
+  await expect(titleField(page)).toHaveValue(paper.title)
+})
+
+test('a title typed back to what it was is sent even while the earlier send is on its way', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Back') })
+  await openPaper(page, paper.id)
+  // hold the first title send until the second one has been decided
+  let release: () => void = () => undefined
+  const held = new Promise<void>((r) => { release = r })
+  let first = true
+  await page.route(`**/papers/${paper.id}/ops`, async (route) => {
+    if (first) {
+      first = false
+      await held
+    }
+    await route.continue()
+  })
+  await titleField(page).click()
+  await titleField(page).press('End')
+  await titleField(page).pressSequentially('X')
+  await page.waitForTimeout(1000)
+  await titleField(page).press('Backspace')
+  await page.waitForTimeout(1000)
+  release()
+  // still in the field: the server ends with the title shown, not the held one
+  await synced(page)
+  await expect(titleField(page)).toBeFocused()
+  await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(paper.title)
+})
+
 test('T59 typing and Enter keep every line shown while the server answers', async ({ page, request }) => {
   const paper = await createPaper(request, { title: unique('Steady'), markdown: 'first' })
   await openPaper(page, paper.id)
@@ -263,4 +314,47 @@ test('T60 going back into a block right after Enter keeps editing it without a c
   await expect(page.locator('.conf')).toHaveCount(0)
   await finishEditing(page)
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first typed!|', 'saved')
+})
+
+test('T61 a click anywhere from the add line down continues the paper', async ({ page, request }) => {
+  // wide enough for an empty margin beside the column
+  await page.setViewportSize({ width: 1400, height: 800 })
+  const paper = await createPaper(request, { title: unique('Add area'), markdown: 'first' })
+  await openPaper(page, paper.id)
+  const line = page.locator('.addline')
+  const box = await line.boundingBox()
+  if (!box) throw new Error('no add line')
+
+  // far right of the line and well below the label, inside the column
+  await page.mouse.click(box.x + box.width - 4, box.y + box.height - 8)
+  await expect(blocks(page)).toHaveCount(2)
+  await expect(editor(page)).toBeFocused()
+  await page.keyboard.type('second')
+  await finishEditing(page)
+
+  // the empty margin beside the column, below the line
+  const after = await line.boundingBox()
+  if (!after) throw new Error('no add line')
+  await page.mouse.click(after.x + after.width + 40, after.y + 20)
+  await expect(blocks(page)).toHaveCount(3)
+  await expect(editor(page)).toBeFocused()
+  await finishEditing(page)
+
+  // the label itself reuses the empty last paragraph rather than adding another
+  await line.click({ position: { x: 4, y: 4 } })
+  await expect(blocks(page)).toHaveCount(3)
+  await expect(editor(page)).toBeFocused()
+  await finishEditing(page)
+
+  // selecting the title by dragging out of it into the margin adds nothing
+  const title = await titleField(page).boundingBox()
+  if (!title) throw new Error('no title')
+  await page.mouse.move(title.x + 4, title.y + title.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(after.x + after.width + 40, after.y + 60, { steps: 5 })
+  await page.mouse.up()
+  await expect(titleField(page)).toBeFocused()
+  await expect(editor(page)).toHaveCount(0)
+  await expect(blocks(page)).toHaveCount(3)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first|second|', 'saved')
 })

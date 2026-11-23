@@ -83,6 +83,16 @@ describe('History', () => {
     ])
   })
 
+  it('merges the title saves of one typing session into one step', () => {
+    const h = new History()
+    h.record([{ k: 'title', before: 'Q3', after: 'Q3 p' }], 's1')
+    h.record([{ k: 'title', before: 'Q3 p', after: 'Q3 plan' }], 's1')
+    expect(h.done).toHaveLength(1)
+    expect(h.done[0]?.steps).toEqual([{ k: 'title', before: 'Q3', after: 'Q3 plan' }])
+    h.record([{ k: 'title', before: 'Q3 plan', after: 'Q4 plan' }], 's2')
+    expect(h.done).toHaveLength(2)
+  })
+
   it('refuses to undo a title someone else changed since', () => {
     const h = new History()
     h.record([{ k: 'title', before: 'Q3', after: 'Q3 draft' }])

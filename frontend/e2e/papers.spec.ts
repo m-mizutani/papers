@@ -140,7 +140,7 @@ test('T47 an unfiled paper restored from the trash is unfiled again', async ({ p
   await page.getByRole('dialog').getByRole('button', { name: msg('moveToTrash') }).click()
   await expect(page).toHaveURL(new RegExp(`/ws/${WS}/papers$`))
 
-  await page.locator('.sb').getByRole('link', { name: msg('trash') }).click()
+  await page.locator('.sb').getByRole('link', { name: msg('trash'), exact: true }).click()
   const row = page.locator('.lr', { hasText: paper.title })
   await row.getByRole('button', { name: msg('restoreFromTrash') }).click()
   await expect(page.locator('.toast', { hasText: msg('restoredDone') })).toBeVisible()

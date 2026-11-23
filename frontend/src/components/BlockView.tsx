@@ -104,10 +104,10 @@ function ChildCard({ block, ctx }: { block: Block; ctx: BlockContext }) {
     <Link className={`child${ref.status === 'archived' ? ' arch' : ''}`} to={`/ws/${ctx.ws}/p/${ref.id}`} onClick={(e) => e.stopPropagation()}>
       <span className={`pi${html ? ' code' : ''}`} aria-hidden>{html ? '</>' : '▤'}</span>
       <span className="ct">
-        <span className="cn" style={{ display: 'block' }}>{ref.title || t('untitled')}</span>
+        <span className="cn">{ref.title || t('untitled')}</span>
         <span className="cs">{[html ? t('htmlBadge') : null, status, ref.status === 'archived' ? t('archived') : null].filter(Boolean).join(' · ')}</span>
       </span>
-      <span className="muted" aria-hidden>→</span>
+      <span className="go" aria-hidden>→</span>
     </Link>
   )
 }
@@ -173,7 +173,7 @@ function TextBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
     ? (type === 'todo'
       ? <input type="checkbox" className="cb" aria-label={t('typeTodo')} checked={!!props.checked} disabled={!ctx.canEdit}
           onChange={(e) => void ctx.actions.run([{ op: 'update', block_id: block.id, props: { ...block.props, checked: e.target.checked }, base_rev: block.rev }])} />
-      : <span className="mk">{type === 'numbered_list_item' ? `${(props.indent ?? 0) % 2 ? String.fromCharCode(96 + (ctx.numbers.get(block.id) ?? 1)) : ctx.numbers.get(block.id) ?? 1}.` : ['•', '◦', '▪'][(props.indent ?? 0) % 3]}</span>)
+      : <span className={type === 'numbered_list_item' ? 'mk num' : 'mk bul'}>{type === 'numbered_list_item' ? `${(props.indent ?? 0) % 2 ? String.fromCharCode(96 + (ctx.numbers.get(block.id) ?? 1)) : ctx.numbers.get(block.id) ?? 1}.` : ['•', '◦', '▪'][(props.indent ?? 0) % 3]}</span>)
     : type === 'callout'
       ? <button type="button" className="emo" aria-label={t('typeCallout')} disabled={!ctx.canEdit} onClick={(e) => { e.stopPropagation(); ctx.actions.emojiMenu(block, e.currentTarget) }}>{props.icon || '💡'}</button>
       : null

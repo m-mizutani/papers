@@ -120,7 +120,7 @@ export const ja: Record<MsgKey, string> = {
   captionPlaceholder: 'キャプション',
   codeLanguage: '言語',
   codeText: 'コード',
-  clickToAdd: 'クリックして書き足す',
+  clickToAdd: 'クリックして続きを書く',
   blockMenu: 'ドラッグで移動 · クリックでメニュー',
   insertBelow: '下にブロックを追加',
   turnInto: 'ブロックの種類を変更',

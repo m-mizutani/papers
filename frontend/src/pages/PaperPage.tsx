@@ -234,6 +234,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const saveTimer = useRef<number | undefined>(undefined)
   const editorRef = useRef<TiptapEditor | null>(null)
   const titleRef = useRef<HTMLTextAreaElement>(null)
+  const titleTimer = useRef<number | undefined>(undefined)
+  const titleSession = useRef(sessionId())
+  const pendingTitle = useRef<(() => void) | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const fileFor = useRef<{ replace?: Block; after?: string } | null>(null)
 
@@ -416,6 +419,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             break
           case 'paper_updated':
             if (ev.paper && ev.paper.id === paperId) {
+              // Another writer's title change shows in the sidebar too.
+              if (ev.paper.title !== cur.paper.title) onChanged()
               receive([], [], ev.paper, false)
               if (ev.paper.deleted_at) void load()
             }
@@ -1273,14 +1278,40 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const htmlPage = isHTML ? live.find((b) => b.type === 'html_page') : undefined
   const external = workspace?.sandbox?.external_resources ?? true
 
-  // Enter sends the title and moves on, and the blur that follows must not send it again.
-  const sentTitle = useRef<string | null>(null)
-  const saveTitle = () => {
-    const next = title.trim()
-    if (!state || next === state.paper.title || next === sentTitle.current) return
-    sentTitle.current = next
-    void run([{ op: 'set_title', title: next }]).finally(() => { sentTitle.current = null })
+  // The add line and everything below it continue the paper: an empty last paragraph is reused.
+  const addRef = useRef<HTMLDivElement>(null)
+  const pressedEmpty = useRef(false)
+  const addAtEnd = () => {
+    const last = live[live.length - 1]
+    if (last && last.type === 'paragraph' && !last.content) startEdit(last, 'start')
+    else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: last?.id })
   }
+
+  // The title is sent after a pause in typing, and at once on Enter or blur
+  // (without sending the same title twice). The sends of one focus are one
+  // undo step, go out in order, and refresh the sidebar when they land.
+  const sentTitle = useRef<string | null>(null)
+  const saveTitle = (text: string) => {
+    window.clearTimeout(titleTimer.current)
+    pendingTitle.current = null
+    const cur = stateRef.current
+    const next = text.trim()
+    // While a send is on its way, compare with what it asks for, not the stored title.
+    if (!cur || cur.paper.id !== paperId || !canEdit || next === (sentTitle.current ?? cur.paper.title)) return
+    sentTitle.current = next
+    void serial(() => run([{ op: 'set_title', title: next }], { session: titleSession.current }))
+      .then((res) => { if (res) onChanged() })
+      .finally(() => { if (sentTitle.current === next) sentTitle.current = null })
+  }
+  // The pending send keeps this render's paper, so leaving the page before
+  // the pause ends still sends the title to the paper it was typed in.
+  const scheduleTitle = (text: string) => {
+    window.clearTimeout(titleTimer.current)
+    const send = () => saveTitle(text)
+    pendingTitle.current = send
+    titleTimer.current = window.setTimeout(send, SAVE_PAUSE_MS)
+  }
+  useEffect(() => () => pendingTitle.current?.(), [ws, paperId])
 
   const toggleFavorite = async () => {
     try {
@@ -1422,7 +1453,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             {view && filed && (view.path ?? []).slice(1).map((p) => (
               <span key={p.id} style={{ display: 'contents' }}><span className="crumb-sep">/</span><Link className="crumb" to={`/ws/${ws}/p/${p.id}`}>{p.title || t('untitled')}</Link></span>
             ))}
-            {view && !isHome && <>{filed && <span className="crumb-sep">/</span>}<span className="crumb cur">{paper?.title || t('untitled')}</span></>}
+            {view && !isHome && <>{filed && <span className="crumb-sep">/</span>}<span className="crumb cur">{title.trim() || t('untitled')}</span></>}
           </nav>
           {paper && (
             <div className="top-r">
@@ -1462,8 +1493,16 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             </div>
           )}
         </header>
-        <div className="scroll" onScroll={(e) => setScrolled((e.target as HTMLElement).scrollTop > 4)}>
-          <div className={`col${isHTML ? ' html' : ''}`}>
+        <div className="scroll" onScroll={(e) => setScrolled((e.target as HTMLElement).scrollTop > 4)}
+          onMouseDown={(e) => { pressedEmpty.current = e.target === e.currentTarget || e.target === e.currentTarget.firstElementChild }}
+          onClick={(e) => {
+            // empty space beside or below the add line also adds (the button covers the column);
+            // a press that started elsewhere (a text selection dragged out of a block) does not
+            const line = addRef.current
+            if (!line || !pressedEmpty.current || (e.target !== e.currentTarget && e.target !== e.currentTarget.firstElementChild)) return
+            if (e.clientY >= line.getBoundingClientRect().top) addAtEnd()
+          }}>
+          <div className={isHTML ? 'col html' : canEdit && state ? 'col writable' : 'col'}>
             {!state && slow && (
               <div aria-busy="true"><div className="skel" style={{ width: '30%' }} /><div className="skel t" /><div className="skel" /><div className="skel" style={{ width: '85%' }} /><div className="skel" style={{ width: '60%' }} /></div>
             )}
@@ -1503,15 +1542,18 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                 )}
                 <textarea ref={titleRef} className="title-input" rows={1} value={title} placeholder={t('untitled')} aria-label={t('paperTitle')} readOnly={!canEdit}
                   onChange={(e) => {
-                    setTitle(e.target.value.replace(/\n/g, ''))
+                    const next = e.target.value.replace(/\n/g, '')
+                    setTitle(next)
                     e.target.style.height = '0px'
                     e.target.style.height = `${e.target.scrollHeight}px`
+                    scheduleTitle(next)
                   }}
-                  onBlur={saveTitle}
+                  onFocus={() => { titleSession.current = sessionId() }}
+                  onBlur={(e) => saveTitle(e.target.value)}
                   onKeyDown={(e) => {
                     if (!isEnter(e)) return
                     e.preventDefault()
-                    saveTitle()
+                    saveTitle(e.currentTarget.value)
                     if (isHTML) return
                     const first = live.find((b) => TEXT_TYPES.has(b.type))
                     if (first) flushSync(() => startEdit(first, 'start'))
@@ -1525,12 +1567,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                   </div>
                 )}
                 {canEdit && !isHTML && (
-                  <div className="addline">
-                    <button type="button" onClick={() => {
-                      const last = live[live.length - 1]
-                      if (last && last.type === 'paragraph' && !last.content) startEdit(last, 'start')
-                      else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: last?.id })
-                    }}>{t('clickToAdd')}</button>
+                  <div className="addline" ref={addRef}>
+                    <button type="button" onClick={addAtEnd}><span>{t('clickToAdd')}</span></button>
                   </div>
                 )}
               </>
