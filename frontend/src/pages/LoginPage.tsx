@@ -23,8 +23,6 @@ export function LoginPage() {
   return (
     <main className="gate login">
       <section className="gate-brand">
-        <div className="wordmark"><span className="mark" aria-hidden />papers</div>
-        <p className="tagline">{t('tagline')}</p>
         <div className="sample" aria-hidden>
           <div className="s-title">{lang === 'ja' ? 'DB フェイルオーバー手順' : 'DB failover runbook'}</div>
           <div className="s-line w90" /><div className="s-line w70" />

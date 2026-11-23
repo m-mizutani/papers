@@ -14,7 +14,6 @@ export const ja: Record<MsgKey, string> = {
   busy: 'このペーパーは移動中のため編集できません',
   undo: '元に戻す',
   revision: 'リビジョン {n}',
-  tagline: '人と AI が、同じペーパーを書く。',
   signInTitle: 'papers にサインイン',
   signIn: 'Google でサインイン',
   goingGoogle: 'Google に移動しています…',

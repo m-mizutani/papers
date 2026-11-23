@@ -14,7 +14,6 @@ export const en: Record<MsgKey, string> = {
   busy: 'This paper is being moved and cannot be edited now',
   undo: 'Undo',
   revision: 'Revision {n}',
-  tagline: 'People and AI write the same papers.',
   signInTitle: 'Sign in to papers',
   signIn: 'Sign in with Google',
   goingGoogle: 'Going to Google…',

@@ -13,7 +13,6 @@ export const keys = {
   busy: 'busy',
   undo: 'undo',
   revision: 'revision',
-  tagline: 'tagline',
   signInTitle: 'signInTitle',
   signIn: 'signIn',
   goingGoogle: 'goingGoogle',

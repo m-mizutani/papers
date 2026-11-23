@@ -479,14 +479,13 @@ table.dbt { width: 100%; border-collapse: collapse; font-size: 14px; }
 /* sign-in and workspace chooser */
 .gate { min-height: 100%; height: 100%; overflow: auto; background: var(--bg); }
 .gate.login { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
-.gate-brand { background: var(--surface-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; justify-content: center; gap: 22px; padding-block: 48px; padding-left: max(48px, env(safe-area-inset-left, 0px)); padding-right: 48px; }
+.gate-brand { background: var(--surface-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 22px; padding-block: 48px; padding-left: max(48px, env(safe-area-inset-left, 0px)); padding-right: 48px; }
 .wordmark { display: flex; align-items: center; gap: var(--sp-5); font-weight: 700; font-size: 30px; letter-spacing: -0.02em; }
 .wordmark.sm { font-size: 18px; gap: var(--sp-4); }
 .wordmark .mark { width: 26px; height: 32px; border-radius: 4px 10px 4px 4px; background: var(--surface); border: 2px solid var(--fg); position: relative; flex: none; }
 .wordmark.sm .mark { width: 16px; height: 20px; border-width: 1.5px; border-radius: 3px 6px 3px 3px; }
 .wordmark .mark::after { content: ''; position: absolute; left: 4px; right: 6px; top: 7px; height: 2px; background: var(--accent); box-shadow: 0 5px 0 var(--fg-3), 0 10px 0 var(--ai); }
 .wordmark.sm .mark::after { left: 3px; right: 4px; top: 4px; height: 1.5px; box-shadow: 0 3.5px 0 var(--fg-3), 0 7px 0 var(--ai); }
-.tagline { margin: 0; font-size: 17px; color: var(--fg-2); max-width: 28ch; }
 .sample { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 22px var(--sp-9) 22px var(--sp-9); max-width: 420px; display: flex; flex-direction: column; gap: 11px; }
 .s-title { font-weight: 700; font-size: var(--text-body); margin-bottom: var(--sp-2); }
 .s-row { display: flex; align-items: center; gap: var(--sp-4); }
@@ -543,10 +542,8 @@ a.wlast:hover { background: var(--surface-2); }
   .lbl-short { display: inline; }
   .conf .two { grid-template-columns: 1fr; }
   .gate.login { grid-template-columns: minmax(0, 1fr); }
-  .gate-brand { border-right: 0; border-bottom: 1px solid var(--line); padding-block: 32px 28px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); gap: 14px; }
-  .sample { display: none; }
-  .wordmark { font-size: 24px; }
-  .gate-panel { justify-content: flex-start; padding-block: 32px; }
+  .gate-brand { display: none; }
+  .gate-panel { justify-content: center; padding-block: 32px; }
 }
 @media (max-width: 560px) { .title-input { font-size: 28px; } }
 @media (hover: none) { .blk .g { opacity: 1; } .blk .g button { color: var(--line-2); } }
