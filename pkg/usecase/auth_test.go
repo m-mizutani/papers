@@ -199,3 +199,45 @@ func TestDevUser(t *testing.T) {
 	gt.NoError(t, a.EnableDevUser(ctx, "dev@localhost", "Dev"))
 	gt.A(t, gt.R1(repo.ListUsers(ctx)).NoError(t)).Length(1)
 }
+
+func TestAnonymousSession(t *testing.T) {
+	ctx := context.Background()
+	repo := memory.New()
+	c := &clock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	a := gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour}, usecase.WithAuthClock(c.Now))).NoError(t)
+
+	// not in anonymous mode: refused, nothing stored
+	_, _, err := a.OpenAnonymousSession(ctx)
+	gt.True(t, errors.Is(err, model.ErrUnauthenticated))
+	gt.A(t, gt.R1(repo.ListUsers(ctx)).NoError(t)).Length(0)
+
+	a.EnableAnonymous()
+	gt.True(t, a.IsAnonymous())
+	cred, p, err := a.OpenAnonymousSession(ctx)
+	gt.NoError(t, err)
+	id := string(p.User.ID)
+	gt.True(t, p.User.Anonymous)
+	gt.Equal(t, p.User.Email, id+"@anonymous.invalid")
+	gt.Equal(t, p.User.Name, "Anonymous "+id[len(id)-4:])
+	gt.True(t, cred.ExpiresAt.Equal(c.now.Add(time.Hour)))
+	gt.True(t, strings.HasSuffix(p.User.Email, "@"+model.AnonymousEmailDomain))
+	_, err = repo.GetIdentity(ctx, "anonymous", id)
+	gt.True(t, errors.Is(err, model.ErrNotFound))
+
+	// the session leads back to the same user
+	back := gt.R1(a.AuthenticateSession(ctx, cred.ID, cred.Secret)).NoError(t)
+	gt.Equal(t, back.User.ID, p.User.ID)
+	gt.True(t, back.User.Anonymous)
+
+	// every call is a new person
+	cred2, p2, err := a.OpenAnonymousSession(ctx)
+	gt.NoError(t, err)
+	gt.NotEqual(t, p2.User.ID, p.User.ID)
+	gt.NotEqual(t, cred2.ID, cred.ID)
+	gt.A(t, gt.R1(repo.ListUsers(ctx)).NoError(t)).Length(2)
+
+	// the session expires after the session TTL
+	c.now = c.now.Add(time.Hour)
+	_, err = a.AuthenticateSession(ctx, cred.ID, cred.Secret)
+	gt.True(t, errors.Is(err, model.ErrUnauthenticated))
+}

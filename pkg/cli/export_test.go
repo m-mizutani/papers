@@ -20,3 +20,6 @@ func SetResetFirestore(f func(ctx context.Context, projectID, databaseID string)
 	resetFirestore = f
 	return func() { resetFirestore = prev }
 }
+
+// NewAppForTest is the whole command tree.
+func NewAppForTest() *cli.Command { return newApp("test") }

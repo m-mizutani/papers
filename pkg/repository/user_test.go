@@ -19,6 +19,7 @@ func TestUserRepository(t *testing.T) {
 		u := &model.User{
 			ID: model.NewUserID(), Email: uniq("u") + "@example.com", Name: "Alice",
 			AvatarURL: "https://example.com/a.png", CreatedAt: now, UpdatedAt: now, LastLoginAt: now,
+			Anonymous: true,
 		}
 		gt.NoError(t, repo.PutUser(ctx, u))
 
@@ -30,6 +31,7 @@ func TestUserRepository(t *testing.T) {
 		gt.True(t, timeEq(got.CreatedAt, u.CreatedAt))
 		gt.True(t, timeEq(got.UpdatedAt, u.UpdatedAt))
 		gt.True(t, timeEq(got.LastLoginAt, u.LastLoginAt))
+		gt.True(t, got.Anonymous)
 
 		byEmail := gt.R1(repo.GetUserByEmail(ctx, u.Email)).NoError(t)
 		gt.Equal(t, byEmail.ID, u.ID)

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api } from '../api/client'
 import type { Me, PaperRef, Sidebar as SidebarData, Workspace, WorkspaceGroup } from '../api/types'
+import { accountNote, canSignOut } from './account'
 import { useTranslation } from '../i18n'
 import { Menu, type MenuItem } from '../ui/Menu'
 import { actorColor, initials } from '../utils/actors'
@@ -93,9 +94,9 @@ export function Sidebar({ me, workspaces, ws, data, current, expand, version, ac
   const meMenu = (anchor: HTMLElement) => setMenu({
     anchor,
     items: [
-      { note: me.user.email || me.user.name },
+      { note: accountNote(me) },
       { label: t('allWorkspaces'), icon: '▦', onSelect: () => navigate('/workspaces') },
-      { label: t('signOut'), icon: '⎋', onSelect: onSignOut },
+      ...(canSignOut(me) ? [{ label: t('signOut'), icon: '⎋', onSelect: onSignOut }] : []),
     ],
   })
   const unfavorite = (id: string) => void api.unfavorite(ws, id).then(onChanged).catch(() => undefined)

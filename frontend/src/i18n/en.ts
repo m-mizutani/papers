@@ -27,6 +27,7 @@ export const en: Record<MsgKey, string> = {
   continue: 'Continue',
   notOpened: 'Not opened yet',
   signOut: 'Sign out',
+  anonymousMode: 'Anonymous mode: you are a guest in this browser. Clearing cookies loses access to your private papers.',
   noWorkspacesTitle: 'No workspaces for you yet',
   noWorkspacesBody: 'Ask the people who run papers to add you to a workspace.',
   workspaceNotFound: 'Workspace not found',

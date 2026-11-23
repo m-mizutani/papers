@@ -54,6 +54,14 @@ var testUI = fstest.MapFS{
 	"assets/app.js": {Data: []byte("console.log(1)")},
 }
 
+type authMode int
+
+const (
+	authGoogle authMode = iota
+	authDev
+	authAnonymous
+)
+
 func newTestServer(t *testing.T, devMode bool) *testServer {
 	t.Helper()
 	return newTestServerWith(t, devMode, nil)
@@ -62,6 +70,15 @@ func newTestServer(t *testing.T, devMode bool) *testServer {
 // newTestServerWith lets a test change the use case config. Jobs run to the
 // end before the request answers.
 func newTestServerWith(t *testing.T, devMode bool, tune func(*usecase.Config)) *testServer {
+	t.Helper()
+	mode := authGoogle
+	if devMode {
+		mode = authDev
+	}
+	return newTestServerMode(t, mode, tune)
+}
+
+func newTestServerMode(t *testing.T, mode authMode, tune func(*usecase.Config)) *testServer {
 	t.Helper()
 	repo := memory.New(memory.WithEventBuffer(64))
 	wss := workspace.Static(&model.Workspace{ID: "team", Name: "Team", Description: "Write runbooks as numbered lists."}, &model.Workspace{ID: "other", Name: "Other"})
@@ -73,10 +90,14 @@ func newTestServerWith(t *testing.T, devMode bool, tune func(*usecase.Config)) *
 	gt.NoError(t, uc.Init(context.Background())).Required()
 	idp := &fakeIdP{claims: map[string]*model.ExternalClaims{}}
 	var auth *usecase.Auth
-	if devMode {
+	switch mode {
+	case authDev:
 		auth = gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour})).NoError(t)
 		gt.NoError(t, auth.EnableDevUser(context.Background(), "dev@localhost", "Dev"))
-	} else {
+	case authAnonymous:
+		auth = gt.R1(usecase.NewAuth(repo, nil, usecase.AuthConfig{SessionTTL: time.Hour})).NoError(t)
+		auth.EnableAnonymous()
+	default:
 		auth = gt.R1(usecase.NewAuth(repo, idp, usecase.AuthConfig{SessionTTL: time.Hour, AllowedDomains: []string{"example.com"}})).NoError(t)
 	}
 	h := gt.R1(httpctrl.New(uc, auth, httpctrl.WithMCP(true), httpctrl.WithStaticFS(testUI))).NoError(t)

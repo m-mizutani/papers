@@ -114,9 +114,11 @@ The change feed is `papers/{id}/events`, short-lived records that a TTL on `Expi
 
 Google OIDC (limited to the allowed domains and emails) with session cookies, and API tokens (`pap_{ID}.{secret}`, stored as a hash of the secret). `--no-authn` is for development.
 
+`--anonymous` replaces sign-in for servers anyone may use. `authMiddleware` (`/api/auth/me`, `/api/v1/*`) checks, in order, a bearer token, the CSRF header of a cookie request, and the session cookie; when the cookie is missing, malformed, unknown or expired, it creates an anonymous user and a session (on Firestore three writes: the user, its email index and the session; no `Identity`) and sets the session cookie on the response. Because the CSRF check comes first, a forged request never creates a user. Static files, `/healthz` and `/mcp` (bearer tokens only) never create one. The UI waits for `/api/auth/me` before any other call, so a page load makes one user. Nothing is kept in memory: the cookie and the stored session decide who the browser is.
+
 ### Authorization
 
-1.  Workspace: configured, within the token's workspaces, and `allow` by its Rego rule. The input is `{workspace: {id}, user: {id, email, domain}}`.
+1.  Workspace: configured, within the token's workspaces, and `allow` by its Rego rule. The input is `{workspace: {id}, user: {id, email, domain, anonymous}}`.
 2.  Paper: public, or for private and trashed papers the creator (`Principal.SeesPaper`).
 3.  Writing: a read-only token gets 403. Everything not visible is 404.
 4.  Creator only: changing visibility, deleting and restoring (with everything under it the creator's). The home cannot be deleted, archived, moved or made private.

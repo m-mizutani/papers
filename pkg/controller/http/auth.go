@@ -12,6 +12,7 @@ import (
 	"github.com/m-mizutani/goerr/v2"
 
 	"github.com/m-mizutani/papers/pkg/domain/model"
+	"github.com/m-mizutani/papers/pkg/usecase"
 )
 
 const (
@@ -69,12 +70,17 @@ func (s *Server) cookie(name, value string, maxAge time.Duration) *http.Cookie {
 	return c
 }
 
+func (s *Server) setSessionCookie(w http.ResponseWriter, cred *usecase.SessionCredential) {
+	http.SetCookie(w, s.cookie(sessionCookie, string(cred.ID)+"."+cred.Secret, time.Until(cred.ExpiresAt)))
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	returnTo := r.URL.Query().Get("return_to")
 	if !validateReturnTo(returnTo) {
 		returnTo = "/"
 	}
-	if s.auth.IsNoAuthn() {
+	if s.auth.IsNoAuthn() || s.auth.IsAnonymous() {
+		// Nothing to sign in to: the session is made on the first API call.
 		http.Redirect(w, r, returnTo, http.StatusFound) // #nosec G710 -- validateReturnTo allows same-origin paths only
 		return
 	}
@@ -123,7 +129,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(ctx, w, err)
 		return
 	}
-	http.SetCookie(w, s.cookie(sessionCookie, string(cred.ID)+"."+cred.Secret, time.Until(cred.ExpiresAt)))
+	s.setSessionCookie(w, cred)
 
 	target := "/"
 	if c, err := r.Cookie(returnToCookie); err == nil && validateReturnTo(c.Value) {
@@ -151,13 +157,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 type meResponse struct {
-	User    *model.User `json:"user"`
-	NoAuthn bool        `json:"no_authn"`
+	User      *model.User `json:"user"`
+	NoAuthn   bool        `json:"no_authn"`
+	Anonymous bool        `json:"anonymous"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
-	writeJSON(r.Context(), w, http.StatusOK, meResponse{User: p.User, NoAuthn: s.auth.IsNoAuthn()})
+	writeJSON(r.Context(), w, http.StatusOK, meResponse{User: p.User, NoAuthn: s.auth.IsNoAuthn(), Anonymous: s.auth.IsAnonymous()})
 }
 
 func isSafeMethod(m string) bool {
@@ -165,23 +172,40 @@ func isSafeMethod(m string) bool {
 }
 
 // authenticate resolves the principal from, in order: a bearer token, the
-// no-authn dev user, or the session cookie.
-func (s *Server) authenticate(r *http.Request) (*model.Principal, error) {
+// no-authn dev user, or the session cookie. In anonymous mode a request
+// without a valid session cookie gets a new anonymous user, and the
+// credential of its new session is returned for the caller to set as the
+// cookie. The CSRF check comes first, so a forged request never creates one.
+func (s *Server) authenticate(r *http.Request) (*model.Principal, *usecase.SessionCredential, error) {
 	ctx := r.Context()
 	if h := r.Header.Get("Authorization"); h != "" {
 		raw, ok := strings.CutPrefix(h, "Bearer ")
 		if !ok {
-			return nil, goerr.Wrap(model.ErrUnauthenticated, "unsupported authorization scheme")
+			return nil, nil, goerr.Wrap(model.ErrUnauthenticated, "unsupported authorization scheme")
 		}
-		return s.auth.AuthenticateToken(ctx, strings.TrimSpace(raw))
+		p, err := s.auth.AuthenticateToken(ctx, strings.TrimSpace(raw))
+		return p, nil, err
 	}
 
 	if !isSafeMethod(r.Method) && r.Header.Get(csrfHeader) != csrfValue {
-		return nil, goerr.Wrap(model.ErrPermissionDenied, "missing CSRF header")
+		return nil, nil, goerr.Wrap(model.ErrPermissionDenied, "missing CSRF header")
 	}
 	if s.auth.IsNoAuthn() {
-		return s.auth.DevPrincipal(ctx)
+		p, err := s.auth.DevPrincipal(ctx)
+		return p, nil, err
 	}
+	p, err := s.sessionPrincipal(r)
+	if err != nil && s.auth.IsAnonymous() && errors.Is(err, model.ErrUnauthenticated) {
+		cred, p, err := s.auth.OpenAnonymousSession(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return p, cred, nil
+	}
+	return p, nil, err
+}
+
+func (s *Server) sessionPrincipal(r *http.Request) (*model.Principal, error) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return nil, goerr.Wrap(model.ErrUnauthenticated, "no session")
@@ -190,12 +214,15 @@ func (s *Server) authenticate(r *http.Request) (*model.Principal, error) {
 	if !ok {
 		return nil, goerr.Wrap(model.ErrUnauthenticated, "malformed session cookie")
 	}
-	return s.auth.AuthenticateSession(ctx, model.SessionID(id), secret)
+	return s.auth.AuthenticateSession(r.Context(), model.SessionID(id), secret)
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.authenticate(r)
+		p, cred, err := s.authenticate(r)
+		if cred != nil {
+			s.setSessionCookie(w, cred)
+		}
 		if err != nil {
 			if r.Header.Get("Authorization") != "" {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="papers"`)
@@ -231,7 +258,7 @@ func (s *Server) mcpAuthMiddleware(next http.Handler) http.Handler {
 		)
 		switch {
 		case r.Header.Get("Authorization") != "":
-			p, err = s.authenticate(r)
+			p, _, err = s.authenticate(r)
 		case s.auth.IsNoAuthn():
 			p, err = s.auth.DevPrincipal(r.Context())
 		default:

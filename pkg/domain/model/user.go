@@ -19,6 +19,25 @@ type User struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	LastLoginAt time.Time `json:"last_login_at"`
+	// Anonymous marks a user created by --anonymous mode for a browser
+	// without a session. It has no Identity; only its session leads to it.
+	Anonymous bool `json:"anonymous,omitempty"`
+}
+
+// AnonymousEmailDomain is the domain of the synthesized email of anonymous
+// users. ".invalid" is reserved (RFC 2606), so it never matches a real
+// address, and workspace rules written with real domains keep them out.
+const AnonymousEmailDomain = "anonymous.invalid"
+
+// NewAnonymousUser builds an anonymous user with a synthesized email and
+// display name.
+func NewAnonymousUser(now time.Time) *User {
+	id := NewUserID()
+	s := string(id)
+	return &User{
+		ID: id, Email: s + "@" + AnonymousEmailDomain, Name: "Anonymous " + s[len(s)-4:],
+		CreatedAt: now, UpdatedAt: now, LastLoginAt: now, Anonymous: true,
+	}
 }
 
 func (u *User) Validate() error {

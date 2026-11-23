@@ -4,8 +4,10 @@ import { defineConfig, devices } from '@playwright/test'
 // End-to-end tests run the real server (in-memory storage, sign-in off,
 // the example workspaces) with the built UI embedded, and drive it in
 // Chromium. Build the UI first (`pnpm build`). PAPERS_BIN runs a prebuilt
-// server binary instead of `go run`.
+// server binary instead of `go run`. A second server on the next port runs
+// in anonymous mode for e2e/anonymous.spec.ts (see ANONYMOUS_URL).
 const port = Number(process.env.E2E_PORT ?? 18090)
+const anonymousPort = port + 1
 // The server runs from the repository root, so PAPERS_BIN is made absolute here.
 const server = process.env.PAPERS_BIN ? resolve(process.env.PAPERS_BIN) : 'go run .'
 
@@ -35,13 +37,24 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: `${server} serve --no-authn --addr 127.0.0.1:${port} --base-url http://127.0.0.1:${port} --config examples/config --global-config examples/global.toml --job-step 2`,
-    cwd: '..',
-    url: `http://127.0.0.1:${port}/healthz`,
-    timeout: 180_000,
-    reuseExistingServer: false,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  },
+  webServer: [
+    {
+      command: `${server} serve --no-authn --addr 127.0.0.1:${port} --base-url http://127.0.0.1:${port} --config examples/config --global-config examples/global.toml --job-step 2`,
+      cwd: '..',
+      url: `http://127.0.0.1:${port}/healthz`,
+      timeout: 180_000,
+      reuseExistingServer: false,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: `${server} serve --anonymous --addr 127.0.0.1:${anonymousPort} --base-url http://127.0.0.1:${anonymousPort} --config examples/config --global-config examples/global.toml`,
+      cwd: '..',
+      url: `http://127.0.0.1:${anonymousPort}/healthz`,
+      timeout: 180_000,
+      reuseExistingServer: false,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+  ],
 })

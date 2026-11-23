@@ -27,6 +27,7 @@ export const ja: Record<MsgKey, string> = {
   continue: '続きから',
   notOpened: 'まだ開いていません',
   signOut: 'サインアウト',
+  anonymousMode: '匿名モード: このブラウザのゲストとして使っています。cookie を消すと非公開ペーパーに戻れなくなります。',
   noWorkspacesTitle: '使えるワークスペースがありません',
   noWorkspacesBody: 'papers を運用している人に、ワークスペースへの追加を依頼してください。',
   workspaceNotFound: 'ワークスペースが見つかりません',

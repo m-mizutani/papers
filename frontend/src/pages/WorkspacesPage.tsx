@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import type { Me, Workspace, WorkspaceGroup } from '../api/types'
+import { accountNote, canSignOut } from '../components/account'
 import { groupWorkspaces } from '../components/Sidebar'
 import { ago, useTranslation } from '../i18n'
 import { Menu } from '../ui/Menu'
@@ -25,7 +26,7 @@ export function WorkspacesPage({ me, workspaces, groups, onSignOut }: { me: Me; 
           <div className="list"><div className="empty">
             <p style={{ margin: '0 0 var(--sp-3)', color: 'var(--fg)', fontWeight: 600 }}>{t('noWorkspacesTitle')}</p>
             <p style={{ margin: '0 0 var(--sp-6)' }}>{t('noWorkspacesBody')}</p>
-            <button type="button" className="btn" onClick={onSignOut}>{t('signOut')}</button>
+            {canSignOut(me) && <button type="button" className="btn" onClick={onSignOut}>{t('signOut')}</button>}
           </div></div>
         )}
         {sections.map((g) => (
@@ -51,7 +52,7 @@ export function WorkspacesPage({ me, workspaces, groups, onSignOut }: { me: Me; 
           </section>
         ))}
       </div>
-      {menu && <Menu anchor={menu} onClose={() => setMenu(null)} items={[{ note: me.user.email || me.user.name }, { label: t('signOut'), icon: '⎋', onSelect: onSignOut }]} />}
+      {menu && <Menu anchor={menu} onClose={() => setMenu(null)} items={[{ note: accountNote(me) }, ...(canSignOut(me) ? [{ label: t('signOut'), icon: '⎋', onSelect: onSignOut }] : [])]} />}
     </main>
   )
 }

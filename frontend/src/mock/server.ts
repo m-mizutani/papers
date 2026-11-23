@@ -388,7 +388,7 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
   const b = (body ?? {}) as Record<string, unknown>
   let m: RegExpMatchArray | null
   try {
-    if (p === '/api/auth/me') return { status: 200, json: { user: ME, no_authn: true, demo: true } }
+    if (p === '/api/auth/me') return { status: 200, json: { user: ME, no_authn: true, anonymous: false, demo: true } }
     if (p === '/api/auth/logout') return { status: 200, json: { ok: true } }
     if (p === '/api/v1/tokens' && method === 'GET') return { status: 200, json: { tokens: [{ id: 't-claude', name: 'Claude', kind: 'agent', agent_name: 'Claude', scope: 'write', created_at: now(), last_used_at: now() }] } }
     if (p === '/api/v1/tokens' && method === 'POST') return { status: 201, json: { token: { id: newId(), name: b.name, kind: b.kind, scope: b.scope, created_at: now() }, secret: 'pap_demo-token.this-is-not-a-real-secret' } }

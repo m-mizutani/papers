@@ -75,46 +75,54 @@ UI and pass it as a bearer token (the UI shows the exact command).
 
 ## Configuration
 
+Every flag can also be set through the environment variable next to it.
+
 | Flag / env | Default | |
 |---|---|---|
 | `--config` / `PAPERS_CONFIG` | | Directory of workspace definitions (required) |
-| `--global-config` | | Display groups of workspaces |
+| `--global-config` / `PAPERS_GLOBAL_CONFIG` | | Display groups of workspaces |
 | `--addr` / `PAPERS_ADDR` | `:8080` | Listen address |
 | `--base-url` / `PAPERS_BASE_URL` | `http://localhost:8080` | Public URL; OAuth redirect is `<base>/api/auth/callback`; `https` enables Secure cookies |
-| `--google-client-id`, `--google-client-secret` | | Google OAuth client |
-| `--google-hosted-domain` | | Account chooser hint (not an access control) |
-| `--allowed-domain`, `--allowed-email` | | Who may sign in at all (at least one is required with Google); workspaces narrow it further |
-| `--session-ttl` | `720h` | Browser session lifetime |
-| `--no-authn` | `false` | Development only: every request is the dev user |
-| `--enable-mcp` | `true` | Serve `/mcp` |
-| `--ws-origin` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
-| `--repository-backend` | `memory` | `firestore` or `memory` (development only) |
-| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |
-| `--firestore-search-language` | (detect) | BCP-47 language code of search queries, such as `ja` |
-| `--attachment-backend` | `memory` | Where images go: `gcs`, `dir` or `memory` |
-| `--attachment-bucket`, `--attachment-prefix` | | Cloud Storage bucket and prefix for `gcs` |
-| `--attachment-dir` | | Directory for `dir` |
-| `--max-ops-per-batch` | `300` | Operations per request (blocks per batch are capped at 240) |
-| `--paper-touch-interval` | `1m` | How stale a paper's "updated" time may get before a write refreshes it |
-| `--trash-retention` | `720h` | How long papers stay in the trash |
-| `--job-lease`, `--job-poll` | `1m`, `15s` | When an instance stops, another takes its jobs over after the lease; `job-poll` is how often instances look |
-| `--job-step` | `200` | Papers (or blocks of a copy) per transaction of a background job |
+| `--google-client-id` / `PAPERS_GOOGLE_CLIENT_ID`, `--google-client-secret` / `PAPERS_GOOGLE_CLIENT_SECRET` | | Google OAuth client |
+| `--google-hosted-domain` / `PAPERS_GOOGLE_HOSTED_DOMAIN` | | Account chooser hint (not an access control) |
+| `--allowed-domain` / `PAPERS_ALLOWED_DOMAINS`, `--allowed-email` / `PAPERS_ALLOWED_EMAILS` | | Who may sign in at all (at least one is required with Google); workspaces narrow it further |
+| `--session-ttl` / `PAPERS_SESSION_TTL` | `720h` | Browser session lifetime (also of anonymous sessions) |
+| `--anonymous` / `PAPERS_ANONYMOUS` | `false` | Anyone may use papers without signing in: a browser without a session becomes a new anonymous user. Cannot be combined with Google sign-in or `--no-authn` |
+| `--no-authn` / `PAPERS_NO_AUTHN` | `false` | Development only: every request is the dev user |
+| `--dev-user-email` / `PAPERS_DEV_USER_EMAIL`, `--dev-user-name` / `PAPERS_DEV_USER_NAME` | `dev@localhost`, `Developer` | The dev user of `--no-authn` |
+| `--enable-mcp` / `PAPERS_ENABLE_MCP` | `true` | Serve `/mcp` |
+| `--ws-origin` / `PAPERS_WS_ORIGINS` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
+| `--repository-backend` / `PAPERS_REPOSITORY_BACKEND` | `memory` | `firestore` or `memory` (development only) |
+| `--firestore-project-id` / `PAPERS_FIRESTORE_PROJECT_ID`, `--firestore-database-id` / `PAPERS_FIRESTORE_DATABASE_ID` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |
+| `--firestore-search-language` / `PAPERS_FIRESTORE_SEARCH_LANGUAGE` | (detect) | BCP-47 language code of search queries, such as `ja` |
+| `--event-buffer` / `PAPERS_EVENT_BUFFER` | `256` | Realtime events a watcher may lag behind before it is told to reload |
+| `--attachment-backend` / `PAPERS_ATTACHMENT_BACKEND` | `memory` | Where images go: `gcs`, `dir` or `memory` |
+| `--attachment-bucket` / `PAPERS_ATTACHMENT_BUCKET`, `--attachment-prefix` / `PAPERS_ATTACHMENT_PREFIX` | | Cloud Storage bucket and prefix for `gcs` |
+| `--attachment-dir` / `PAPERS_ATTACHMENT_DIR` | | Directory for `dir` |
+| `--max-ops-per-batch` / `PAPERS_MAX_OPS_PER_BATCH` | `300` | Operations per request (blocks per batch are capped at 240) |
+| `--paper-touch-interval` / `PAPERS_PAPER_TOUCH_INTERVAL` | `1m` | How stale a paper's "updated" time may get before a write refreshes it |
+| `--trash-retention` / `PAPERS_TRASH_RETENTION` | `720h` | How long papers stay in the trash |
+| `--job-lease` / `PAPERS_JOB_LEASE`, `--job-poll` / `PAPERS_JOB_POLL` | `1m`, `15s` | When an instance stops, another takes its jobs over after the lease; `job-poll` is how often instances look |
+| `--job-step` / `PAPERS_JOB_STEP` | `200` | Papers (or blocks of a copy) per transaction of a background job |
+| `--sentry-dsn` / `PAPERS_SENTRY_DSN`, `--sentry-env` / `PAPERS_SENTRY_ENV`, `--sentry-release` / `PAPERS_SENTRY_RELEASE` | | Error reporting to Sentry |
+| `--log-level` / `PAPERS_LOG_LEVEL`, `--log-format` / `PAPERS_LOG_FORMAT`, `--log-output` / `PAPERS_LOG_OUTPUT` | `info`, `console`, `stdout` | Logging |
+| `--log-quiet` / `PAPERS_LOG_QUIET`, `--log-stacktrace` / `PAPERS_LOG_STACKTRACE` | `false`, `true` | No log output; stack traces in console logs |
 
 Trash, restore and archive of a subtree, and moves across workspaces, run as background jobs that continue on the instance after the response, so on Cloud Run allocate CPU always (`--no-cpu-throttling`); otherwise they still finish, but only when an instance looks for them.
 
-All flags also read `PAPERS_*` environment variables (see `papers serve --help`).
+A test checks that every flag of every command has a `PAPERS_*` environment variable (see `papers serve --help`).
 
 ### Firestore database
 
 `papers firestore migrate` makes the database match what papers needs: it creates the missing indexes and TTL policies and waits until the indexes are ready, so the server can start right after it. It is safe to run on every deploy; a database that is already up to date sees no change. Each index and TTL policy is reported on one line (`ready`, `creating`, `created`, `failed`, `unmanaged`, ...), and an index that needs repair makes it exit with an error.
 
-| Flag | Default | Meaning |
+| Flag / env | Default | Meaning |
 |---|---|---|
-| `--dry-run` | `false` | Only read, and report what would be created or deleted |
-| `--no-wait` | `false` | Do not wait for the indexes to become ready |
-| `--wait-timeout` | `30m` | How long to wait for the indexes to become ready |
-| `--prune` | `false` | Delete indexes of the managed collection groups that papers does not need (they are only reported otherwise) |
+| `--dry-run` / `PAPERS_DRY_RUN` | `false` | Only read, and report what would be created or deleted |
+| `--no-wait` / `PAPERS_NO_WAIT` | `false` | Do not wait for the indexes to become ready |
+| `--wait-timeout` / `PAPERS_WAIT_TIMEOUT` | `30m` | How long to wait for the indexes to become ready |
+| `--prune` / `PAPERS_PRUNE` | `false` | Delete indexes of the managed collection groups that papers does not need (they are only reported otherwise) |
 
-`papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` skips the question. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted.
+`papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` (`PAPERS_FORCE_DANGEROUS_APPLY`) skips the question, so never leave that variable set. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted.
 
 Both take `--firestore-project-id` and `--firestore-database-id` (or `PAPERS_FIRESTORE_PROJECT_ID`, `PAPERS_FIRESTORE_DATABASE_ID`).

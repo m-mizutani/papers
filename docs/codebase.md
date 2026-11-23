@@ -133,7 +133,7 @@ Overview
 
 ### Signing in
 
-`/api/auth/login` redirects to Google, and `/callback` verifies the ID token (nonce and JWKS). The allowed domains and emails limit who gets in; each workspace's Rego decides who may use it. An AI sends a `pap_…` token, issued in Settings, as a Bearer token; MCP accepts nothing else.
+`/api/auth/login` redirects to Google, and `/callback` verifies the ID token (nonce and JWKS). The allowed domains and emails limit who gets in; each workspace's Rego decides who may use it. An AI sends a `pap_…` token, issued in Settings, as a Bearer token; MCP accepts nothing else. In anonymous mode `/login` just redirects back: `authenticate` in `auth.go` calls `Auth.OpenAnonymousSession` when a browser has no valid session cookie and sets the new cookie, and the account menu (`accountNote`, `canSignOut` in `frontend/src/components/account.ts`) explains the mode instead of offering "Sign out".
 
 ### Search
 

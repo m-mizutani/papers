@@ -63,10 +63,10 @@ func cmdFirestoreMigrate() *cli.Command {
 		Name:  "migrate",
 		Usage: "Create the indexes and TTL policies papers needs on a Firestore Enterprise database; safe to run repeatedly",
 		Flags: append(target.flags(),
-			&cli.BoolFlag{Name: "dry-run", Usage: "Only read, and report what would be created or deleted", Destination: &opts.DryRun},
-			&cli.BoolFlag{Name: "no-wait", Usage: "Do not wait for the indexes to become ready", Destination: &noWait},
-			&cli.DurationFlag{Name: "wait-timeout", Usage: "How long to wait for the indexes to become ready", Value: 30 * time.Minute, Destination: &waitTimeout},
-			&cli.BoolFlag{Name: "prune", Usage: "Delete indexes of the managed collection groups that papers does not need", Destination: &opts.Prune},
+			&cli.BoolFlag{Name: "dry-run", Usage: "Only read, and report what would be created or deleted", Sources: cli.EnvVars("PAPERS_DRY_RUN"), Destination: &opts.DryRun},
+			&cli.BoolFlag{Name: "no-wait", Usage: "Do not wait for the indexes to become ready", Sources: cli.EnvVars("PAPERS_NO_WAIT"), Destination: &noWait},
+			&cli.DurationFlag{Name: "wait-timeout", Usage: "How long to wait for the indexes to become ready", Value: 30 * time.Minute, Sources: cli.EnvVars("PAPERS_WAIT_TIMEOUT"), Destination: &waitTimeout},
+			&cli.BoolFlag{Name: "prune", Usage: "Delete indexes of the managed collection groups that papers does not need", Sources: cli.EnvVars("PAPERS_PRUNE"), Destination: &opts.Prune},
 		),
 		Action: func(ctx context.Context, c *cli.Command) error {
 			m, err := firestore.NewMigrator(ctx, target.projectID, target.databaseID)
@@ -131,7 +131,7 @@ func cmdFirestoreReset() *cli.Command {
 		Name:  "reset",
 		Usage: "Delete every document in the Firestore database (indexes and TTL policies are kept)",
 		Flags: append(target.flags(),
-			&cli.BoolFlag{Name: "force-dangerous-apply", Usage: "Delete without asking for confirmation", Destination: &force},
+			&cli.BoolFlag{Name: "force-dangerous-apply", Usage: "Delete without asking for confirmation", Sources: cli.EnvVars("PAPERS_FORCE_DANGEROUS_APPLY"), Destination: &force},
 		),
 		Action: func(ctx context.Context, c *cli.Command) error {
 			w := c.Root().Writer

@@ -26,6 +26,7 @@ export const keys = {
   continue: 'continue',
   notOpened: 'notOpened',
   signOut: 'signOut',
+  anonymousMode: 'anonymousMode',
   noWorkspacesTitle: 'noWorkspacesTitle',
   noWorkspacesBody: 'noWorkspacesBody',
   workspaceNotFound: 'workspaceNotFound',
