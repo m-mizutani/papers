@@ -86,6 +86,13 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - Enter-key handlers must respect IME composition: use `isEnter` / `isImeComposing` from `src/utils/keyboard.ts` (enforced by ESLint).
 - AI-authored HTML/SVG renders only inside the sandboxed `RichFrame` (no `allow-same-origin`). Never inject block content as HTML elsewhere.
 
+### Screen changes and screenshots (MANDATORY)
+- Any change that alters what a screen shows (components, styles, tokens, layout, i18n copy) must be checked with screenshots taken by Playwright, and you must look at them before you report the work done. Passing tests and type checks are not a substitute.
+- Capture against the real app: build the UI (`cd frontend && pnpm build`), run the server the way `frontend/playwright.config.ts` does (`go run . serve --no-authn --addr 127.0.0.1:18090 --base-url http://127.0.0.1:18090 --config examples/config --global-config examples/global.toml`), and drive it with Playwright (`page.screenshot`). Cover every screen and state the change touches, at a desktop width and at a phone width, in light and dark themes when colours change.
+- Save the captures under `frontend/pr-screenshots/` (ignored by git). Never commit a screenshot or any image made for review: not in `frontend/`, `docs/`, `testdata/` or anywhere else in the repository. Keep a throwaway capture script outside the repository too, unless it becomes an e2e test.
+- Put the screenshots in the pull request body. Upload them with the `gh` command as assets of the `pr-screenshots` prerelease (create it once with `gh release create pr-screenshots --prerelease --title "PR screenshots" --notes "Screenshots for pull requests; not a release."`), naming each file `<branch>-<screen>-<state>.png` (`/` in the branch name replaced by `-`) so pull requests do not overwrite each other: `gh release upload pr-screenshots frontend/pr-screenshots/<branch>-*.png --clobber` (only this branch's files, so another pull request's images are not replaced). Embed each one in the body as `![<screen, state>](https://github.com/m-mizutani/papers/releases/download/pr-screenshots/<file>)`.
+- If uploading with `gh` is not possible (the command is missing, not authenticated or refused), publish an Artifact on claude.ai that shows the screenshots with their screen and state, share it publicly, and put its URL in the pull request body instead. Say in the body which of the two was used.
+
 ### Language and commits
 - Code comments and string literals in English (UI copy via i18n).
 - Commit messages: single line, Semantic Commit format (`feat: ...`).
