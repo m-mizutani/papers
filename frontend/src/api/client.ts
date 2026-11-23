@@ -1,6 +1,6 @@
 import type {
   ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, Forward, Me, Op, Paper, PaperListItem, PaperListQuery, PaperRef,
-  PaperStatusInfo, PaperView, SearchHit, Sidebar, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
+  PaperStatusInfo, PaperView, SearchHit, Sidebar, TrashItem, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
 } from './types'
 
 export class ApiError extends Error {
@@ -71,7 +71,7 @@ export const api = {
   sidebar: (ws: string) => request<Sidebar>('GET', `${wsPath(ws)}/sidebar`),
   search: (ws: string, q: string, under = '') =>
     request<{ hits: SearchHit[] }>('GET', `${wsPath(ws)}/search?q=${enc(q)}${under ? `&under=${enc(under)}` : ''}`).then((r) => r.hits),
-  trash: (ws: string) => request<{ papers: PaperRef[] }>('GET', `${wsPath(ws)}/trash`).then((r) => r.papers),
+  trash: (ws: string) => request<{ papers: TrashItem[] }>('GET', `${wsPath(ws)}/trash`).then((r) => r.papers),
   /** Without a parent a public paper is created unfiled. */
   createPaper: (ws: string, input: { title: string; visibility?: Visibility; parent?: string; after?: string }) =>
     request<Paper>('POST', `${wsPath(ws)}/papers`, { title: input.title, visibility: input.visibility ?? 'public', parent: input.parent ?? '', after: input.after ?? null, markdown: '' }),

@@ -43,6 +43,7 @@ const favorites = new Map<string, string[]>()
 const recents = new Map<string, string[]>()
 const opened = new Map<string, string>()
 const sockets = new Set<Socket>()
+const TRASH_DAYS = 30
 
 const ALNUM = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(22)), (n) => ALNUM[n % 62]).join('')
@@ -423,7 +424,12 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
       return { status: 200, json: { hits } }
     }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/trash$/))) {
-      return { status: 200, json: { papers: [...papers.values()].filter((d) => d.paper.workspace_id === m?.[1] && d.paper.deleted_at && d.paper.deleted_with === d.paper.id && d.paper.created_by.user_id === ME.id).map((d) => refOf(d.paper)) } }
+      const mine = [...papers.values()].map((d) => d.paper).filter((x) => x.workspace_id === m?.[1] && x.deleted_at && x.created_by.user_id === ME.id)
+      const items = mine.filter((x) => x.deleted_with === x.id).map((x) => ({
+        ...refOf(x), deleted_at: x.deleted_at, purge_at: new Date(Date.parse(x.deleted_at ?? now()) + TRASH_DAYS * 86400000).toISOString(),
+        below: mine.filter((y) => y.deleted_with === x.id && y.id !== x.id).length,
+      }))
+      return { status: 200, json: { papers: items } }
     }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/papers$/)) && method === 'POST') {
       const ws = workspaces.get(m[1] ?? '')
@@ -482,7 +488,12 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
           const v = d.versions[s.n - 1] as Version
           const { blocks: _x, ...summary } = v
           void _x
-          return ok({ version: summary, paper: { ...d.paper, title: s.title }, blocks: s.blocks })
+          const children = s.blocks.filter((x) => x.type === 'paper' && x.props.paper_id).map((x) => {
+            const q = papers.get(x.props.paper_id ?? '')?.paper
+            const outcome = !q ? 'missing' : q.parent_id !== d.paper.id ? 'moved' : !q.deleted_at ? 'kept' : q.created_by.user_id === ME.id ? 'from_trash' : 'trashed'
+            return { paper_id: x.props.paper_id, title: q && sees(q) ? q.title : undefined, outcome }
+          })
+          return ok({ version: summary, paper: { ...d.paper, title: s.title }, blocks: s.blocks, children })
         }
         d.blocks = new Map(s.blocks.map((x) => [x.id, { ...clone(x), rev: x.rev + 1000 }]))
         d.paper = { ...d.paper, title: s.title }

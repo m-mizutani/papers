@@ -212,7 +212,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 	list, err := s.uc.ListTrash(r.Context(), principalFrom(r.Context()), wsParam(r))
 	if list == nil {
-		list = []*usecase.PaperRef{}
+		list = []*usecase.TrashItem{}
 	}
 	respond(w, r, http.StatusOK, map[string]any{"papers": list}, err)
 }

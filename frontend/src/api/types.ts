@@ -216,6 +216,23 @@ export interface VersionView {
   version: VersionSummary
   paper: Paper
   blocks: Block[]
+  /** What restoring the version does with each child paper it has. */
+  children?: ChildOutcome[]
+}
+
+export interface ChildOutcome {
+  paper_id: string
+  /** Only for papers the caller may see. */
+  title?: string
+  outcome: 'kept' | 'from_trash' | 'moved' | 'trashed' | 'missing'
+}
+
+/** A paper I sent to the trash. */
+export interface TrashItem extends PaperRef {
+  deleted_at: string
+  purge_at: string
+  /** Papers that went to the trash with it. */
+  below: number
 }
 
 export interface PaperStatusInfo {

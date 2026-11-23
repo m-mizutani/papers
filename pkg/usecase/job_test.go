@@ -345,3 +345,37 @@ func TestRestoreVersionBringsBackTrashedChildWithItsSubtree(t *testing.T) {
 	gt.False(t, e.paper(t, wsA, kid.ID).IsTrashed())
 	gt.False(t, e.paper(t, wsA, grand.ID).IsTrashed())
 }
+
+func TestRestoreVersionIntoUnfiledPaper(t *testing.T) {
+	// a version brings back every child still in the trash, even into a
+	// paper that is unfiled now; a child gone for good is not restored, and
+	// the version view says so before restoring
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	parent := e.child(t, alice, wsA, "", "parent")
+	kid := e.child(t, alice, wsA, string(parent.ID), "kid")
+	gone := e.child(t, alice, wsA, string(parent.ID), "gone")
+	gt.R1(e.uc.SaveVersion(ctx, alice, wsA, parent.ID, "with kids")).NoError(t)
+
+	gt.R1(e.uc.Trash(ctx, alice, wsA, kid.ID)).NoError(t)
+	gt.R1(e.uc.Trash(ctx, alice, wsA, gone.ID)).NoError(t)
+	gt.NoError(t, e.repo.PurgePaper(ctx, wsA, gone.ID))
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, parent.ID, usecase.MoveInput{Unfiled: true})).NoError(t)
+
+	view := gt.R1(e.uc.GetVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
+	outcomes := map[model.PaperID]string{}
+	for _, c := range view.Children {
+		outcomes[c.PaperID] = c.Outcome
+	}
+	gt.Equal(t, outcomes[kid.ID], usecase.ChildFromTrash)
+	gt.Equal(t, outcomes[gone.ID], usecase.ChildMissing)
+
+	res := gt.R1(e.uc.RestoreVersion(ctx, alice, wsA, parent.ID, 1)).NoError(t)
+	got := e.paper(t, wsA, kid.ID)
+	gt.False(t, got.IsTrashed())
+	gt.Equal(t, got.ParentID, parent.ID)
+	gt.Equal(t, e.paper(t, wsA, parent.ID).ParentID, model.PaperID(""))
+	gt.A(t, res.NotRestored).Length(1)
+	gt.Equal(t, res.NotRestored[0].Reason, "missing")
+}

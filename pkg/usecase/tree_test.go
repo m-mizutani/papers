@@ -142,6 +142,13 @@ func TestTrashRules(t *testing.T) {
 	gt.R1(e.uc.Trash(ctx, alice, wsA, a.ID)).NoError(t)
 	trash := gt.R1(e.uc.ListTrash(ctx, alice, wsA)).NoError(t)
 	gt.A(t, trash).Length(2)
+	// each item says when it is purged and how many papers went with it
+	for _, it := range trash {
+		gt.True(t, it.PurgeAt.After(it.DeletedAt))
+		if it.ID == b.ID {
+			gt.Equal(t, it.Below, 1) // C
+		}
+	}
 	gt.R1(e.uc.RestoreFromTrash(ctx, alice, wsA, b.ID)).NoError(t)
 	gb := e.paper(t, wsA, b.ID)
 	gt.Equal(t, gb.ParentID, home)

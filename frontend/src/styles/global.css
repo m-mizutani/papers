@@ -380,6 +380,10 @@ table.tb { border-collapse: collapse; min-width: 100%; font-size: 14.5px; }
 .mi[disabled] { opacity: 0.45; cursor: default; }
 .msep { height: 1px; background: var(--line); margin: var(--sp-2) var(--sp-1); }
 .mh { font-size: var(--text-xs); font-weight: 600; color: var(--fg-3); padding: var(--sp-3) var(--sp-4) 3px; text-transform: uppercase; letter-spacing: 0.06em; }
+.kids { margin-top: var(--sp-6); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); max-height: 200px; overflow: auto; }
+.kids .mh { padding-inline: 0; }
+.kids ul { margin: 0 0 var(--sp-3); padding-left: var(--sp-8); }
+.kids li { padding: var(--sp-1) 0; }
 .mnote { font-size: 12px; color: var(--fg-3); padding: var(--sp-3) var(--sp-4); }
 .fmt { display: flex; flex-wrap: nowrap; gap: var(--sp-1); padding: var(--sp-2); align-items: center; white-space: nowrap; }
 .fmt button { min-width: 30px; height: 30px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; color: var(--fg-2); padding: 0 var(--sp-3); }

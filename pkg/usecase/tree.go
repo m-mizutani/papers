@@ -650,9 +650,19 @@ func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.Paper
 	return w.putPaper(r)
 }
 
+// TrashItem is a paper the caller sent to the trash: when, when it is
+// purged, and how many papers went with it.
+type TrashItem struct {
+	*PaperRef
+	DeletedAt time.Time `json:"deleted_at"`
+	PurgeAt   time.Time `json:"purge_at"`
+	Below     int       `json:"below"`
+}
+
 // ListTrash lists the caller's papers in the trash (the ones deleted
 // directly; papers deleted with them come back with them).
-func (u *UseCases) ListTrash(ctx context.Context, p *model.Principal, ws model.WorkspaceID) ([]*PaperRef, error) {
+
+func (u *UseCases) ListTrash(ctx context.Context, p *model.Principal, ws model.WorkspaceID) ([]*TrashItem, error) {
 	if _, err := u.workspaceFor(ctx, p, ws); err != nil {
 		return nil, err
 	}
@@ -660,11 +670,19 @@ func (u *UseCases) ListTrash(ctx context.Context, p *model.Principal, ws model.W
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to list trash")
 	}
-	var out []*PaperRef
+	// What went to the trash with each paper is in the same list.
+	below := map[model.PaperID]int{}
 	for _, q := range papers {
-		if q.DeletedWith == q.ID {
-			out = append(out, refOf(q))
+		if q.DeletedWith != q.ID {
+			below[q.DeletedWith]++
 		}
+	}
+	out := []*TrashItem{}
+	for _, q := range papers {
+		if q.DeletedWith != q.ID || q.DeletedAt == nil {
+			continue
+		}
+		out = append(out, &TrashItem{PaperRef: refOf(q), DeletedAt: *q.DeletedAt, PurgeAt: q.DeletedAt.Add(u.cfg.TrashRetention), Below: below[q.ID]})
 	}
 	return out, nil
 }

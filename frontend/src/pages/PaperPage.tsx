@@ -7,7 +7,7 @@ import { LiveConnection } from '../api/live'
 import {
   applyBlocks, applyChildren, applyPaper, applyPresence, byOrder, cellsOf, editorsOf, initState, listNumbers, replaceTemp, topLevel, type PaperState,
 } from '../api/paperState'
-import type { Actor, BatchResult, Block, BlockProps, BlockType, DiffEntry, Me, Op, PaperEvent, PaperStatusInfo, PaperView, Sidebar, VersionSummary, Workspace } from '../api/types'
+import type { Actor, BatchResult, Block, BlockProps, BlockType, ChildOutcome, DiffEntry, Me, Op, PaperEvent, PaperStatusInfo, PaperView, Sidebar, VersionSummary, Workspace } from '../api/types'
 import { BlockView, type BlockContext, type EditingState, type Mark } from '../components/BlockView'
 import { CONTINUING, TEXT_TYPES, TURN_INTO, matchChoices, type TypeChoice } from '../components/blockTypes'
 import type { ConflictChoice, ConflictState } from '../components/ConflictPanel'
@@ -175,6 +175,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const [view, setView] = useState<PaperView>()
   const [state, setState] = useState<PaperState>()
   const [shown, setShown] = useState<VersionSummary>()
+  // What restoring the shown version does with its child papers.
+  const [shownKids, setShownKids] = useState<ChildOutcome[]>([])
   const [status, setStatus] = useState<PaperStatusInfo>()
   const [conn, setConn] = useState<'connecting' | 'open' | 'closed'>('connecting')
   const [sending, setSending] = useState(0)
@@ -234,6 +236,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         const vv = await api.version(ws, paperId, version)
         setState(initState(vv.paper, vv.blocks))
         setShown(vv.version)
+        setShownKids(vv.children ?? [])
         setTitle(vv.paper.title)
         const kids = await api.children(ws, paperId).catch(() => [])
         setState((s) => (s ? applyChildren(s, Object.fromEntries(kids.map((k) => [k.id, k]))) : s))
@@ -1492,6 +1495,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             ? [{ label: t('cancel') }, { label: t('restoreWithoutSaving'), kind: 'danger', onClick: () => void restore(dialog.n, false) }, { label: t('saveThenRestore'), kind: 'primary', onClick: () => void restore(dialog.n, true) }]
             : [{ label: t('cancel') }, { label: t('restore'), kind: 'primary', onClick: () => void restore(dialog.n, false) }]}>
           <p>{status?.changed && latestN !== dialog.n ? t('restoreDirty', { n: dialog.n, m: latestN }) : t('restoreClean', { n: dialog.n })}</p>
+          <RestoreKids kids={shownKids} />
         </Modal>
       )}
       {dialog?.kind === 'move' && paper && (
@@ -1570,5 +1574,30 @@ function SavedDialog({ n, counts, url, onOpen, onClose }: { n: number; counts: C
       </div>
       <p className="muted" style={{ fontSize: 'var(--text-sm)', margin: 'var(--sp-4) 0 0' }}>{t('versionUrlNote')}</p>
     </Modal>
+  )
+}
+
+/** Before restoring a version: which child papers come back from the trash, and which do not come back. */
+function RestoreKids({ kids }: { kids: ChildOutcome[] }) {
+  const { t } = useTranslation()
+  const back = kids.filter((k) => k.outcome === 'from_trash')
+  const lost = kids.filter((k) => k.outcome === 'moved' || k.outcome === 'trashed' || k.outcome === 'missing')
+  if (!back.length && !lost.length) return null
+  const why = { moved: t('lostMoved'), trashed: t('lostTrashed'), missing: t('lostMissing') } as const
+  return (
+    <div className="kids">
+      {back.length > 0 && (
+        <>
+          <div className="mh">{t('restoreBack')}</div>
+          <ul>{back.map((k) => <li key={k.paper_id}>{k.title || t('untitled')}</li>)}</ul>
+        </>
+      )}
+      {lost.length > 0 && (
+        <>
+          <div className="mh">{t('restoreLost')}</div>
+          <ul>{lost.map((k) => <li key={k.paper_id}>{k.title || t('untitled')}<span className="muted"> · {why[k.outcome as keyof typeof why]}</span></li>)}</ul>
+        </>
+      )}
+    </div>
   )
 }

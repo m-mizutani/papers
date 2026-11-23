@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
-  blocks, call, createPaper, editBlock, editor, eventually, finishEditing, msg, openPaper, ops, saveVersion, synced, titleField, topBlocks, unique, WS,
+  blocks, call, createPaper, paperOf, editBlock, editor, eventually, finishEditing, msg, openPaper, ops, saveVersion, synced, titleField, topBlocks, unique, WS,
 } from './helpers'
 import type { VersionSummary } from '../src/api/types'
 
@@ -102,4 +102,27 @@ test('T19 restoring with unsaved changes can save them first', async ({ page, re
   const v3 = await call<{ blocks: { content: string }[] }>(request, 'GET', `/workspaces/${WS}/papers/${paper.id}/versions/3`)
   expect(v3.blocks.map((x) => x.content)).toEqual(['unsaved'])
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((x) => x.content).join() === 'old', 'restored')
+})
+
+test('restoring a version warns which child papers come back from the trash, even into an unfiled paper', async ({ page, request }) => {
+  const parent = await createPaper(request, { title: unique('Parent') })
+  const kid = await createPaper(request, { title: unique('Kid'), parent: parent.id })
+  await saveVersion(request, parent.id)
+  await call(request, 'POST', `/workspaces/${WS}/papers/${kid.id}/trash`)
+  await eventually(() => paperOf(request, kid.id), (p) => !!p.deleted_at, 'trashed')
+  await call(request, 'POST', `/workspaces/${WS}/papers/${parent.id}/move`, { unfiled: true })
+
+  // the trash says how long it is kept
+  await page.goto(`/ws/${WS}/trash`)
+  await expect(page.locator('.lr', { hasText: kid.title })).toContainText(msg('daysLeft', { n: 30 }))
+
+  await page.goto(`/ws/${WS}/p/${parent.id}/v/1`)
+  await page.locator('.banner.ver').getByRole('button', { name: msg('restoreThis') }).click()
+  const dialog = page.getByRole('dialog', { name: msg('restoreTitle', { n: 1 }) })
+  await expect(dialog.locator('.kids')).toContainText(msg('restoreBack'))
+  await expect(dialog.locator('.kids')).toContainText(kid.title)
+  await dialog.getByRole('button', { name: msg('restore'), exact: true }).click()
+
+  await eventually(() => paperOf(request, kid.id), (p) => !p.deleted_at && p.parent_id === parent.id, 'back under the unfiled parent')
+  expect((await paperOf(request, parent.id)).parent_id ?? '').toBe('')
 })
