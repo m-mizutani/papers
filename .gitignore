@@ -52,7 +52,7 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/playwright/.cache/
 
-# Pull request screenshot captures (.claude/skills/capture-screenshots)
+# Pull request screenshot captures; never committed (CLAUDE.md, "Screen changes and screenshots")
 frontend/pr-screenshots/
 
 # Logs
