@@ -154,7 +154,7 @@ MCP (`/mcp`, token required): `papers_guide` (the workspace's rules and the home
       …/items/{paper}  (TTL ExpireAt)   progress per paper
     workspaces/{ws}/search/{paper}_{block|title}
 
-Enterprise creates no index by itself and runs a query without one as a full scan. Every query is listed in `firestore.RequiredIndexes`, and `papers firestore setup` creates the missing indexes and TTL policies. The main ones: on papers, `ParentID` (children), the eight indexes of the papers list (`ParentID`, `ParentID + CreatedBy.UserID`, `CreatedBy.UserID` and none, each followed by `UpdatedAt desc` or `CreatedAt desc`), `CreatedBy.UserID + DeletedAt` and `DeletedAt` (trash); on blocks, `ParentID + Order` (range reads, insert positions) and `Type + Order` (order of children); `Number` on versions; `Event.At` on events; `SHA256` on attachments; `State + LeaseUntil` on jobs (expired leases); `Expanded + Depth` and `Stage + Depth` on items; and the full-text index on search.
+Enterprise creates no index by itself and runs a query without one as a full scan. Every query is listed in `firestore.RequiredIndexes`, and `papers firestore migrate` creates the missing indexes and TTL policies. The main ones: on papers, `ParentID` (children), the eight indexes of the papers list (`ParentID`, `ParentID + CreatedBy.UserID`, `CreatedBy.UserID` and none, each followed by `UpdatedAt desc` or `CreatedAt desc`), `CreatedBy.UserID + DeletedAt` and `DeletedAt` (trash); on blocks, `ParentID + Order` (range reads, insert positions) and `Type + Order` (order of children); `Number` on versions; `Event.At` on events; `SHA256` on attachments; `State + LeaseUntil` on jobs (expired leases); `Expanded + Depth` and `Stage + Depth` on items; and the full-text index on search.
 
 The contract tests (`pkg/repository/*_test.go`) hold the memory and Firestore implementations to the same expectations. The Firestore side runs on the emulator or a real database (`TEST_FIRESTORE_PROJECT_ID`). Use-case tests count reads, for example that listing child papers takes one batch read.
 
@@ -170,7 +170,8 @@ Images only (PNG, JPEG, GIF, WebP; up to 20 MiB). An attachment belongs to one p
 
 - Cloud Run behind an external HTTPS load balancer. `--timeout=3600` keeps a WebSocket for up to 60 minutes. At least two instances.
 - The configuration files (the `--config` directory and `--global-config`) ship in the image or a mount. They are all validated at startup, and any invalid one stops the server from starting. Changes take effect on restart.
-- `papers firestore setup` creates the indexes and the TTL policies (sessions, events, jobs, items).
+- `papers firestore migrate` creates the indexes and the TTL policies (sessions, events, jobs, items) and waits for the indexes to be ready. It is idempotent: it first classifies every wanted index against the listed ones and writes only what the classification calls for. An existing index counts as the wanted one only when Native queries can use it: the fields must equal the wanted ones with or without the `__name__` the server appends (in the direction of the last field), and the index must be collection scoped, `ANY_API`, `DENSE` (ordered indexes are created with it explicitly; unspecified means the Enterprise default, dense), not unique or multikey, and a search field must have the same text index specs. `AlreadyExists` makes it list again and look for the index; finding none is reported as a failure instead of hidden. Indexes of the managed collection groups that match nothing are reported, and deleted only with `--prune`.
+- `papers firestore reset` deletes every document (all root collections, subcollections first) after a typed `yes` or with `--force-dangerous-apply`; indexes and TTL policies stay.
 - Background jobs go on on the same instance after the response, so CPU is always allocated (`--no-cpu-throttling`). Without it jobs still finish, because the minimum instances look for expired leases every 15 seconds, but more slowly.
 - When `--base-url` is https, cookies are Secure.
 
@@ -183,7 +184,7 @@ Images only (PNG, JPEG, GIF, WebP; up to 20 MiB). An attachment belongs to one p
 
 | Workflow | Jobs |
 |---|---|
-| `go-test.yml` | `go test -race ./...` on the memory backend; repository contract tests on the Firestore emulator |
+| `go-test.yml` | `go test -race ./...` on the memory backend; repository contract tests and the reset tests on the Firestore emulator |
 | `ui-test.yml` | Vitest |
 | `e2e.yml` | Playwright against the built server |
 | `lint.yml` | golangci-lint (`.golangci.yml`), go vet, go mod tidy, ESLint, TypeScript (app and e2e) |

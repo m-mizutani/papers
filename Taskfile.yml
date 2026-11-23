@@ -52,7 +52,7 @@ tasks:
           i=$((i+1)); [ "$i" -ge 90 ] && { echo "emulator did not start" >&2; exit 1; }
           sleep 1
         done
-        FIRESTORE_EMULATOR_HOST=127.0.0.1:28615 TEST_FIRESTORE_PROJECT_ID=papers-test go test ./pkg/repository/... -count=1
+        FIRESTORE_EMULATOR_HOST=127.0.0.1:28615 TEST_FIRESTORE_PROJECT_ID=papers-test go test ./pkg/repository/... ./pkg/cli/... -count=1
 
   test:frontend:
     dir: frontend

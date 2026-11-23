@@ -89,7 +89,7 @@ UI and pass it as a bearer token (the UI shows the exact command).
 | `--enable-mcp` | `true` | Serve `/mcp` |
 | `--ws-origin` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` | `memory` | `firestore` or `memory` (development only) |
-| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore setup` once to create its indexes and TTL policies |
+| `--firestore-project-id`, `--firestore-database-id` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |
 | `--firestore-search-language` | (detect) | BCP-47 language code of search queries, such as `ja` |
 | `--attachment-backend` | `memory` | Where images go: `gcs`, `dir` or `memory` |
 | `--attachment-bucket`, `--attachment-prefix` | | Cloud Storage bucket and prefix for `gcs` |
@@ -103,3 +103,18 @@ UI and pass it as a bearer token (the UI shows the exact command).
 Trash, restore and archive of a subtree, and moves across workspaces, run as background jobs that continue on the instance after the response, so on Cloud Run allocate CPU always (`--no-cpu-throttling`); otherwise they still finish, but only when an instance looks for them.
 
 All flags also read `PAPERS_*` environment variables (see `papers serve --help`).
+
+### Firestore database
+
+`papers firestore migrate` makes the database match what papers needs: it creates the missing indexes and TTL policies and waits until the indexes are ready, so the server can start right after it. It is safe to run on every deploy; a database that is already up to date sees no change. Each index and TTL policy is reported on one line (`ready`, `creating`, `created`, `failed`, `unmanaged`, ...), and an index that needs repair makes it exit with an error.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--dry-run` | `false` | Only read, and report what would be created or deleted |
+| `--no-wait` | `false` | Do not wait for the indexes to become ready |
+| `--wait-timeout` | `30m` | How long to wait for the indexes to become ready |
+| `--prune` | `false` | Delete indexes of the managed collection groups that papers does not need (they are only reported otherwise) |
+
+`papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` skips the question. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted.
+
+Both take `--firestore-project-id` and `--firestore-database-id` (or `PAPERS_FIRESTORE_PROJECT_ID`, `PAPERS_FIRESTORE_DATABASE_ID`).

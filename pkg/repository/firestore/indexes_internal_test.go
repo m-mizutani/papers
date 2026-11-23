@@ -20,24 +20,15 @@ func TestRequiredIndexesAreWellFormed(t *testing.T) {
 	}
 }
 
-func TestSameIndex(t *testing.T) {
-	spec := IndexSpec{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexDesc}}}
-	want := spec.proto()
-
-	withName := spec.proto()
-	withName.Fields = append(withName.Fields, &adminpb.Index_IndexField{
-		FieldPath: "__name__", ValueMode: &adminpb.Index_IndexField_Order_{Order: adminpb.Index_IndexField_DESCENDING},
-	})
-	gt.True(t, sameIndex(want, withName))
-
-	asc := IndexSpec{CollectionGroup: colBlocks, Fields: []IndexField{{"ParentID", IndexAsc}, {"Order", IndexAsc}}}.proto()
-	gt.False(t, sameIndex(want, asc))
-
-	group := spec.proto()
-	group.QueryScope = adminpb.Index_COLLECTION_GROUP
-	gt.False(t, sameIndex(want, group))
-
-	text := IndexSpec{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexText}}}.proto()
-	gt.True(t, sameIndex(text, IndexSpec{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexText}}}.proto()))
-	gt.False(t, sameIndex(text, IndexSpec{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexAsc}}}.proto()))
+func TestIndexProtoDensity(t *testing.T) {
+	// T28: ordered indexes ask for DENSE; search indexes leave it unset.
+	for _, spec := range RequiredIndexes {
+		want := adminpb.Index_DENSE
+		if spec.isSearch() {
+			want = adminpb.Index_DENSITY_UNSPECIFIED
+		}
+		gt.Equal(t, spec.proto().GetDensity(), want)
+		gt.Equal(t, spec.proto().GetApiScope(), adminpb.Index_ANY_API)
+		gt.Equal(t, spec.proto().GetQueryScope(), adminpb.Index_COLLECTION)
+	}
 }
