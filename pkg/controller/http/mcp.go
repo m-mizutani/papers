@@ -28,6 +28,7 @@ const mcpInstructions = `papers is a shared knowledge canvas edited by humans an
 
 Model
 - A workspace holds papers. Each workspace has a home paper; papers nest: a child paper is a "paper" block in its parent's body. Refer to papers by id or by a path of titles from the home ("Runbooks/DB failover").
+- A public paper without a parent (other than the home) is unfiled: it is in no body and shows in the people's papers list until someone moves it under a parent. Unfiled papers cannot have child papers. A paper created without a parent is unfiled, so when you know where a new paper belongs, give its parent.
 - A paper has a title and an ordered list of blocks. What you write becomes the current state at once. A version (v1, v2, ...) exists only when someone saves one explicitly (papers_save_version). Save a version when you finish a coherent change and the user would want to point at it; never save on every edit.
 - Each workspace has rules (its description). Follow them; they come with papers_guide and every read and write.
 - public papers are for everyone who can use the workspace; private papers only for their creator (you act for the user who issued your token).
@@ -40,6 +41,7 @@ Block types (type: props)
 - paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them all, otherwise archives the child with everything under it.
 - table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
 - mermaid, svg (a complete <svg> with a viewBox), html (self-contained, rendered in a sandboxed iframe): only AI writes these; props.height sets the frame height.
+- In svg and html, mark each value people may change with data-field="name" on its element and put the value in props.fields ({"rto":"15m"}); people then edit just those values in place. Names: lowercase letter first, then lowercase letters, digits or _ (at most 32 characters); at most 32 fields; each value one line, at most 200 bytes. Field values are searchable.
 
 Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"insert","type":"paragraph","content":"...","after":"<block id>|ref:n1|''","ref":"n2"}  after omitted = append, "" = top.
@@ -47,7 +49,7 @@ Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"delete","block_id":"...","base_rev":3}   {"op":"move","block_id":"...","after":"..."}
 - {"op":"set_title","title":"..."}
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
-- Paper-level ops, each alone in its batch: move_paper {parent, after, workspace}, set_visibility {visibility, parent}, save_version {note}, restore_version {version}, archive / unarchive {subtree}.
+- Paper-level ops, each alone in its batch: move_paper {parent, after, workspace} or {unfiled:true} (out of the tree; only for a paper without child papers), set_visibility {visibility, parent} (parent is optional: making a paper public without one leaves it unfiled), save_version {note}, restore_version {version}, archive / unarchive {subtree}.
 - Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs in the background after the call returns; read the papers again to see the result. Deleting a child whose subtree has someone else's paper archives it instead. While a move runs, its papers cannot be written (error "busy"); afterwards the old paper id answers with where it moved.`
 
 func (s *Server) mcpHandler() http.Handler {
@@ -200,7 +202,7 @@ type mcpReadOut struct {
 type mcpCreateIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
 	Title       string            `json:"title" jsonschema:"paper title (single line)"`
-	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit for the home"`
+	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit to create an unfiled paper"`
 	Private     bool              `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
 	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown"`
 }
@@ -374,7 +376,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			return s.mcpRead(ctx, p, in)
 		})
 
-	addTool(server, "papers_create_paper", "Create a paper under a parent (or a private one), optionally with initial Markdown.",
+	addTool(server, "papers_create_paper", "Create a paper under a parent (unfiled without one, or a private one), optionally with initial Markdown.",
 		func(ctx context.Context, p *model.Principal, in mcpCreateIn) (mcpPaperRef, error) {
 			vis := model.VisibilityPublic
 			if in.Private {

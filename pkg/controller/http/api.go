@@ -32,6 +32,7 @@ func (s *Server) routeAPI(r chi.Router) {
 		r.Get("/search", s.handleSearch)
 		r.Get("/trash", s.handleListTrash)
 		r.Get("/resolve", s.handleResolve)
+		r.Get("/papers", s.handleListPapers)
 		r.Post("/papers", s.handleCreatePaper)
 		r.Route("/papers/{paper}", func(r chi.Router) {
 			r.Get("/", s.handleGetPaper)
@@ -50,8 +51,8 @@ func (s *Server) routeAPI(r chi.Router) {
 			r.Post("/unarchive", s.handleArchive(false))
 			r.Post("/trash", s.handleTrash)
 			r.Post("/restore", s.handleRestoreTrash)
-			r.Put("/pin", s.handlePin)
-			r.Delete("/pin", s.handleUnpin)
+			r.Put("/favorite", s.handleFavorite)
+			r.Delete("/favorite", s.handleUnfavorite)
 			r.Post("/presence", s.handlePresence)
 			r.Get("/markdown", s.handleMarkdown)
 			r.Post("/attachments", s.handleUpload)
@@ -221,6 +222,34 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 	respond(w, r, http.StatusOK, p, err)
 }
 
+// handleListPapers reads one page of the papers list. Every parameter is
+// optional; an unknown value is 400.
+func (s *Server) handleListPapers(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	in := usecase.ListPapersInput{
+		Place: usecase.PaperPlace(q.Get("place")), Creator: usecase.PaperCreator(q.Get("creator")),
+		Visibility: model.Visibility(q.Get("visibility")), Sort: model.PaperSort(q.Get("sort")), Cursor: q.Get("cursor"),
+	}
+	switch v := q.Get("archived"); v {
+	case "", "false":
+	case "true":
+		in.Archived = true
+	default:
+		writeError(r.Context(), w, goerr.Wrap(model.ErrInvalidArgument, "archived must be true or false", goerr.V("archived", v)))
+		return
+	}
+	if q.Has("limit") {
+		n, err := strconv.Atoi(q.Get("limit"))
+		if err != nil || n < 1 {
+			writeError(r.Context(), w, goerr.Wrap(model.ErrInvalidArgument, "limit must be between 1 and 100", goerr.V("limit", q.Get("limit"))))
+			return
+		}
+		in.Limit = n
+	}
+	page, err := s.uc.ListPapers(r.Context(), principalFrom(r.Context()), wsParam(r), in)
+	respond(w, r, http.StatusOK, page, err)
+}
+
 type createPaperRequest struct {
 	Title      string           `json:"title"`
 	Visibility model.Visibility `json:"visibility"`
@@ -374,6 +403,7 @@ type moveRequest struct {
 	Parent    string            `json:"parent"`
 	After     *string           `json:"after"`
 	Workspace model.WorkspaceID `json:"workspace"`
+	Unfiled   bool              `json:"unfiled"`
 }
 
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
@@ -382,7 +412,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		writeError(r.Context(), w, err)
 		return
 	}
-	res, err := s.uc.MovePaper(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.MoveInput{Parent: req.Parent, After: req.After, Workspace: req.Workspace})
+	res, err := s.uc.MovePaper(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.MoveInput{Parent: req.Parent, After: req.After, Workspace: req.Workspace, Unfiled: req.Unfiled})
 	respond(w, r, http.StatusOK, res, err)
 }
 
@@ -435,25 +465,25 @@ func (s *Server) handleRestoreTrash(w http.ResponseWriter, r *http.Request) {
 	respond(w, r, http.StatusOK, res, err)
 }
 
-type pinRequest struct {
+type favoriteRequest struct {
 	After *string `json:"after"`
 }
 
-func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
-	var req pinRequest
+func (s *Server) handleFavorite(w http.ResponseWriter, r *http.Request) {
+	var req favoriteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
-	if err := s.uc.Pin(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), req.After); err != nil {
+	if err := s.uc.Favorite(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), req.After); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
-	if err := s.uc.Unpin(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r)); err != nil {
+func (s *Server) handleUnfavorite(w http.ResponseWriter, r *http.Request) {
+	if err := s.uc.Unfavorite(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r)); err != nil {
 		writeError(r.Context(), w, err)
 		return
 	}

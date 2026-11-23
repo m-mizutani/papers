@@ -81,10 +81,43 @@ func (r *Repository) ListChildrenOf(_ context.Context, ws model.WorkspaceID, par
 	return r.listPapers(ws, func(p *model.Paper) bool { return want[p.ParentID] }), nil
 }
 
-func (r *Repository) ListPrivatePapers(_ context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {
-	return r.listPapers(ws, func(p *model.Paper) bool {
-		return p.Visibility == model.VisibilityPrivate && p.Owner() == owner && p.DeletedAt == nil
-	}), nil
+func (r *Repository) ListPapers(_ context.Context, ws model.WorkspaceID, q model.PaperQuery) ([]*model.Paper, string, error) {
+	if err := q.Validate(); err != nil {
+		return nil, "", err
+	}
+	var after *model.PaperCursor
+	if q.Cursor != "" {
+		c, err := model.ParsePaperCursor(q.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		after = &c
+	}
+	got := r.listPapers(ws, func(p *model.Paper) bool {
+		return (!q.Unfiled || p.ParentID == "") &&
+			(q.Creator == "" || p.CreatedBy.UserID == q.Creator) &&
+			(after == nil || after.After(q.Sort, p))
+	})
+	slices.SortFunc(got, func(a, b *model.Paper) int {
+		return cmp.Or(q.Sort.TimeOf(b).Compare(q.Sort.TimeOf(a)), cmp.Compare(b.ID, a.ID))
+	})
+	if len(got) <= q.Limit {
+		return got, "", nil
+	}
+	page := got[:q.Limit]
+	return page, model.CursorOf(q.Sort, page[len(page)-1]), nil
+}
+
+func (r *Repository) GetPapersIn(_ context.Context, keys []model.PaperKey) ([]*model.Paper, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []*model.Paper
+	for _, k := range keys {
+		if d, ok := r.papers[paperKey{k.WorkspaceID, k.PaperID}]; ok {
+			out = append(out, clone(d.paper))
+		}
+	}
+	return out, nil
 }
 
 func (r *Repository) ListTrash(_ context.Context, ws model.WorkspaceID, owner model.UserID) ([]*model.Paper, error) {

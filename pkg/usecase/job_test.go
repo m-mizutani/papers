@@ -182,7 +182,7 @@ func TestMoveAcrossInStepsKeepsOriginalsReadOnly(t *testing.T) {
 	att := gt.R1(e.uc.Upload(ctx, alice, wsA, all[1].ID, usecase.UploadInput{Name: "x.png", ContentType: "image/png", Body: strings.NewReader("png")})).NoError(t)
 	e.apply(t, alice, wsA, all[1].ID, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockImage), Props: &model.BlockProps{AttachmentID: att.ID}})
 
-	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB, Parent: string(e.home(t, wsB))})).NoError(t)
 	j := started(t, e, wsA)
 
 	// once collected, the originals cannot be written and are not found
@@ -282,12 +282,12 @@ func TestMoveAcrossStopsAtAnotherMove(t *testing.T) {
 	other := e.child(t, bob, wsA, string(mid.ID), "other")
 
 	// bob's move of his paper has marked it
-	gt.R1(e.uc.MovePaper(ctx, bob, wsA, other.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, bob, wsA, other.ID, usecase.MoveInput{Workspace: wsB, Parent: string(e.home(t, wsB))})).NoError(t)
 	first := started(t, e, wsA)
 	stepUntil(t, e, wsA, first.ID, func(j *model.Job) bool { return j.Phase == model.PhaseCopy })
 
 	// alice's move of the tree above it fails and lets go of her papers
-	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB})).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, root.ID, usecase.MoveInput{Workspace: wsB, Parent: string(e.home(t, wsB))})).NoError(t)
 	second := started(t, e, wsA, first)
 	got := stepUntil(t, e, wsA, second.ID, func(*model.Job) bool { return false })
 	gt.Equal(t, got.State, model.JobFailed)

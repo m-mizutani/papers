@@ -3,7 +3,7 @@
 // Layout (see docs/design.md, "Firestore", for the rationale):
 //
 //	users/{userID}
-//	users/{userID}/pins/{wsID}_{paperID}
+//	users/{userID}/favorites/{wsID}_{paperID}
 //	users/{userID}/recents/{wsID}
 //	emails/{base64url(lower(email))}                 -> {UserID}
 //	identities/{provider}/subjects/{subject}
@@ -51,7 +51,7 @@ import (
 
 const (
 	colUsers       = "users"
-	colPins        = "pins"
+	colFavorites   = "favorites"
 	colRecents     = "recents"
 	colEmails      = "emails"
 	colIdentities  = "identities"

@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,14 @@ func TestPaperValidate(t *testing.T) {
 		p.Visibility = model.VisibilityPrivate
 		p.ParentID = model.NewPaperID()
 		gt.Error(t, p.Validate())
+	})
+	t.Run("a public paper without a parent is unfiled", func(t *testing.T) {
+		// T33
+		p := validPaper()
+		p.ParentID = ""
+		gt.NoError(t, p.Validate())
+		p.ParentID = model.NewPaperID()
+		gt.NoError(t, p.Validate())
 	})
 	t.Run("deleted_at and deleted_with go together", func(t *testing.T) {
 		p := validPaper()
@@ -158,4 +167,34 @@ func TestRecentTouch(t *testing.T) {
 	r.Touch(ids[5], time.Now())
 	gt.Equal(t, r.PaperIDs[0], ids[5])
 	gt.Equal(t, len(r.PaperIDs), model.MaxRecent)
+}
+
+func TestPaperQueryAndCursor(t *testing.T) {
+	q := model.PaperQuery{Sort: model.SortUpdated, Limit: 10}
+	gt.NoError(t, q.Validate())
+	for _, bad := range []model.PaperQuery{
+		{Sort: "title", Limit: 10},
+		{Sort: model.SortCreated, Limit: 0},
+		{Sort: model.SortCreated, Limit: model.MaxPaperListLimit + 1},
+		{Sort: model.SortCreated, Limit: 1, Cursor: "not a cursor"},
+	} {
+		gt.True(t, errors.Is(bad.Validate(), model.ErrInvalidArgument))
+	}
+
+	p := validPaper()
+	p.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p.UpdatedAt = time.Date(2026, 2, 1, 0, 0, 0, 123456000, time.UTC)
+	c := gt.R1(model.ParsePaperCursor(model.CursorOf(model.SortUpdated, p))).NoError(t)
+	gt.True(t, c.At.Equal(p.UpdatedAt))
+	gt.Equal(t, c.ID, p.ID)
+	c = gt.R1(model.ParsePaperCursor(model.CursorOf(model.SortCreated, p))).NoError(t)
+	gt.True(t, c.At.Equal(p.CreatedAt))
+
+	older := validPaper()
+	older.CreatedAt = p.CreatedAt.Add(-time.Second)
+	gt.True(t, c.After(model.SortCreated, older))
+	gt.False(t, c.After(model.SortCreated, p))
+	same := validPaper()
+	same.CreatedAt = p.CreatedAt
+	gt.Equal(t, c.After(model.SortCreated, same), same.ID < p.ID)
 }

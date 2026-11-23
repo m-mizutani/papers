@@ -227,7 +227,7 @@ func TestVisibility(t *testing.T) {
 	_, err = e.uc.GetPaper(ctx, bob, wsA, leaf.ID)
 	gt.True(t, errors.Is(err, model.ErrNotFound))
 	sb := gt.R1(e.uc.Sidebar(ctx, alice, wsA)).NoError(t)
-	gt.A(t, sb.Private).Length(1)
+	gt.V(t, sb.UnfiledCount).Equal(1)
 
 	gt.R1(e.uc.SetVisibility(ctx, alice, wsA, leaf.ID, usecase.VisibilityInput{Visibility: model.VisibilityPublic, Parent: "A"})).NoError(t)
 	gt.Equal(t, e.paper(t, wsA, leaf.ID).ParentID, a.ID)
@@ -248,7 +248,7 @@ func TestMoveAcrossWorkspaces(t *testing.T) {
 	gt.R1(e.uc.SaveVersion(ctx, alice, wsA, a.ID, "first")).NoError(t)
 	e.apply(t, alice, wsA, a.ID, para("unsaved"))
 
-	e.apply(t, alice, wsA, a.ID, usecase.Op{Kind: usecase.OpMovePaper, Workspace: wsB})
+	e.apply(t, alice, wsA, a.ID, usecase.Op{Kind: usecase.OpMovePaper, Workspace: wsB, Parent: string(e.home(t, wsB))})
 	fwd := gt.R1(e.repo.GetForward(ctx, wsA, a.ID)).NoError(t)
 	newID := fwd.ToPaperID
 
@@ -295,4 +295,156 @@ func TestMoveAcrossWorkspaces(t *testing.T) {
 	f, moved = usecase.IsMoved(err)
 	gt.True(t, moved)
 	gt.Equal(t, f.ToPaperID, newID)
+}
+
+func TestCreateUnfiled(t *testing.T) {
+	// T34: without a parent a public paper is unfiled: no paper block
+	// anywhere
+	e := newEnv(t)
+	ctx := context.Background()
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	home := e.home(t, wsA)
+	a := e.child(t, alice, wsA, "", "A")
+	before := paperBlocks(t, e, alice, wsA, home)
+
+	m := gt.R1(e.uc.CreatePaper(ctx, alice, wsA, usecase.CreateInput{Title: "Notes", Markdown: "body"})).NoError(t)
+	got := e.paper(t, wsA, m.ID)
+	gt.Equal(t, got.ParentID, model.PaperID(""))
+	gt.Equal(t, got.Visibility, model.VisibilityPublic)
+	gt.Equal(t, paperBlocks(t, e, alice, wsA, home), before)
+	gt.A(t, paperBlocks(t, e, alice, wsA, a.ID)).Length(0)
+	gt.A(t, e.blocks(t, alice, wsA, m.ID)).Length(1)
+	// it is public: others read and write it
+	view := gt.R1(e.uc.GetPaper(ctx, bob, wsA, m.ID)).NoError(t)
+	gt.A(t, view.Path).Length(0)
+	gt.False(t, view.IsHome)
+	e.apply(t, bob, wsA, m.ID, para("bob was here"))
+}
+
+func TestUnfiledHasNoChildren(t *testing.T) {
+	// T35: no paper block goes into an unfiled (or private) paper, and
+	// nothing moves under one
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	m := e.unfiled(t, alice, wsA, "Unfiled")
+	memo := gt.R1(e.uc.CreatePaper(ctx, alice, wsA, usecase.CreateInput{Title: "Memo", Visibility: model.VisibilityPrivate})).NoError(t)
+	a := e.child(t, alice, wsA, "", "A")
+
+	for _, target := range []model.PaperID{m.ID, memo.ID} {
+		_, err := e.uc.Apply(ctx, alice, wsA, target, usecase.BatchInput{Ops: []usecase.Op{{Kind: usecase.OpInsert, Type: ptr(model.BlockPaper), Title: ptr("sub")}}})
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+		_, err = e.uc.MovePaper(ctx, alice, wsA, a.ID, usecase.MoveInput{Parent: string(target)})
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+		_, err = e.uc.CreatePaper(ctx, alice, wsA, usecase.CreateInput{Title: "kid", Parent: string(target)})
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	}
+	gt.Equal(t, e.paper(t, wsA, a.ID).ParentID, e.home(t, wsA))
+	// the home and filed papers still take children
+	e.apply(t, alice, wsA, a.ID, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockPaper), Title: ptr("sub")})
+	// an empty parent is no longer the home
+	_, err := e.uc.MovePaper(ctx, alice, wsA, m.ID, usecase.MoveInput{})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	_, err = e.uc.MovePaper(ctx, alice, wsA, m.ID, usecase.MoveInput{Workspace: wsB})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+}
+
+func TestMoveUnfiled(t *testing.T) {
+	// T36: filing an unfiled paper writes no old parent; unfiling needs a
+	// paper without children
+	e := newEnv(t)
+	ctx := context.Background()
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	runbooks := e.child(t, alice, wsA, "", "Runbooks")
+	m := e.unfiled(t, alice, wsA, "Memo")
+
+	res := gt.R1(e.uc.MovePaper(ctx, bob, wsA, m.ID, usecase.MoveInput{Parent: "Runbooks"})).NoError(t)
+	gt.Equal(t, res.Paper.ParentID, runbooks.ID)
+	gt.Equal(t, paperBlocks(t, e, alice, wsA, runbooks.ID), []model.PaperID{m.ID})
+
+	// with a child it cannot be unfiled
+	_, err := e.uc.MovePaper(ctx, alice, wsA, runbooks.ID, usecase.MoveInput{Unfiled: true})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	// unfiled goes with neither a parent nor a workspace
+	_, err = e.uc.MovePaper(ctx, alice, wsA, m.ID, usecase.MoveInput{Unfiled: true, Parent: string(runbooks.ID)})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	_, err = e.uc.MovePaper(ctx, alice, wsA, m.ID, usecase.MoveInput{Unfiled: true, Workspace: wsB})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	// the home is never moved
+	_, err = e.uc.MovePaper(ctx, alice, wsA, e.home(t, wsA), usecase.MoveInput{Unfiled: true})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+
+	// without children: the block leaves the parent and ParentID is cleared
+	e.apply(t, bob, wsA, m.ID, usecase.Op{Kind: usecase.OpMovePaper, Unfiled: true})
+	gt.Equal(t, e.paper(t, wsA, m.ID).ParentID, model.PaperID(""))
+	gt.A(t, paperBlocks(t, e, alice, wsA, runbooks.ID)).Length(0)
+	// again: nothing happens
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, m.ID, usecase.MoveInput{Unfiled: true})).NoError(t)
+
+	// children in the trash do not count
+	kid := e.child(t, alice, wsA, string(runbooks.ID), "Kid")
+	gt.R1(e.uc.Trash(ctx, alice, wsA, kid.ID)).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, runbooks.ID, usecase.MoveInput{Unfiled: true})).NoError(t)
+	gt.Equal(t, e.paper(t, wsA, runbooks.ID).ParentID, model.PaperID(""))
+	// a private paper is not in the tree
+	memo := gt.R1(e.uc.CreatePaper(ctx, alice, wsA, usecase.CreateInput{Title: "Private", Visibility: model.VisibilityPrivate})).NoError(t)
+	_, err = e.uc.MovePaper(ctx, alice, wsA, memo.ID, usecase.MoveInput{Unfiled: true})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+}
+
+func TestPublicWithoutParentIsUnfiled(t *testing.T) {
+	// T37: making a private paper public without a parent leaves it unfiled;
+	// with a parent it goes under it as before
+	e := newEnv(t)
+	ctx := context.Background()
+	alice, bob := e.user(t, "alice"), e.user(t, "bob")
+	home := e.home(t, wsA)
+	a := e.child(t, alice, wsA, "", "A")
+	before := paperBlocks(t, e, alice, wsA, home)
+	memo := gt.R1(e.uc.CreatePaper(ctx, alice, wsA, usecase.CreateInput{Title: "Memo", Visibility: model.VisibilityPrivate})).NoError(t)
+
+	e.apply(t, alice, wsA, memo.ID, usecase.Op{Kind: usecase.OpSetVisibility, Visibility: model.VisibilityPublic})
+	got := e.paper(t, wsA, memo.ID)
+	gt.Equal(t, got.Visibility, model.VisibilityPublic)
+	gt.Equal(t, got.ParentID, model.PaperID(""))
+	gt.Equal(t, paperBlocks(t, e, alice, wsA, home), before)
+	gt.R1(e.uc.GetPaper(ctx, bob, wsA, memo.ID)).NoError(t)
+
+	// back to private, then public under A
+	gt.R1(e.uc.SetVisibility(ctx, alice, wsA, memo.ID, usecase.VisibilityInput{Visibility: model.VisibilityPrivate})).NoError(t)
+	gt.R1(e.uc.SetVisibility(ctx, alice, wsA, memo.ID, usecase.VisibilityInput{Visibility: model.VisibilityPublic, Parent: string(a.ID)})).NoError(t)
+	gt.Equal(t, e.paper(t, wsA, memo.ID).ParentID, a.ID)
+	gt.Equal(t, paperBlocks(t, e, alice, wsA, a.ID), []model.PaperID{memo.ID})
+	// an unfiled paper is no parent
+	m := e.unfiled(t, alice, wsA, "Unfiled")
+	gt.R1(e.uc.SetVisibility(ctx, alice, wsA, memo.ID, usecase.VisibilityInput{Visibility: model.VisibilityPrivate})).NoError(t)
+	_, err := e.uc.SetVisibility(ctx, alice, wsA, memo.ID, usecase.VisibilityInput{Visibility: model.VisibilityPublic, Parent: string(m.ID)})
+	gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+}
+
+func TestRestoreUnfiledFromTrash(t *testing.T) {
+	// T47 (server side): an unfiled paper comes back from the trash unfiled,
+	// not under the home; a filed child whose parent became unfiled goes
+	// to the home
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	home := e.home(t, wsA)
+	before := paperBlocks(t, e, alice, wsA, home)
+	m := e.unfiled(t, alice, wsA, "Memo")
+	gt.R1(e.uc.Trash(ctx, alice, wsA, m.ID)).NoError(t)
+	gt.True(t, e.paper(t, wsA, m.ID).IsTrashed())
+	gt.R1(e.uc.RestoreFromTrash(ctx, alice, wsA, m.ID)).NoError(t)
+	got := e.paper(t, wsA, m.ID)
+	gt.False(t, got.IsTrashed())
+	gt.Equal(t, got.ParentID, model.PaperID(""))
+	gt.Equal(t, paperBlocks(t, e, alice, wsA, home), before)
+
+	p := e.child(t, alice, wsA, "", "P")
+	kid := e.child(t, alice, wsA, string(p.ID), "Kid")
+	gt.R1(e.uc.Trash(ctx, alice, wsA, kid.ID)).NoError(t)
+	gt.R1(e.uc.MovePaper(ctx, alice, wsA, p.ID, usecase.MoveInput{Unfiled: true})).NoError(t)
+	gt.R1(e.uc.RestoreFromTrash(ctx, alice, wsA, kid.ID)).NoError(t)
+	gt.Equal(t, e.paper(t, wsA, kid.ID).ParentID, home)
+	gt.True(t, slices.Contains(paperBlocks(t, e, alice, wsA, home), kid.ID))
 }

@@ -111,6 +111,32 @@ func (u *UseCases) checkNotHome(ctx context.Context, paper *model.Paper, what st
 	return nil
 }
 
+// canHaveChildren reports whether paper may be a parent: the home or a
+// filed paper (public with a parent). Unfiled and private papers have no
+// children.
+func (u *UseCases) canHaveChildren(ctx context.Context, paper *model.Paper) (bool, error) {
+	if paper.IsPrivate() {
+		return false, nil
+	}
+	if paper.ParentID != "" {
+		return true, nil
+	}
+	home, err := u.homeID(ctx, paper.WorkspaceID)
+	if err != nil {
+		return false, err
+	}
+	return paper.ID == home, nil
+}
+
+// hasLiveChildren reports whether a paper has children outside the trash.
+func (u *UseCases) hasLiveChildren(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (bool, error) {
+	kids, err := u.repo.ListChildren(ctx, ws, id)
+	if err != nil {
+		return false, goerr.Wrap(err, "failed to list children")
+	}
+	return slices.ContainsFunc(kids, func(k *model.Paper) bool { return !k.IsTrashed() }), nil
+}
+
 // AmbiguousError reports a path that names more than one paper.
 type AmbiguousError struct {
 	Path       string      `json:"path"`
@@ -170,15 +196,11 @@ func (u *UseCases) ResolvePaper(ctx context.Context, p *model.Principal, ws mode
 	return cur, nil
 }
 
-// parentFor resolves the parent of a move or of making a paper public. An
-// empty ref means the home.
+// parentFor resolves the parent of creating, moving or making a paper
+// public. The parent must be the home or a filed paper, not in the trash.
 func (u *UseCases) parentFor(ctx context.Context, p *model.Principal, ws model.WorkspaceID, ref string) (*model.Paper, error) {
 	if strings.TrimSpace(ref) == "" {
-		home, err := u.homeID(ctx, ws)
-		if err != nil {
-			return nil, err
-		}
-		ref = string(home)
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "a parent is required")
 	}
 	parent, err := u.ResolvePaper(ctx, p, ws, ref)
 	if err != nil {
@@ -187,6 +209,13 @@ func (u *UseCases) parentFor(ctx context.Context, p *model.Principal, ws model.W
 	if parent.IsPrivate() || parent.IsTrashed() {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "the new parent must be a public paper that is not in the trash")
 	}
+	ok, err := u.canHaveChildren(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "an unfiled paper has no child papers; move it under a parent first", goerr.V("paper_id", parent.ID))
+	}
 	if parent.IsBusy() {
 		return nil, busy(parent)
 	}
@@ -194,18 +223,21 @@ func (u *UseCases) parentFor(ctx context.Context, p *model.Principal, ws model.W
 }
 
 // MoveInput moves a paper under a new parent, possibly in another
-// workspace.
+// workspace, or with Unfiled out of the tree (only without Parent and
+// Workspace, and only for a paper without children).
 type MoveInput struct {
 	Parent    string
 	After     *string
 	Workspace model.WorkspaceID
+	Unfiled   bool
 }
 
 // MovePaper moves a public paper under another parent. Within a workspace it
-// writes three documents (the old parent's body, the new parent's body and
-// the paper); everything under the paper follows. Across workspaces it
-// copies the paper and everything under it with new IDs, sends the
-// originals to the trash and leaves forwards behind.
+// writes at most three documents (the old parent's body, none for an
+// unfiled paper; the new parent's body; and the paper); everything under the
+// paper follows. Across workspaces it copies the paper and everything under
+// it with new IDs, sends the originals to the trash and leaves forwards
+// behind. With Unfiled it takes the paper out of the tree.
 func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID, in MoveInput) (*BatchResult, error) {
 	_, paper, err := u.writablePaper(ctx, p, ws, id)
 	if err != nil {
@@ -216,6 +248,12 @@ func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.W
 	}
 	if err := u.checkNotHome(ctx, paper, "moved"); err != nil {
 		return nil, err
+	}
+	if in.Unfiled {
+		if strings.TrimSpace(in.Parent) != "" || in.Workspace != "" {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "unfiled takes neither a parent nor a workspace")
+		}
+		return u.moveToUnfiled(ctx, p, paper)
 	}
 	if in.Workspace != "" && in.Workspace != ws {
 		return u.moveAcross(ctx, p, paper, in)
@@ -239,6 +277,11 @@ func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.W
 			if q.IsBusy() {
 				return busy(q)
 			}
+		}
+		if ok, err := u.canHaveChildren(ctx, np); err != nil {
+			return err
+		} else if !ok || np.IsTrashed() {
+			return goerr.Wrap(model.ErrInvalidArgument, "the new parent must be the home or a filed paper that is not in the trash")
 		}
 		// cycle check: the new parent must not be the paper or under it
 		at := np
@@ -303,8 +346,54 @@ func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.W
 	return result, nil
 }
 
+// moveToUnfiled takes a filed paper without children out of the tree: its
+// paper block leaves the parent's body and its ParentID is cleared, in one
+// transaction.
+func (u *UseCases) moveToUnfiled(ctx context.Context, p *model.Principal, paper *model.Paper) (*BatchResult, error) {
+	ws := paper.WorkspaceID
+	kids, err := u.hasLiveChildren(ctx, ws, paper.ID)
+	if err != nil {
+		return nil, err
+	}
+	if kids {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "only a paper without child papers can be unfiled", goerr.V("paper_id", paper.ID))
+	}
+	var result *BatchResult
+	err = u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+		w := u.newTreeWriter(ctx, tx, p, u.now())
+		cur, err := tx.GetPaper(paper.ID)
+		if err != nil {
+			return goerr.Wrap(err, "failed to get paper")
+		}
+		w.result.Paper = cur
+		result = w.result
+		if cur.IsBusy() {
+			return busy(cur)
+		}
+		if cur.IsPrivate() {
+			return goerr.Wrap(model.ErrInvalidArgument, "a private paper is not in the tree")
+		}
+		if cur.ParentID == "" {
+			return nil // already unfiled
+		}
+		if err := w.removeBlockOf(ws, cur.ParentID, cur.ID); err != nil {
+			return err
+		}
+		cur.ParentID = ""
+		cur.UpdatedBy, cur.UpdatedAt = w.actor, w.now
+		if err := w.putPaper(cur); err != nil {
+			return err
+		}
+		return w.flush()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // VisibilityInput changes who can use a paper. Making it public places it
-// under Parent (default: the home).
+// under Parent, or leaves it unfiled when Parent is empty.
 type VisibilityInput struct {
 	Visibility model.Visibility
 	Parent     string
@@ -329,17 +418,17 @@ func (u *UseCases) SetVisibility(ctx context.Context, p *model.Principal, ws mod
 		return nil, err
 	}
 	var parent *model.Paper
-	if in.Visibility == model.VisibilityPublic && paper.IsPrivate() {
+	if in.Visibility == model.VisibilityPublic && paper.IsPrivate() && strings.TrimSpace(in.Parent) != "" {
 		if parent, err = u.parentFor(ctx, p, ws, in.Parent); err != nil {
 			return nil, err
 		}
 	}
 	if in.Visibility == model.VisibilityPrivate && !paper.IsPrivate() {
-		kids, err := u.repo.ListChildren(ctx, ws, id)
+		kids, err := u.hasLiveChildren(ctx, ws, id)
 		if err != nil {
-			return nil, goerr.Wrap(err, "failed to list children")
+			return nil, err
 		}
-		if slices.ContainsFunc(kids, func(k *model.Paper) bool { return !k.IsTrashed() }) {
+		if kids {
 			return nil, goerr.Wrap(model.ErrInvalidArgument, "only a paper without child papers can become private")
 		}
 	}
@@ -365,9 +454,15 @@ func (u *UseCases) SetVisibility(ctx context.Context, p *model.Principal, ws mod
 			}
 			cur.ParentID = ""
 		case model.VisibilityPublic:
+			if parent == nil {
+				break // unfiled
+			}
 			np, err := tx.GetPaper(parent.ID)
 			if err != nil {
 				return goerr.Wrap(err, "failed to get parent")
+			}
+			if np.IsBusy() {
+				return busy(np)
 			}
 			if _, err := w.addBlockOf(np, cur.ID, in.After); err != nil {
 				return err
@@ -476,8 +571,8 @@ func (u *UseCases) Trash(ctx context.Context, p *model.Principal, ws model.Works
 
 // RestoreFromTrash brings a paper back with everything that was trashed
 // together with it. It goes back under its parent, or under the nearest
-// ancestor that is not in the trash (the home if none). It runs as a
-// background job.
+// ancestor that is not in the trash (the home if none); a paper that was
+// unfiled stays unfiled. It runs as a background job.
 func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID) (*BatchResult, error) {
 	_, paper, err := u.paperFor(ctx, p, ws, id)
 	if err != nil {
@@ -495,10 +590,11 @@ func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws 
 }
 
 // placeRestored puts a restored paper back in the tree: under its parent,
-// or the nearest ancestor that is public and not in the trash (the home if
-// none).
+// or the nearest ancestor that can have children and is not in the trash
+// (the home if none). A private or unfiled paper has no place in the tree
+// and stays as it is.
 func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.PaperID) error {
-	if r.IsPrivate() {
+	if r.IsPrivate() || r.ParentID == "" {
 		return nil
 	}
 	target := r.ParentID
@@ -508,7 +604,9 @@ func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.Paper
 			target = ""
 			break
 		}
-		if !anc.IsTrashed() && !anc.IsPrivate() && !anc.IsBusy() {
+		// an unfiled ancestor (public, no parent, not the home) cannot
+		// take children; going on from it reaches "" and so the home
+		if !anc.IsTrashed() && !anc.IsPrivate() && !anc.IsBusy() && (anc.ParentID != "" || anc.ID == home) {
 			break
 		}
 		target = anc.ParentID
