@@ -440,15 +440,21 @@ func bestMatch(spec IndexSpec, existing []*adminpb.Index) *adminpb.Index {
 //   - only ANY_API indexes serve Native queries (not Datastore or MongoDB);
 //   - sparse indexes leave out documents and serve fewer queries, so ordered
 //     indexes must be DENSE (UNSPECIFIED is the Enterprise default, DENSE);
-//   - unique, multikey and MongoDB search options change what the index
-//     does; shard count only its speed;
+//   - unique, multikey and search index options change what the index
+//     does; shard count only its speed. The server fills in the default
+//     search index options (textLanguage "und", textLanguageOverrideFieldPath
+//     "language") on a search index created without them, so on a search
+//     index those defaults count as no options;
 //   - only collection scoped indexes serve papers' collection queries;
 //   - search fields compare their text index specs as a set.
 func matchesSpec(spec IndexSpec, got *adminpb.Index) bool {
 	if got.GetQueryScope() != adminpb.Index_COLLECTION || got.GetApiScope() != adminpb.Index_ANY_API {
 		return false
 	}
-	if got.GetUnique() || got.GetMultikey() || got.GetSearchIndexOptions() != nil {
+	if got.GetUnique() || got.GetMultikey() {
+		return false
+	}
+	if opts := got.GetSearchIndexOptions(); opts != nil && (!spec.isSearch() || !defaultSearchOptions(opts)) {
 		return false
 	}
 	if !spec.isSearch() {
@@ -458,6 +464,38 @@ func matchesSpec(spec IndexSpec, got *adminpb.Index) bool {
 	}
 	want := spec.proto().GetFields()
 	return sameFields(want, got.GetFields()) || sameFields(withImplicitName(want), got.GetFields())
+}
+
+// Default search index options: what the server reports for a search index
+// created without options (the empty values mean the same).
+const (
+	defaultTextLanguage         = "und"
+	defaultTextLanguageOverride = "language"
+)
+
+// defaultSearchOptions reports whether opts are the options the server fills
+// in on a search index created without any.
+func defaultSearchOptions(opts *adminpb.Index_SearchIndexOptions) bool {
+	return defaultTextLanguageValue(opts.GetTextLanguage()) &&
+		defaultTextLanguageOverrideValue(opts.GetTextLanguageOverrideFieldPath())
+}
+
+func defaultTextLanguageValue(v string) bool {
+	return v == "" || v == defaultTextLanguage
+}
+
+func defaultTextLanguageOverrideValue(v string) bool {
+	return v == "" || v == defaultTextLanguageOverride
+}
+
+// hasSearchField reports whether idx is a full-text search index.
+func hasSearchField(idx *adminpb.Index) bool {
+	for _, f := range idx.GetFields() {
+		if _, ok := f.GetValueMode().(*adminpb.Index_IndexField_SearchConfig_); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // withImplicitName is fields followed by the __name__ field the server
@@ -551,6 +589,15 @@ func describeIndex(group string, idx *adminpb.Index) string {
 	}
 	if idx.GetMultikey() {
 		attrs = append(attrs, "multikey")
+	}
+	// On a search index only values other than the defaults are shown; on
+	// any other index every value is.
+	search := hasSearchField(idx)
+	if v := idx.GetSearchIndexOptions().GetTextLanguage(); v != "" && (!search || !defaultTextLanguageValue(v)) {
+		attrs = append(attrs, "textLanguage="+v)
+	}
+	if v := idx.GetSearchIndexOptions().GetTextLanguageOverrideFieldPath(); v != "" && (!search || !defaultTextLanguageOverrideValue(v)) {
+		attrs = append(attrs, "textLanguageOverrideFieldPath="+v)
 	}
 	if st := idx.GetState(); st != adminpb.Index_READY {
 		attrs = append(attrs, "state="+st.String())
