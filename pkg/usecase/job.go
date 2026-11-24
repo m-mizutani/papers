@@ -39,12 +39,12 @@ const (
 )
 
 // newJob makes a queued job leased to this instance.
-func (u *UseCases) newJob(p *model.Principal, ws model.WorkspaceID, kind model.JobKind, paper model.PaperID, now time.Time) *model.Job {
+func (u *UseCases) newJob(actor model.Actor, ws model.WorkspaceID, kind model.JobKind, paper model.PaperID, now time.Time) *model.Job {
 	return &model.Job{
 		ID: model.NewJobID(), WorkspaceID: ws, Kind: kind, PaperID: paper,
 		State: model.JobQueued, Phase: model.PhaseCollect,
 		Runner: u.runner, LeaseUntil: now.Add(u.cfg.JobLease),
-		CreatedBy: p.Actor(), CreatedAt: now, UpdatedAt: now, ExpireAt: now.Add(model.JobMaxAge),
+		CreatedBy: actor, CreatedAt: now, UpdatedAt: now, ExpireAt: now.Add(model.JobMaxAge),
 	}
 }
 

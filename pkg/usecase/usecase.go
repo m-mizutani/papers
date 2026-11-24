@@ -116,13 +116,17 @@ func New(repo interfaces.Repository, workspaces interfaces.Workspaces, store int
 	return u, nil
 }
 
+// systemActor is papers itself: it creates the home papers and, in demo
+// mode, the sample papers.
+var systemActor = model.Actor{Kind: model.ActorSystem, Name: "papers"}
+
 // Init prepares the stored data for the configured workspaces: it creates
 // the home paper of every workspace that has none yet, and warns about
 // stored workspaces that are no longer configured (their data is kept but
 // cannot be reached, D13).
 func (u *UseCases) Init(ctx context.Context) error {
 	now := u.now()
-	system := model.Actor{Kind: model.ActorSystem, Name: "papers"}
+	system := systemActor
 	for _, ws := range u.workspaces.List() {
 		home := &model.Paper{
 			Kind: model.PaperKindBlocks,

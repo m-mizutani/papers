@@ -1,0 +1,42 @@
+# What a paper is
+
+A paper is an ordered list of **blocks**. Each block is one paragraph, heading, list item, table or diagram, and people and AI agents rewrite the same paper block by block. Text can be *emphasised*, **bold**, ~~struck out~~, `code`, [red]{.red} or [highlighted]{.bg-yellow}, and can [link to the MCP endpoint](/mcp).
+
+> [!NOTE]
+> Everything here is sample content. Change anything; nothing else depends on it.
+
+## How writing works
+
+- Every write changes the current state at once; there is no draft.
+- Each block has a revision. A write based on an older revision of a block someone else changed is a conflict, shown with both versions.
+  - Resolve it by keeping one side, or merge the two by hand.
+- There are no locks: anyone may edit any block at any time.
+
+## Try it
+
+1. Click a paragraph and type.
+2. Press `/` at the start of an empty block to pick a block type.
+3. Press Save version to keep this state as v1, then open the history to compare.
+
+- [x] Open the sample papers
+- [ ] Create a paper of your own
+- [ ] Ask an AI agent to summarise this one
+
+> A paper is never finished; it is the current state of what the team knows.
+
+---
+
+## Blocks at a glance
+
+| Block | Who writes it | Example |
+| --- | --- | --- |
+| Paragraph, list, table | People and AI | This paper |
+| Mermaid, SVG, HTML | AI only | Diagrams and rich blocks |
+| HTML paper | AI only | Release dashboard |
+
+```bash
+# Run papers locally with these samples
+papers serve --no-authn --demo --config examples/config
+```
+
+![A paper is a list of blocks; a paper block nests a child paper](images/overview.png)

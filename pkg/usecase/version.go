@@ -612,7 +612,7 @@ func (a *applier) childBack(w *treeWriter, child model.PaperID) (bool, error) {
 	}
 	// The child comes back here; what was trashed with it comes back in a
 	// restore job.
-	j := a.u.newJob(a.p, a.paper.WorkspaceID, model.JobRestore, q.ID, a.now)
+	j := a.u.newJob(a.actor, a.paper.WorkspaceID, model.JobRestore, q.ID, a.now)
 	j.RootDone, j.With = true, q.DeletedWith
 	q.DeletedAt, q.DeletedWith = nil, ""
 	if err := w.putPaper(q); err != nil {

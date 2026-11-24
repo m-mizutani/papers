@@ -158,7 +158,7 @@ external_resources = false           # default true
 - **Everything an administrator would decide is written in configuration files**. They ship with deployments, so who can change them is decided by who can deploy. The UI and the API have no way to change global settings.
 - Everything is validated at startup, and any invalid file stops the server from starting. Changes take effect on restart.
 - Display groups of workspaces (how the sidebar groups them) are written in the global configuration file (`--global-config`). Groups only organize the display and have no effect on access.
-- **Home**: at startup each configured workspace gets a home paper if it has none (exactly one however often the server starts). Which paper is the home is recorded as `HomePaperID` in the stored `workspaces/{id}` record. Its first title is name. `/ws/{id}` opens the home ([Tree](#tree-nested-papers)).
+- **Home**: at startup each configured workspace gets a home paper if it has none (exactly one however often the server starts). Which paper is the home is recorded as `HomePaperID` in the stored `workspaces/{id}` record. Its first title is name. `/ws/{id}` opens the home ([Tree](#tree-nested-papers)). In demo mode (`--demo`) a workspace whose home is still empty and that has no other paper also gets sample papers, written once by the system like the home.
 - The description is "the rules for AI" (changed by deploying); the home paper's body is "the workspace's summary and entrance, read by people and AI" (anyone can write it).
 - Removing a workspace from the configuration does not delete its data, home included ([D13](#d13-data-of-a-workspace-removed-from-the-configuration-stays-but-is-hidden-decided-a)).
 

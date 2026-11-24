@@ -11,6 +11,9 @@ export function msg(key: MsgKey, params: Record<string, string | number> = {}): 
 /** The second e2e server, started with --anonymous (playwright.config.ts). */
 export const ANONYMOUS_URL = `http://127.0.0.1:${Number(process.env.E2E_PORT ?? 18090) + 1}`
 
+/** The third e2e server, started with --demo (playwright.config.ts). */
+export const DEMO_URL = `http://127.0.0.1:${Number(process.env.E2E_PORT ?? 18090) + 2}`
+
 /** The example workspaces the e2e server is started with. */
 export const WS = 'product'
 export const OTHER_WS = 'security'

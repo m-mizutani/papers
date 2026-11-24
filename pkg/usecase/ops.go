@@ -760,7 +760,7 @@ func (a *applier) dropChild(b *model.Block) (bool, error) {
 	if child.IsBusy() {
 		return false, busy(child)
 	}
-	j := a.u.newJob(a.p, a.paper.WorkspaceID, model.JobDrop, child.ID, a.now)
+	j := a.u.newJob(a.actor, a.paper.WorkspaceID, model.JobDrop, child.ID, a.now)
 	j.BlockID = b.ID
 	if err := a.tx.PutJob(j); err != nil {
 		return false, goerr.Wrap(err, "failed to store job")
@@ -1066,7 +1066,7 @@ func (a *applier) noteEditing(id model.BlockID) error {
 		}
 	}
 	for uid, pr := range latest {
-		if pr.BlockID == id && !pr.Leaving && pr.Until.After(a.now) && uid != a.p.User.ID {
+		if pr.BlockID == id && !pr.Leaving && pr.Until.After(a.now) && uid != a.actor.UserID {
 			a.result.Editing = append(a.result.Editing, Editing{BlockID: id, Actor: pr.Actor})
 		}
 	}
@@ -1191,7 +1191,17 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 	if err != nil {
 		return nil, err
 	}
-	html, children, err := u.stageBatchHTML(ctx, p, target, in.Ops)
+	return u.applyBatch(ctx, p, p.Actor(), target, in, nil)
+}
+
+// applyBatch runs the ops of a batch on target, a paper the caller may
+// write, as actor. p is the principal behind the request, nil when papers
+// itself writes (demo samples); only paper-level ops need it, and those never
+// come here. check, when set, runs first inside the transaction and may stop
+// it before anything is written.
+func (u *UseCases) applyBatch(ctx context.Context, p *model.Principal, actor model.Actor, target *model.Paper, in BatchInput, check func(a *applier) error) (*BatchResult, error) {
+	wsID, paperID := target.WorkspaceID, target.ID
+	html, children, err := u.stageBatchHTML(ctx, actor, target, in.Ops)
 	if err != nil {
 		return nil, err
 	}
@@ -1208,11 +1218,16 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 			return busy(paper)
 		}
 		a := &applier{
-			u: u, ctx: ctx, tx: tx, p: p, paper: paper, actor: p.Actor(), now: now, force: in.Force,
+			u: u, ctx: ctx, tx: tx, p: p, paper: paper, actor: actor, now: now, force: in.Force,
 			orig: map[model.BlockID]*model.Block{}, created: map[model.BlockID]bool{},
 			touched: map[model.BlockID]*model.Block{}, refs: map[string]string{},
 			others: map[model.PaperID]*model.Paper{}, bytes: map[model.BlockID]int{},
 			result: &BatchResult{}, html: html, children: children,
+		}
+		if check != nil {
+			if err := check(a); err != nil {
+				return err
+			}
 		}
 		for i, op := range in.Ops {
 			a.idx = i
@@ -1241,7 +1256,7 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 // stageBatchHTML checks the HTML a batch carries and stores it before the
 // transaction: the document of set_html (at most one, for an HTML paper),
 // and those of the HTML papers its inserts create, under IDs issued now.
-func (u *UseCases) stageBatchHTML(ctx context.Context, p *model.Principal, paper *model.Paper, ops []Op) (*stagedHTML, map[int]*stagedChild, error) {
+func (u *UseCases) stageBatchHTML(ctx context.Context, actor model.Actor, paper *model.Paper, ops []Op) (*stagedHTML, map[int]*stagedChild, error) {
 	var html *stagedHTML
 	children := map[int]*stagedChild{}
 	sets := 0
@@ -1301,14 +1316,14 @@ func (u *UseCases) stageBatchHTML(ctx context.Context, p *model.Principal, paper
 	for i, op := range ops {
 		switch {
 		case op.Kind == OpSetHTML:
-			s, err := u.stageHTML(ctx, p, paper.WorkspaceID, paper.ID, *op.HTML)
+			s, err := u.stageHTML(ctx, actor, paper.WorkspaceID, paper.ID, *op.HTML)
 			if err != nil {
 				return nil, nil, err
 			}
 			html = s
 		case op.Kind == OpInsert && op.HTML != nil:
 			id := model.NewPaperID()
-			s, err := u.stageHTML(ctx, p, paper.WorkspaceID, id, *op.HTML)
+			s, err := u.stageHTML(ctx, actor, paper.WorkspaceID, id, *op.HTML)
 			if err != nil {
 				return nil, nil, err
 			}

@@ -521,7 +521,7 @@ func (u *UseCases) setArchived(ctx context.Context, p *model.Principal, ws model
 		if !archived {
 			kind = model.JobUnarchive
 		}
-		return u.treeJob(ctx, u.newJob(p, ws, kind, id, u.now()))
+		return u.treeJob(ctx, u.newJob(p.Actor(), ws, kind, id, u.now()))
 	}
 	var result *BatchResult
 	err = u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
@@ -582,7 +582,7 @@ func (u *UseCases) Trash(ctx context.Context, p *model.Principal, ws model.Works
 	if !p.Owns(paper) {
 		return nil, goerr.Wrap(model.ErrPermissionDenied, "only the creator can delete the paper; archive it instead")
 	}
-	return u.treeJob(ctx, u.newJob(p, ws, model.JobTrash, id, u.now()))
+	return u.treeJob(ctx, u.newJob(p.Actor(), ws, model.JobTrash, id, u.now()))
 }
 
 // RestoreFromTrash brings a paper back with everything that was trashed
@@ -600,7 +600,7 @@ func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws 
 	if !paper.IsTrashed() || !p.Owns(paper) {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "the paper is not in your trash")
 	}
-	j := u.newJob(p, ws, model.JobRestore, id, u.now())
+	j := u.newJob(p.Actor(), ws, model.JobRestore, id, u.now())
 	j.With = paper.DeletedWith
 	return u.treeJob(ctx, j)
 }
