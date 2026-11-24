@@ -89,7 +89,9 @@ func (w *treeWriter) addBlockOf(parent *model.Paper, child model.PaperID, after 
 
 func (w *treeWriter) flush() error {
 	for _, q := range w.papers {
-		w.event(&model.Event{Type: model.EventPaperUpdated, WorkspaceID: q.WorkspaceID, PaperID: q.ID, Paper: q.Clone()})
+		for _, ev := range paperUpdatedEvents(q) {
+			w.event(ev)
+		}
 	}
 	for _, ev := range w.events {
 		if err := w.tx.AddEvent(ev); err != nil {
@@ -111,14 +113,15 @@ func (u *UseCases) checkNotHome(ctx context.Context, paper *model.Paper, what st
 	return nil
 }
 
-// canHaveChildren reports whether paper may be a parent: the home or a
-// filed paper (public with a parent). Unfiled, private and HTML papers
-// have no children.
+// canHaveChildren reports whether paper may be a parent: the home, a
+// filed paper (public with a parent) or an item. Unfiled, private and HTML
+// papers and databases have no children.
 func (u *UseCases) canHaveChildren(ctx context.Context, paper *model.Paper) (bool, error) {
-	if paper.IsPrivate() || paper.IsHTML() {
+	if paper.IsPrivate() || paper.IsHTML() || paper.IsDatabase() {
+		// a database has no body; it holds items, not child papers
 		return false, nil
 	}
-	if paper.ParentID != "" {
+	if paper.ParentID != "" || paper.IsItem() {
 		return true, nil
 	}
 	home, err := u.homeID(ctx, paper.WorkspaceID)
@@ -129,6 +132,7 @@ func (u *UseCases) canHaveChildren(ctx context.Context, paper *model.Paper) (boo
 }
 
 // hasLiveChildren reports whether a paper has children outside the trash.
+// A database's items are not its children (they have no ParentID).
 func (u *UseCases) hasLiveChildren(ctx context.Context, ws model.WorkspaceID, id model.PaperID) (bool, error) {
 	kids, err := u.repo.ListChildren(ctx, ws, id)
 	if err != nil {
@@ -246,6 +250,9 @@ func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.W
 	if paper.IsPrivate() {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "a private paper is not in the tree; make it public to place it")
 	}
+	if paper.IsItem() {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "an item stays in its database; reorder it with move_item on the database")
+	}
 	if err := u.checkNotHome(ctx, paper, "moved"); err != nil {
 		return nil, err
 	}
@@ -289,13 +296,13 @@ func (u *UseCases) MovePaper(ctx context.Context, p *model.Principal, ws model.W
 			if at.ID == cur.ID {
 				return goerr.Wrap(model.ErrInvalidArgument, "cannot move a paper under itself")
 			}
-			if at.ParentID == "" {
+			if at.Above() == "" {
 				break
 			}
 			if depth >= model.MaxTreeDepth {
 				return goerr.Wrap(model.ErrInvalidArgument, "the tree is deeper than the safety limit")
 			}
-			if at, err = tx.GetPaper(at.ParentID); err != nil {
+			if at, err = tx.GetPaper(at.Above()); err != nil {
 				return goerr.Wrap(err, "failed to walk ancestors")
 			}
 		}
@@ -429,6 +436,9 @@ func (u *UseCases) SetVisibility(ctx context.Context, p *model.Principal, ws mod
 	}
 	if !p.Owns(paper) {
 		return nil, goerr.Wrap(model.ErrPermissionDenied, "only the creator can change who can use the paper")
+	}
+	if (paper.IsDatabase() || paper.IsItem()) && in.Visibility == model.VisibilityPrivate {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "databases and their items are always public")
 	}
 	if err := u.checkNotHome(ctx, paper, "made private"); err != nil {
 		return nil, err
@@ -600,6 +610,15 @@ func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws 
 	if !paper.IsTrashed() || !p.Owns(paper) {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "the paper is not in your trash")
 	}
+	if paper.IsItem() {
+		db, err := u.repo.GetPaper(ctx, ws, paper.DatabaseID)
+		if err != nil && !errors.Is(err, model.ErrNotFound) {
+			return nil, goerr.Wrap(err, "failed to get the item's database", goerr.V("database_id", paper.DatabaseID))
+		}
+		if err != nil || db.IsTrashed() {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "the item's database is in the trash; restore the database instead", goerr.V("database_id", paper.DatabaseID))
+		}
+	}
 	j := u.newJob(p.Actor(), ws, model.JobRestore, id, u.now())
 	j.With = paper.DeletedWith
 	return u.treeJob(ctx, j)
@@ -610,6 +629,9 @@ func (u *UseCases) RestoreFromTrash(ctx context.Context, p *model.Principal, ws 
 // (the home if none). A private or unfiled paper has no place in the tree
 // and stays as it is.
 func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.PaperID) error {
+	if r.IsItem() {
+		return u.restoreItemPlace(w, r)
+	}
 	if r.IsPrivate() || r.ParentID == "" {
 		return nil
 	}
@@ -622,10 +644,10 @@ func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.Paper
 		}
 		// an unfiled ancestor (public, no parent, not the home) cannot
 		// take children; going on from it reaches "" and so the home
-		if !anc.IsTrashed() && !anc.IsPrivate() && !anc.IsBusy() && (anc.ParentID != "" || anc.ID == home) {
+		if !anc.IsTrashed() && !anc.IsPrivate() && !anc.IsBusy() && !anc.IsDatabase() && (anc.ParentID != "" || anc.IsItem() || anc.ID == home) {
 			break
 		}
-		target = anc.ParentID
+		target = anc.Above()
 	}
 	if target == "" {
 		target = home
@@ -648,6 +670,23 @@ func (u *UseCases) placeRestored(w *treeWriter, r *model.Paper, home model.Paper
 	}
 	r.ParentID = target
 	return w.putPaper(r)
+}
+
+// restoreItemPlace keeps a restored item in its database: it goes back to
+// its place in Items, or at the end if a purge removed it from there.
+func (u *UseCases) restoreItemPlace(w *treeWriter, r *model.Paper) error {
+	db, err := w.tx.GetPaper(r.DatabaseID)
+	if err != nil {
+		return goerr.Wrap(err, "failed to get the item's database", goerr.V("database_id", r.DatabaseID))
+	}
+	if slices.Contains(db.Items, r.ID) {
+		return nil
+	}
+	if len(db.Items) >= model.MaxDatabaseItems {
+		return goerr.Wrap(model.ErrInvalidArgument, "the database has too many items", goerr.V("max", model.MaxDatabaseItems))
+	}
+	db.Items = append(db.Items, r.ID)
+	return w.putPaper(db)
 }
 
 // TrashItem is a paper the caller sent to the trash: when, when it is
@@ -702,6 +741,11 @@ func (u *UseCases) PurgeTrash(ctx context.Context) (int, error) {
 			if err := u.store.DeletePrefix(ctx, prefix); err != nil {
 				return n, goerr.Wrap(err, "failed to delete attachments", goerr.V("paper_id", q.ID))
 			}
+			if q.IsItem() {
+				if err := u.forgetItem(ctx, q); err != nil {
+					return n, err
+				}
+			}
 			if err := u.repo.PurgePaper(ctx, ws.ID, q.ID); err != nil && !errors.Is(err, model.ErrNotFound) {
 				return n, goerr.Wrap(err, "failed to purge paper", goerr.V("paper_id", q.ID))
 			}
@@ -709,4 +753,40 @@ func (u *UseCases) PurgeTrash(ctx context.Context) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// forgetItem takes an item that is about to be purged out of its
+// database's Items, before the purge: an item left out of Items while it
+// still exists is invisible (it is in the trash) and goes back at the end
+// if restored, while an ID left in Items after a purge would be dangling.
+func (u *UseCases) forgetItem(ctx context.Context, q *model.Paper) error {
+	now := u.now()
+	err := u.repo.RunTx(ctx, q.WorkspaceID, func(tx interfaces.Tx) error {
+		db, err := tx.GetPaper(q.DatabaseID)
+		if errors.Is(err, model.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return goerr.Wrap(err, "failed to get database", goerr.V("database_id", q.DatabaseID))
+		}
+		if !slices.Contains(db.Items, q.ID) {
+			return nil
+		}
+		db.Items = slices.DeleteFunc(db.Items, func(id model.PaperID) bool { return id == q.ID })
+		if err := tx.PutPaper(db); err != nil {
+			return goerr.Wrap(err, "failed to update database")
+		}
+		evs := append(paperUpdatedEvents(db), &model.Event{Type: model.EventItemDeleted, WorkspaceID: db.WorkspaceID, PaperID: db.ID, ItemID: q.ID})
+		for _, ev := range evs {
+			ev.At = now
+			if err := tx.AddEvent(ev); err != nil {
+				return goerr.Wrap(err, "failed to add event")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return goerr.Wrap(err, "failed to take the item out of its database", goerr.V("paper_id", q.ID))
+	}
+	return nil
 }

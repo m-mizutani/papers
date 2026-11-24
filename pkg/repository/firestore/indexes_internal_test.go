@@ -29,6 +29,7 @@ func TestIndexProtoDensity(t *testing.T) {
 		}
 		gt.Equal(t, spec.proto().GetDensity(), want)
 		gt.Equal(t, spec.proto().GetApiScope(), adminpb.Index_ANY_API)
-		gt.Equal(t, spec.proto().GetQueryScope(), adminpb.Index_COLLECTION)
+		gt.Equal(t, spec.proto().GetQueryScope(), spec.scope())
+		gt.Equal(t, spec.Group, spec.CollectionGroup == colProperties)
 	}
 }

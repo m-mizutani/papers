@@ -81,7 +81,7 @@ type Op struct {
 	// paper block creates with PaperKind html (required there).
 	HTML *string `json:"html,omitempty"`
 	// PaperKind is the kind of the child paper an insert of a paper block
-	// creates (blocks when absent).
+	// creates (blocks when absent; html or database).
 	PaperKind *model.PaperKind `json:"paper_kind,omitempty"`
 
 	// Cells fills a new table, row by row. Without cells, Rows and Cols
@@ -108,6 +108,20 @@ type Op struct {
 	Version    int              `json:"version,omitempty"`
 	// Subtree applies archive / unarchive to every paper under this one.
 	Subtree bool `json:"subtree,omitempty"`
+
+	// Database ops (see database.go). Property, Element and Item name what
+	// the op acts on, by ID or "ref:<name>".
+	Property     string             `json:"property,omitempty"`
+	Element      string             `json:"element,omitempty"`
+	Item         string             `json:"item,omitempty"`
+	Name         *string            `json:"name,omitempty"`
+	PropertyType model.PropertyType `json:"property_type,omitempty"`
+	// Value is an element's value (the text people see).
+	Value *string `json:"value,omitempty"`
+	Color *string `json:"color,omitempty"`
+	// Set maps property IDs (or refs) to property values: a string, a list
+	// of element IDs, or null to clear.
+	Set map[string]any `json:"set,omitempty"`
 }
 
 type BatchInput struct {
@@ -167,6 +181,10 @@ type BatchResult struct {
 	// Version is the version a save_version created.
 	Version     *model.Version `json:"version,omitempty"`
 	NotRestored []NotRestored  `json:"not_restored,omitempty"`
+	// Items are the items a database batch created, and Values the
+	// property values it wrote.
+	Items  []*model.Paper         `json:"items,omitempty"`
+	Values []*model.PropertyValue `json:"values,omitempty"`
 }
 
 type applier struct {
@@ -469,8 +487,12 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 		if err := model.ValidateTitle(title); err != nil {
 			return "", err
 		}
+		kind := model.PaperKindBlocks
+		if op.PaperKind != nil && *op.PaperKind == model.PaperKindDatabase {
+			kind = model.PaperKindDatabase
+		}
 		child = &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Kind: model.PaperKindBlocks, Title: title, ParentID: a.paper.ID,
+			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Kind: kind, Title: title, ParentID: a.paper.ID,
 			Visibility: model.VisibilityPublic,
 			CreatedBy:  a.actor, CreatedAt: a.now, UpdatedBy: a.actor, UpdatedAt: a.now,
 		}
@@ -1151,14 +1173,18 @@ func (a *applier) finish() error {
 			}
 		}
 	}
+	var papers []*model.Paper
 	if a.paperChanged {
-		if err := ev(&model.Event{Type: model.EventPaperUpdated, Paper: a.paper.Clone()}); err != nil {
-			return err
-		}
+		papers = append(papers, a.paper)
 	}
 	for _, q := range a.others {
-		if err := ev(&model.Event{Type: model.EventPaperUpdated, PaperID: q.ID, Paper: q.Clone()}); err != nil {
-			return err
+		papers = append(papers, q)
+	}
+	for _, q := range papers {
+		for _, e := range paperUpdatedEvents(q) {
+			if err := ev(e); err != nil {
+				return err
+			}
 		}
 	}
 	a.result.Paper = a.paper
@@ -1216,6 +1242,19 @@ func (u *UseCases) applyBatch(ctx context.Context, p *model.Principal, actor mod
 		}
 		if paper.IsBusy() {
 			return busy(paper)
+		}
+		if paper.IsDatabase() {
+			res, err := u.applyDatabase(ctx, tx, p, paper, in.Ops, now)
+			if err != nil {
+				return err
+			}
+			result = res
+			return nil
+		}
+		for _, op := range in.Ops {
+			if op.Kind.databaseOp() {
+				return goerr.Wrap(model.ErrInvalidArgument, "this operation is only for a database", goerr.V("op", op.Kind), goerr.V("paper_id", paper.ID))
+			}
 		}
 		a := &applier{
 			u: u, ctx: ctx, tx: tx, p: p, paper: paper, actor: actor, now: now, force: in.Force,

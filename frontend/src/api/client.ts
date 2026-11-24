@@ -1,5 +1,5 @@
 import type {
-  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, Forward, Me, Op, Paper, PaperListItem, PaperListQuery, PaperRef,
+  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, FilterCondition, Forward, ItemsPage, Me, Op, Paper, PaperListItem, PaperListQuery, PaperRef,
   PaperStatusInfo, PaperView, SearchHit, Sidebar, TrashItem, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
 } from './types'
 
@@ -73,8 +73,8 @@ export const api = {
     request<{ hits: SearchHit[] }>('GET', `${wsPath(ws)}/search?q=${enc(q)}${under ? `&under=${enc(under)}` : ''}`).then((r) => r.hits),
   trash: (ws: string) => request<{ papers: TrashItem[] }>('GET', `${wsPath(ws)}/trash`).then((r) => r.papers),
   /** Without a parent a public paper is created unfiled. */
-  createPaper: (ws: string, input: { title: string; visibility?: Visibility; parent?: string; after?: string }) =>
-    request<Paper>('POST', `${wsPath(ws)}/papers`, { title: input.title, visibility: input.visibility ?? 'public', parent: input.parent ?? '', after: input.after ?? null, markdown: '' }),
+  createPaper: (ws: string, input: { title: string; visibility?: Visibility; parent?: string; after?: string; kind?: 'blocks' | 'database' }) =>
+    request<Paper>('POST', `${wsPath(ws)}/papers`, { title: input.title, visibility: input.visibility ?? 'public', parent: input.parent ?? '', after: input.after ?? null, markdown: '', kind: input.kind ?? 'blocks' }),
   listPapers: (ws: string, q: PaperListQuery = {}) => {
     const params = new URLSearchParams()
     Object.entries(q).forEach(([k, v]) => {
@@ -86,6 +86,15 @@ export const api = {
   getPaper: (ws: string, paper: string) => request<PaperView>('GET', paperPath(ws, paper)),
   blocks: (ws: string, paper: string, after = '', limit = 200) =>
     request<BlocksPage>('GET', `${paperPath(ws, paper)}/blocks?limit=${limit}${after ? `&after=${enc(after)}` : ''}`),
+  /** A page of a database's items; sort is "{property id|title|created|updated}:{asc|desc}". */
+  items: (ws: string, db: string, q: { after?: string; limit?: number; filter?: FilterCondition[]; sort?: string } = {}) => {
+    const params = new URLSearchParams()
+    if (q.after) params.set('after', q.after)
+    if (q.limit) params.set('limit', String(q.limit))
+    if (q.filter && q.filter.length > 0) params.set('filter', JSON.stringify(q.filter))
+    if (q.sort) params.set('sort', q.sort)
+    return request<ItemsPage>('GET', `${paperPath(ws, db)}/items?${params.toString()}`)
+  },
   children: (ws: string, paper: string) => request<{ papers: PaperRef[] }>('GET', `${paperPath(ws, paper)}/children`).then((r) => r.papers),
   ops: (ws: string, paper: string, ops: Op[], force = false) => request<BatchResult>('POST', `${paperPath(ws, paper)}/ops`, { ops, force }),
   status: (ws: string, paper: string) => request<PaperStatusInfo>('GET', `${paperPath(ws, paper)}/status`),

@@ -445,10 +445,11 @@ func bestMatch(spec IndexSpec, existing []*adminpb.Index) *adminpb.Index {
 //     search index options (textLanguage "und", textLanguageOverrideFieldPath
 //     "language") on a search index created without them, so on a search
 //     index those defaults count as no options;
-//   - only collection scoped indexes serve papers' collection queries;
+//   - the query scope must be the spec's: collection scoped indexes serve
+//     papers' collection queries, collection group ones its group queries;
 //   - search fields compare their text index specs as a set.
 func matchesSpec(spec IndexSpec, got *adminpb.Index) bool {
-	if got.GetQueryScope() != adminpb.Index_COLLECTION || got.GetApiScope() != adminpb.Index_ANY_API {
+	if got.GetQueryScope() != spec.scope() || got.GetApiScope() != adminpb.Index_ANY_API {
 		return false
 	}
 	if got.GetUnique() || got.GetMultikey() {

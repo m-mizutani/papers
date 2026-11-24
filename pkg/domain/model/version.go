@@ -18,9 +18,11 @@ type Version struct {
 	// Note says what changed in this version. Agents write one through
 	// save_version; people's saves leave it empty for now. It is kept so
 	// that people can be given a way to write one later.
-	Note      string    `json:"note,omitempty"`
-	CreatedBy Actor     `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
+	Note string `json:"note,omitempty"`
+	// Values are an item's property values at the time of the save.
+	Values    []VersionValue `json:"values,omitempty"`
+	CreatedBy Actor          `json:"created_by"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // VersionBlock places one block in a version. Its contents are the

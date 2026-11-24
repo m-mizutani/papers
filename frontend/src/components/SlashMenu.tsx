@@ -40,10 +40,11 @@ export function SlashMenu({ anchor, items, active, onPick, onHover, onClose, fil
           group = c.group
           return (
             <div key={c.key}>
-              {head && <div className="mh">{c.group === 'basic' ? t('menuBasic') : t('menuMedia')}</div>}
+              {head && <div className="mh">{t(c.group === 'basic' ? 'menuBasic' : c.group === 'media' ? 'menuMedia' : 'menuPapers')}</div>}
               <button type="button" role="option" aria-selected={i === active} className={`mi${i === active ? ' hi' : ''}`} onMouseMove={() => onHover(i)} onClick={() => onPick(c)}>
                 <span className="mic boxed" aria-hidden>{c.icon}</span>
                 <span className="mt">{t(c.label)}</span>
+                {c.hint && <span className="mk2">{t(c.hint)}</span>}
               </button>
             </div>
           )

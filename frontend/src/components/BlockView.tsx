@@ -1,6 +1,7 @@
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
+import { rememberKind } from '../api/kinds'
 import { api } from '../api/client'
 import { editorsOf, type PaperState } from '../api/paperState'
 import type { Block, BlockProps, BlockType } from '../api/types'
@@ -98,15 +99,19 @@ function ChildCard({ block, ctx }: { block: Block; ctx: BlockContext }) {
   const { t } = useTranslation()
   const ref = ctx.state.children.get(block.props.paper_id ?? '')
   if (!ref) return <div className="child arch"><span className="pi" aria-hidden>▤</span><span className="ct"><span className="cn">{t('childHidden')}</span></span></div>
+  const db = ref.kind === 'database'
   const status = ref.version_number > 0 ? `v${ref.version_number}` : t('draft')
   const html = ref.kind === 'html'
   return (
-    <Link className={`child${ref.status === 'archived' ? ' arch' : ''}`} to={`/ws/${ctx.ws}/p/${ref.id}`} onClick={(e) => e.stopPropagation()}>
-      <span className={`pi${html ? ' code' : ''}`} aria-hidden>{html ? '</>' : '▤'}</span>
+    <Link className={`child${ref.status === 'archived' ? ' arch' : ''}`} to={`/ws/${ctx.ws}/p/${ref.id}`} onClick={(e) => { e.stopPropagation(); rememberKind(ref.id, ref.kind) }}>
+      <span className={`pi${html ? ' code' : db ? ' db' : ''}`} aria-hidden>{html ? '</>' : db ? '⊞' : '▤'}</span>
       <span className="ct">
-        <span className="cn">{ref.title || t('untitled')}</span>
-        <span className="cs">{[html ? t('htmlBadge') : null, status, ref.status === 'archived' ? t('archived') : null].filter(Boolean).join(' · ')}</span>
+        <span className="cn">{ref.title || t(db ? 'untitledDatabase' : 'untitled')}</span>
+        {db
+          ? <span className="cs">{ref.status === 'archived' ? t('archived') : ''}</span>
+          : <span className="cs">{[html ? t('htmlBadge') : null, status, ref.status === 'archived' ? t('archived') : null].filter(Boolean).join(' · ')}</span>}
       </span>
+      {db && <span className="kbadge">{t('database')}</span>}
       <span className="go" aria-hidden>→</span>
     </Link>
   )

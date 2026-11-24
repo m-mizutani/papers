@@ -31,8 +31,10 @@ func sameState(v *model.Version, title string, blocks []*model.Block) bool {
 // automatically. When nothing changed since the latest version, no version
 // is made and the result is nil.
 func (u *UseCases) SaveVersion(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID, note string) (*model.Version, error) {
-	if _, _, err := u.writablePaper(ctx, p, ws, id); err != nil {
+	if _, paper, err := u.writablePaper(ctx, p, ws, id); err != nil {
 		return nil, err
+	} else if paper.IsDatabase() {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "a database has no versions")
 	}
 	note = strings.TrimSpace(note)
 	if len(note) > model.MaxVersionNoteLength {
@@ -57,7 +59,18 @@ func (u *UseCases) SaveVersion(ctx context.Context, p *model.Principal, ws model
 				return goerr.Wrap(err, "failed to get latest version")
 			}
 		}
-		if sameState(prev, paper.Title, blocks) {
+		var values []model.VersionValue
+		var props []model.Property
+		if paper.IsItem() {
+			if values, props, err = itemVersionValues(tx, paper); err != nil {
+				return err
+			}
+		}
+		var savedValues []model.VersionValue
+		if prev != nil {
+			savedValues = prev.Values
+		}
+		if sameState(prev, paper.Title, blocks) && sameVersionValues(props, savedValues, values) {
 			return nil
 		}
 		known := map[model.SnapshotRef]bool{}
@@ -77,7 +90,7 @@ func (u *UseCases) SaveVersion(ctx context.Context, p *model.Principal, ws model
 		}
 		v := &model.Version{
 			WorkspaceID: ws, PaperID: id, Number: paper.VersionNumber + 1, Title: paper.Title,
-			Blocks: versionBlocks(blocks), Note: note, CreatedBy: actor, CreatedAt: now,
+			Blocks: versionBlocks(blocks), Note: note, CreatedBy: actor, CreatedAt: now, Values: values,
 		}
 		if err := tx.PutVersion(v); err != nil {
 			return goerr.Wrap(err, "failed to write version")
@@ -86,11 +99,8 @@ func (u *UseCases) SaveVersion(ctx context.Context, p *model.Principal, ws model
 		if err := tx.PutPaper(paper); err != nil {
 			return goerr.Wrap(err, "failed to update paper")
 		}
-		for _, ev := range []*model.Event{
-			{Type: model.EventVersionSaved, Version: v.Number},
-			{Type: model.EventPaperUpdated, Paper: paper.Clone()},
-		} {
-			ev.WorkspaceID, ev.PaperID, ev.At = ws, id, now
+		for _, ev := range append([]*model.Event{{Type: model.EventVersionSaved, WorkspaceID: ws, PaperID: id}}, paperUpdatedEvents(paper)...) {
+			ev.At = now
 			if err := tx.AddEvent(ev); err != nil {
 				return goerr.Wrap(err, "failed to add event")
 			}
@@ -146,6 +156,9 @@ type VersionView struct {
 	// Children says what restoring this version does with each child paper
 	// it has, so that the UI can warn before restoring.
 	Children []*ChildOutcome `json:"children"`
+	// Values are an item's property values in the version, as they show
+	// under the current definitions.
+	Values []*model.PropertyValue `json:"values,omitempty"`
 }
 
 // What restoring a version does with one of its child papers.
@@ -272,7 +285,27 @@ func (u *UseCases) GetVersion(ctx context.Context, p *model.Principal, ws model.
 			children = append(children, childOutcome(p, paper.ID, cid, byID[cid]))
 		}
 	}
-	return &VersionView{Version: summarize(v), Paper: view, Blocks: blocks, Children: children}, nil
+	out := &VersionView{Version: summarize(v), Paper: view, Blocks: blocks, Children: children}
+	if paper.IsItem() {
+		db, err := u.repo.GetPaper(ctx, ws, paper.DatabaseID)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to read the item's database")
+		}
+		out.Values = []*model.PropertyValue{}
+		for _, prop := range db.Properties {
+			for _, vv := range v.Values {
+				if vv.PropertyID != prop.ID {
+					continue
+				}
+				pv := &model.PropertyValue{WorkspaceID: ws, DatabaseID: db.ID, PaperID: id, PropertyID: vv.PropertyID, Value: vv.Value}
+				if cur := model.CurrentValue(db.Properties, pv); cur != nil {
+					pv.Value = cur
+					out.Values = append(out.Values, pv)
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // Status tells whether the current state differs from the latest version.
@@ -291,15 +324,32 @@ func (u *UseCases) Status(ctx context.Context, p *model.Principal, ws model.Work
 		return nil, goerr.Wrap(err, "failed to list blocks")
 	}
 	st := &Status{VersionNumber: paper.VersionNumber, Changed: true}
+	var v *model.Version
 	if paper.VersionNumber == 0 {
 		st.Changed = len(blocks) > 0 || paper.Title != ""
-		return st, nil
+	} else {
+		if v, err = u.repo.GetVersion(ctx, ws, id, paper.VersionNumber); err != nil {
+			return nil, goerr.Wrap(err, "failed to get latest version")
+		}
+		st.Changed = !sameState(v, paper.Title, blocks)
 	}
-	v, err := u.repo.GetVersion(ctx, ws, id, paper.VersionNumber)
-	if err != nil {
-		return nil, goerr.Wrap(err, "failed to get latest version")
+	if !st.Changed && paper.IsItem() {
+		var values []model.VersionValue
+		var props []model.Property
+		err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			var err error
+			values, props, err = itemVersionValues(tx, paper)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		var saved []model.VersionValue
+		if v != nil {
+			saved = v.Values
+		}
+		st.Changed = !sameVersionValues(props, saved, values)
 	}
-	st.Changed = !sameState(v, paper.Title, blocks)
 	return st, nil
 }
 
@@ -469,8 +519,10 @@ func freshRev(old int64, now time.Time) int64 {
 // back only for their creator; both are listed in the result. Unsaved
 // changes of the current state are lost, so screens ask first.
 func (u *UseCases) RestoreVersion(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID, number int) (*BatchResult, error) {
-	if _, _, err := u.writablePaper(ctx, p, ws, id); err != nil {
+	if _, paper, err := u.writablePaper(ctx, p, ws, id); err != nil {
 		return nil, err
+	} else if paper.IsDatabase() {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "a database has no versions")
 	}
 	if number < 1 {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "version is required")
@@ -578,6 +630,19 @@ func (u *UseCases) RestoreVersion(ctx context.Context, p *model.Principal, ws mo
 		}
 		if err := a.finish(); err != nil {
 			return err
+		}
+		if paper.IsItem() {
+			vw, err := restoreValues(tx, paper, v.Values, a.actor, now)
+			if err != nil {
+				return err
+			}
+			for _, ev := range vw.events {
+				ev.At = now
+				if err := tx.AddEvent(ev); err != nil {
+					return goerr.Wrap(err, "failed to add event")
+				}
+			}
+			a.result.Values = vw.values
 		}
 		a.result.NotRestored = append(a.result.NotRestored, w.result.NotRestored...)
 		result, jobs = a.result, a.jobs

@@ -42,8 +42,8 @@ export interface WorkspaceGroup {
 
 export type Visibility = 'public' | 'private'
 export type PaperStatus = 'draft' | 'canonical' | 'archived' | 'trashed'
-/** blocks: a body people edit; html: one HTML document written through the API. */
-export type PaperKind = 'blocks' | 'html'
+/** blocks: a body people edit; html: one HTML document written through the API; database: a table of items. */
+export type PaperKind = 'blocks' | 'html' | 'database'
 
 export interface Paper {
   id: string
@@ -62,6 +62,61 @@ export interface Paper {
   created_at: string
   updated_by: Actor
   updated_at: string
+  /** The database an item belongs to (an item has no parent_id). */
+  database_id?: string
+  /** A database's property definitions, in column order. */
+  properties?: Property[]
+  /** A database's items in display order. */
+  items?: string[]
+}
+
+export type PropertyType = 'text' | 'date' | 'select' | 'multi_select'
+
+/** A choice of a select or multi_select property: values store only its id. */
+export interface Element {
+  id: string
+  value: string
+  color: string
+}
+
+export interface Property {
+  id: string
+  name: string
+  type: PropertyType
+  elements?: Element[]
+}
+
+/** What one item holds for one property: a string (text, date, select element id) or element ids. */
+export type Value = string | string[]
+
+export interface PropertyValue {
+  workspace_id: string
+  database_id: string
+  paper_id: string
+  property_id: string
+  value: Value
+  updated_by: Actor
+  updated_at: string
+}
+
+export interface ItemRow {
+  item: Paper
+  values: PropertyValue[]
+}
+
+export interface ItemsPage {
+  items: ItemRow[]
+  next_cursor: string
+}
+
+export interface FilterCondition {
+  property: string
+  op: 'is' | 'contains' | 'on' | 'before' | 'after' | 'between' | 'starts_with' | 'is_empty' | 'is_not_empty'
+  elements?: string[]
+  date?: string
+  from?: string
+  to?: string
+  text?: string
 }
 
 export interface PaperRef {
@@ -140,6 +195,9 @@ export type OpKind =
   | 'insert' | 'update' | 'delete' | 'move' | 'set_title' | 'insert_markdown'
   | 'insert_row' | 'delete_row' | 'move_row' | 'insert_col' | 'delete_col' | 'move_col'
   | 'move_paper' | 'set_visibility' | 'save_version' | 'restore_version' | 'archive' | 'unarchive'
+  | 'add_property' | 'update_property' | 'move_property' | 'delete_property'
+  | 'add_element' | 'update_element' | 'move_element' | 'delete_element'
+  | 'insert_item' | 'set_values' | 'move_item'
 
 export interface Op {
   op: OpKind
@@ -164,6 +222,18 @@ export interface Op {
   note?: string
   version?: number
   subtree?: boolean
+  /** insert of a paper block: the kind of the child ('database' creates a database). */
+  paper_kind?: PaperKind
+  property?: string
+  element?: string
+  item?: string
+  name?: string
+  property_type?: PropertyType
+  /** An element's value (its text). */
+  value?: string
+  color?: string
+  /** Property values by property id (or ref); null clears. */
+  set?: Record<string, Value | null>
 }
 
 export interface Conflict {
@@ -197,6 +267,8 @@ export interface BatchResult {
   refs: Record<string, string> | null
   editing?: Editing[]
   not_restored?: NotRestored[]
+  items?: Paper[]
+  values?: PropertyValue[]
 }
 
 export interface PaperView {
@@ -204,6 +276,9 @@ export interface PaperView {
   paper: Paper
   path: PaperRef[]
   is_home: boolean
+  /** An item's property values, and its database. */
+  values?: PropertyValue[]
+  database?: { id: string; title: string; properties: Property[] }
 }
 
 export interface BlocksPage {
@@ -227,6 +302,8 @@ export interface VersionView {
   blocks: Block[]
   /** What restoring the version does with each child paper it has. */
   children?: ChildOutcome[]
+  /** An item's property values in the version. */
+  values?: PropertyValue[]
 }
 
 export interface ChildOutcome {
@@ -315,6 +392,7 @@ export interface Presence {
 }
 
 export type EventType = 'block_put' | 'block_deleted' | 'paper_updated' | 'paper_deleted' | 'version_saved' | 'presence'
+  | 'item_put' | 'item_deleted' | 'property_value_put' | 'property_value_deleted'
 
 export interface PaperEvent {
   type: EventType
@@ -326,6 +404,9 @@ export interface PaperEvent {
   paper?: Paper
   version?: number
   presence?: Presence
+  property_value?: PropertyValue
+  item_id?: string
+  property_id?: string
 }
 
 export interface Me {

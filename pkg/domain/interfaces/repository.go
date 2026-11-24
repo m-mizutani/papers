@@ -84,7 +84,8 @@ type PaperRepository interface {
 	// ListTrashedBefore lists papers whose DeletedAt is before t.
 	ListTrashedBefore(ctx context.Context, ws model.WorkspaceID, t time.Time) ([]*model.Paper, error)
 	// PurgePaper removes a paper and everything under it: blocks, versions,
-	// snapshots, events, search entries and attachment metadata.
+	// snapshots, events, property values, search entries and attachment
+	// metadata.
 	PurgePaper(ctx context.Context, ws model.WorkspaceID, id model.PaperID) error
 
 	GetBlocks(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, ids []model.BlockID) ([]*model.Block, error)
@@ -100,6 +101,17 @@ type PaperRepository interface {
 	ListVersions(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, before, limit int) ([]*model.Version, error)
 	GetVersion(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, number int) (*model.Version, error)
 	GetSnapshots(ctx context.Context, ws model.WorkspaceID, paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error)
+
+	// GetPropertyValues reads property values by (item, property) in one
+	// round trip. Missing ones are omitted.
+	GetPropertyValues(ctx context.Context, ws model.WorkspaceID, refs []model.PropertyValueRef) ([]*model.PropertyValue, error)
+	// ListItems reads the items of a database (papers whose ParentID is
+	// db) in the order q asks for. It returns the cursor of the next read,
+	// or "" at the end.
+	ListItems(ctx context.Context, ws model.WorkspaceID, db model.PaperID, q model.ItemQuery) ([]*model.Paper, string, error)
+	// QueryPropertyValues reads the values of one property of a database
+	// per q. It returns the cursor of the next read, or "" at the end.
+	QueryPropertyValues(ctx context.Context, ws model.WorkspaceID, db model.PaperID, q model.PropertyValueQuery) ([]*model.PropertyValue, string, error)
 
 	// RunTx runs fn in one transaction over the workspace. Reads see the
 	// transaction's own writes. Writes are applied together or not at all.
@@ -133,6 +145,13 @@ type Tx interface {
 	PutVersion(v *model.Version) error
 	GetSnapshots(paper model.PaperID, refs []model.SnapshotRef) ([]*model.BlockSnapshot, error)
 	PutSnapshot(paper model.PaperID, s *model.BlockSnapshot) error
+
+	// GetPropertyValues reads property values by (item, property).
+	GetPropertyValues(refs []model.PropertyValueRef) ([]*model.PropertyValue, error)
+	// ListItemPropertyValues lists one item's property values.
+	ListItemPropertyValues(item model.PaperID) ([]*model.PropertyValue, error)
+	PutPropertyValue(v *model.PropertyValue) error
+	DeletePropertyValue(item model.PaperID, property model.PropertyID) error
 
 	PutForward(f *model.Forward) error
 	// PutAttachment stores an attachment's metadata with the rest of the

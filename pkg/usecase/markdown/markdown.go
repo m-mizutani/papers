@@ -391,3 +391,86 @@ func renderTable(table *model.Block, cells []*model.Block) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// ValueText is how a property value reads in text: an element's value for
+// a select, the elements' values joined with ", " for a multi_select, and
+// the string itself otherwise. nil reads as "".
+func ValueText(prop *model.Property, v any) string {
+	if v == nil {
+		return ""
+	}
+	elem := func(id string) string {
+		if i := prop.ElementIndex(model.ElementID(id)); i >= 0 {
+			return prop.Elements[i].Value
+		}
+		return ""
+	}
+	switch prop.Type {
+	case model.PropertySelect:
+		s, _ := v.(string)
+		return elem(s)
+	case model.PropertyMultiSelect:
+		ids, _ := (&model.PropertyValue{Value: v}).Strings()
+		var names []string
+		for _, id := range ids {
+			if n := elem(id); n != "" {
+				names = append(names, n)
+			}
+		}
+		return strings.Join(names, ", ")
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// DatabaseRow is one item of a database for RenderDatabase.
+type DatabaseRow struct {
+	Title  string
+	Values map[model.PropertyID]any
+}
+
+// RenderDatabase renders a database as its title and a Markdown table:
+// the title column, then one column per property in order.
+func RenderDatabase(title, titleColumn string, props []model.Property, rows []DatabaseRow) string {
+	var b strings.Builder
+	if title != "" {
+		b.WriteString("# " + title + "\n\n")
+	}
+	head := []string{escapeCell(titleColumn)}
+	for _, p := range props {
+		head = append(head, escapeCell(p.Name))
+	}
+	b.WriteString("| " + strings.Join(head, " | ") + " |\n")
+	b.WriteString("|" + strings.Repeat(" --- |", len(head)) + "\n")
+	for _, r := range rows {
+		cells := []string{escapeCell(r.Title)}
+		for i := range props {
+			cells = append(cells, escapeCell(ValueText(&props[i], r.Values[props[i].ID])))
+		}
+		b.WriteString("| " + strings.Join(cells, " | ") + " |\n")
+	}
+	return b.String()
+}
+
+// RenderItem renders an item: its title, its properties as a list
+// ("- name: value", empty ones left out), then its body.
+func RenderItem(title string, props []model.Property, values map[model.PropertyID]any, blocks []*model.Block, titles map[model.PaperID]string) string {
+	body := Render("", blocks, titles)
+	var parts []string
+	if title != "" {
+		parts = append(parts, "# "+title)
+	}
+	var list []string
+	for i := range props {
+		if t := ValueText(&props[i], values[props[i].ID]); t != "" {
+			list = append(list, "- "+props[i].Name+": "+t)
+		}
+	}
+	if len(list) > 0 {
+		parts = append(parts, strings.Join(list, "\n"))
+	}
+	if strings.TrimSpace(body) != "" {
+		parts = append(parts, strings.TrimRight(body, "\n"))
+	}
+	return strings.Join(parts, "\n\n") + "\n"
+}

@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,7 +32,8 @@ func (v Visibility) Validate() error {
 }
 
 // PaperKind is how a paper's body is held. It is set when the paper is
-// created and never changes.
+// created and never changes. Whether a paper is an item of a database is a
+// separate matter (Paper.DatabaseID): an item may have any kind.
 type PaperKind string
 
 const (
@@ -40,16 +42,20 @@ const (
 	// PaperKindHTML papers have one html_page block pointing to an HTML
 	// document written through the API; the Web UI only shows it.
 	PaperKindHTML PaperKind = "html"
+	// PaperKindDatabase papers are tables: the body is the database's items,
+	// with the property definitions and the order of the items on the
+	// paper itself. A database has no blocks and no versions.
+	PaperKindDatabase PaperKind = "database"
 )
 
-// Validate accepts the two kinds, and empty (a record written before kinds
+// Validate accepts the kinds, and empty (a record written before kinds
 // existed, read as blocks).
 func (k PaperKind) Validate() error {
 	switch k {
-	case "", PaperKindBlocks, PaperKindHTML:
+	case "", PaperKindBlocks, PaperKindHTML, PaperKindDatabase:
 		return nil
 	}
-	return goerr.Wrap(ErrInvalidArgument, "kind must be blocks or html", goerr.V("kind", k))
+	return goerr.Wrap(ErrInvalidArgument, "kind must be blocks, html or database", goerr.V("kind", k))
 }
 
 // Or returns the kind, reading empty as blocks.
@@ -78,18 +84,22 @@ const (
 
 // Paper is a document: a title and an ordered list of blocks. A public paper
 // other than the home either sits in exactly one parent's body as a paper
-// block (filed), or has no parent (unfiled); unfiled and private papers
-// have no children.
+// block (filed), belongs to a database (an item), or has neither (unfiled);
+// unfiled and private papers have no children.
 type Paper struct {
 	ID          PaperID     `json:"id"`
 	WorkspaceID WorkspaceID `json:"workspace_id"`
-	// Kind is blocks or html; empty in records written before kinds
-	// existed, which are blocks (see IsHTML).
+	// Kind is blocks, html or database; empty in records written before
+	// kinds existed, which are blocks (see IsHTML).
 	Kind  PaperKind `json:"kind"`
 	Title string    `json:"title"`
 	// ParentID is the paper whose body holds this paper's paper block. It
-	// is empty for the home, for unfiled papers and for private papers.
-	ParentID   PaperID    `json:"parent_id,omitempty"`
+	// is empty for the home, for unfiled papers, for private papers and
+	// for items.
+	ParentID PaperID `json:"parent_id,omitempty"`
+	// DatabaseID is the database an item belongs to; empty for any other
+	// paper. It is set at creation and never changes.
+	DatabaseID PaperID    `json:"database_id,omitempty"`
 	Visibility Visibility `json:"visibility"`
 	// VersionNumber is the latest saved version; 0 means a draft.
 	VersionNumber int `json:"version_number"`
@@ -102,6 +112,12 @@ type Paper struct {
 	// JobID is the move job working on the paper. While it is set only that
 	// job writes the paper and its blocks, and search leaves the paper out.
 	JobID JobID `json:"job_id,omitempty"`
+
+	// Properties are a database's property definitions, in column order.
+	Properties []Property `json:"properties,omitempty"`
+	// Items are a database's items in display order. Trashed and archived
+	// items stay listed (restoring keeps their place); purging removes them.
+	Items []PaperID `json:"items,omitempty"`
 
 	CreatedBy Actor     `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
@@ -156,6 +172,9 @@ func (p *Paper) Validate() error {
 	if (p.DeletedAt == nil) != (p.DeletedWith == "") {
 		return goerr.Wrap(ErrInvalidArgument, "deleted_at and deleted_with go together", goerr.V("id", p.ID))
 	}
+	if err := p.validateDatabase(); err != nil {
+		return err
+	}
 	if err := p.CreatedBy.Validate(); err != nil {
 		return goerr.Wrap(err, "invalid paper creator")
 	}
@@ -165,9 +184,67 @@ func (p *Paper) Validate() error {
 	return nil
 }
 
+func (p *Paper) validateDatabase() error {
+	if p.Kind != PaperKindDatabase && (len(p.Properties) > 0 || len(p.Items) > 0) {
+		return goerr.Wrap(ErrInvalidArgument, "only a database has properties and items", goerr.V("id", p.ID))
+	}
+	switch p.Kind {
+	case PaperKindDatabase:
+		if p.Visibility != VisibilityPublic {
+			return goerr.Wrap(ErrInvalidArgument, "a database is always public", goerr.V("id", p.ID))
+		}
+		if p.VersionNumber != 0 {
+			return goerr.Wrap(ErrInvalidArgument, "a database has no versions", goerr.V("id", p.ID))
+		}
+		if err := ValidateProperties(p.Properties); err != nil {
+			return err
+		}
+		if len(p.Items) > MaxDatabaseItems {
+			return goerr.Wrap(ErrInvalidArgument, "the database has too many items", goerr.V("count", len(p.Items)), goerr.V("max", MaxDatabaseItems))
+		}
+		seen := make(map[PaperID]bool, len(p.Items))
+		for _, id := range p.Items {
+			if !ValidID(string(id)) || seen[id] {
+				return goerr.Wrap(ErrInvalidArgument, "invalid or duplicate item id", goerr.V("item_id", id))
+			}
+			seen[id] = true
+		}
+	}
+	if p.DatabaseID != "" {
+		if !ValidID(string(p.DatabaseID)) || p.DatabaseID == p.ID {
+			return goerr.Wrap(ErrInvalidArgument, "invalid database id", goerr.V("id", p.ID), goerr.V("database_id", p.DatabaseID))
+		}
+		if p.Visibility != VisibilityPublic || p.ParentID != "" {
+			return goerr.Wrap(ErrInvalidArgument, "an item is public and has no parent but its database", goerr.V("id", p.ID))
+		}
+	}
+	return nil
+}
+
 func (p *Paper) Clone() *Paper {
 	c := *p
+	c.Properties = CloneProperties(p.Properties)
+	c.Items = slices.Clone(p.Items)
 	return &c
+}
+
+func (p *Paper) IsDatabase() bool { return p.Kind == PaperKindDatabase }
+func (p *Paper) IsItem() bool     { return p.DatabaseID != "" }
+
+// Above is the paper above this one in the tree: the parent, or for an item
+// its database. Breadcrumbs, cycle checks and "search under here" walk up
+// through it.
+func (p *Paper) Above() PaperID {
+	if p.DatabaseID != "" {
+		return p.DatabaseID
+	}
+	return p.ParentID
+}
+
+// IsUnfiled tells a public paper outside the tree: no parent and no
+// database (the home is the caller's to tell apart).
+func (p *Paper) IsUnfiled() bool {
+	return p.Visibility == VisibilityPublic && p.ParentID == "" && p.DatabaseID == ""
 }
 
 // Status derives the paper's state.
@@ -224,7 +301,8 @@ const MaxPaperListLimit = 100
 // descending with ties broken by ID descending. Storage filters only on
 // what has an index; everything else is left to the caller.
 type PaperQuery struct {
-	// Unfiled keeps only papers without a parent (the home, unfiled and
+	// Unfiled keeps only papers without a parent and outside any database
+	// (the home, unfiled and
 	// private papers).
 	Unfiled bool
 	// Creator keeps only papers this user created (or an agent created

@@ -98,8 +98,8 @@ func sortField(s model.PaperSort) string {
 	return "UpdatedAt"
 }
 
-// ListPapers filters only on what the papers-list indexes cover (ParentID
-// and CreatedBy.UserID, see RequiredIndexes) and reads one more paper than
+// ListPapers filters only on what the papers-list indexes cover (ParentID,
+// DatabaseID and CreatedBy.UserID, see RequiredIndexes) and reads one more paper than
 // the limit to know whether a next page exists.
 func (r *Repository) ListPapers(ctx context.Context, ws model.WorkspaceID, q model.PaperQuery) ([]*model.Paper, string, error) {
 	if err := q.Validate(); err != nil {
@@ -111,7 +111,8 @@ func (r *Repository) ListPapers(ctx context.Context, ws model.WorkspaceID, q mod
 	col := r.papersCol(ws)
 	query := col.Query
 	if q.Unfiled {
-		query = query.Where("ParentID", "==", "")
+		// Items have no parent either; they are not unfiled.
+		query = query.Where("ParentID", "==", "").Where("DatabaseID", "==", "")
 	}
 	if q.Creator != "" {
 		query = query.Where("CreatedBy.UserID", "==", string(q.Creator))
@@ -194,7 +195,7 @@ func (r *Repository) PurgePaper(ctx context.Context, ws model.WorkspaceID, id mo
 	if err != nil {
 		return err
 	}
-	for _, col := range []string{colBlocks, colVersions, colSnapshots, colEvents, colAttachments} {
+	for _, col := range []string{colBlocks, colVersions, colSnapshots, colEvents, colAttachments, colProperties} {
 		got, err := doc.Collection(col).DocumentRefs(ctx).GetAll()
 		if err != nil {
 			return goerr.Wrap(err, "failed to list documents", goerr.V("collection", col))
@@ -360,6 +361,9 @@ type fsTx struct {
 	events      []*model.Event
 	jobs        map[model.JobID]*model.Job
 	items       map[model.JobID]map[model.PaperID]*model.JobItem
+	// values and valueDeletes are staged writes of property values.
+	values       map[model.PropertyValueRef]*model.PropertyValue
+	valueDeletes map[model.PropertyValueRef]bool
 }
 
 func (t *fsTx) GetPaper(id model.PaperID) (*model.Paper, error) {
@@ -731,6 +735,16 @@ func (t *fsTx) flush() error {
 			return err
 		}
 	}
+	for ref := range t.valueDeletes {
+		if err := tx.Delete(t.r.propertyValueDoc(ws, ref)); err != nil {
+			return goerr.Wrap(err, "failed to stage property value delete")
+		}
+	}
+	for ref, v := range t.values {
+		if err := tx.Set(t.r.propertyValueDoc(ws, ref), v); err != nil {
+			return goerr.Wrap(err, "failed to stage property value write")
+		}
+	}
 	for paper, snaps := range t.snapshots {
 		for ref, s := range snaps {
 			// Set: a snapshot of a (block, rev) never changes, so writing
@@ -782,9 +796,11 @@ func (r *Repository) RunTx(ctx context.Context, ws model.WorkspaceID, fn func(tx
 			tx: tx, r: r, ws: ws,
 			papers: map[model.PaperID]*model.Paper{}, paperRead: map[model.PaperID]*model.Paper{},
 			puts: map[blockKey]*model.Block{}, deletes: map[blockKey]bool{},
-			snapshots: map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot{},
-			jobs:      map[model.JobID]*model.Job{},
-			items:     map[model.JobID]map[model.PaperID]*model.JobItem{},
+			snapshots:    map[model.PaperID]map[model.SnapshotRef]*model.BlockSnapshot{},
+			jobs:         map[model.JobID]*model.Job{},
+			items:        map[model.JobID]map[model.PaperID]*model.JobItem{},
+			values:       map[model.PropertyValueRef]*model.PropertyValue{},
+			valueDeletes: map[model.PropertyValueRef]bool{},
 		}
 		if err := fn(t); err != nil {
 			return err

@@ -38,6 +38,7 @@ type paperData struct {
 	events      []*model.Event
 	attachments map[model.AttachmentID]*model.Attachment
 	search      map[model.BlockID]*model.SearchEntry
+	values      map[model.PropertyID]*model.PropertyValue
 }
 
 func newPaperData(p *model.Paper) *paperData {
@@ -48,6 +49,7 @@ func newPaperData(p *model.Paper) *paperData {
 		snapshots:   map[model.SnapshotRef]*model.BlockSnapshot{},
 		attachments: map[model.AttachmentID]*model.Attachment{},
 		search:      map[model.BlockID]*model.SearchEntry{},
+		values:      map[model.PropertyID]*model.PropertyValue{},
 	}
 }
 

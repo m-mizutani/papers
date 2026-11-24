@@ -152,12 +152,23 @@ type PaperView struct {
 	// Path lists the ancestors from the home down to the parent.
 	Path   []*PaperRef `json:"path"`
 	IsHome bool        `json:"is_home"`
+	// Values are an item's property values as they show under the current
+	// definitions, and Database the database the item belongs to.
+	Values   []*model.PropertyValue `json:"values,omitempty"`
+	Database *DatabaseRef           `json:"database,omitempty"`
+}
+
+// DatabaseRef is what an item's view tells about its database.
+type DatabaseRef struct {
+	ID         model.PaperID    `json:"id"`
+	Title      string           `json:"title"`
+	Properties []model.Property `json:"properties"`
 }
 
 // ancestors walks up from paper to the home, at most MaxTreeDepth steps.
 func (u *UseCases) ancestors(ctx context.Context, paper *model.Paper) ([]*PaperRef, error) {
 	out := []*PaperRef{}
-	at := paper.ParentID
+	at := paper.Above()
 	for depth := 0; at != "" && depth < model.MaxTreeDepth; depth++ {
 		q, err := u.repo.GetPaper(ctx, paper.WorkspaceID, at)
 		if errors.Is(err, model.ErrNotFound) {
@@ -167,7 +178,7 @@ func (u *UseCases) ancestors(ctx context.Context, paper *model.Paper) ([]*PaperR
 			return nil, goerr.Wrap(err, "failed to read ancestor", goerr.V("paper_id", at))
 		}
 		out = append(out, refOf(q))
-		at = q.ParentID
+		at = q.Above()
 	}
 	slices.Reverse(out)
 	return out, nil
@@ -190,7 +201,35 @@ func (u *UseCases) GetPaper(ctx context.Context, p *model.Principal, ws model.Wo
 	if !paper.IsTrashed() {
 		u.touchRecent(ctx, p, ws, id)
 	}
-	return &PaperView{Workspace: w, Paper: paper, Path: path, IsHome: paper.ID == home}, nil
+	view := &PaperView{Workspace: w, Paper: paper, Path: path, IsHome: paper.ID == home}
+	if paper.IsItem() {
+		db, values, err := u.itemValues(ctx, paper)
+		if err != nil {
+			return nil, err
+		}
+		view.Database = &DatabaseRef{ID: db.ID, Title: db.Title, Properties: db.Properties}
+		view.Values = values
+	}
+	return view, nil
+}
+
+// itemValues reads an item's database and its values as they show under
+// the database's current definitions, in property order.
+func (u *UseCases) itemValues(ctx context.Context, item *model.Paper) (*model.Paper, []*model.PropertyValue, error) {
+	db, err := u.repo.GetPaper(ctx, item.WorkspaceID, item.DatabaseID)
+	if err != nil {
+		return nil, nil, goerr.Wrap(err, "failed to read the item's database", goerr.V("database_id", item.DatabaseID))
+	}
+	r := &itemsReader{u: u, ctx: ctx, db: db}
+	vals, err := r.values([]model.PaperID{item.ID})
+	if err != nil {
+		return nil, nil, err
+	}
+	out := vals[item.ID]
+	if out == nil {
+		out = []*model.PropertyValue{}
+	}
+	return db, out, nil
 }
 
 // BlocksPage is one range of a paper's blocks.
@@ -520,7 +559,7 @@ func (u *UseCases) ListPapers(ctx context.Context, p *model.Principal, ws model.
 			return false
 		case in.Visibility != VisibilityAll && x.Visibility != in.Visibility:
 			return false
-		case in.Place == PlaceFiled && x.ParentID == "":
+		case in.Place == PlaceFiled && x.Above() == "":
 			return false
 		}
 		return true
@@ -558,9 +597,9 @@ func (u *UseCases) ListPapers(ctx context.Context, p *model.Principal, ws model.
 	var parentIDs []model.PaperID
 	seen := map[model.PaperID]bool{}
 	for _, x := range picked {
-		if x.ParentID != "" && !seen[x.ParentID] {
-			seen[x.ParentID] = true
-			parentIDs = append(parentIDs, x.ParentID)
+		if up := x.Above(); up != "" && !seen[up] {
+			seen[up] = true
+			parentIDs = append(parentIDs, up)
 		}
 	}
 	parents := map[model.PaperID]*model.Paper{}
@@ -575,7 +614,7 @@ func (u *UseCases) ListPapers(ctx context.Context, p *model.Principal, ws model.
 	}
 	for _, x := range picked {
 		row := &ListedPaper{PaperRef: refOf(x), CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}
-		if par, ok := parents[x.ParentID]; ok && p.SeesPaper(par) {
+		if par, ok := parents[x.Above()]; ok && p.SeesPaper(par) {
 			row.Parent = &ParentRef{ID: par.ID, Title: par.Title}
 		}
 		page.Papers = append(page.Papers, row)
@@ -667,7 +706,7 @@ func (u *UseCases) Search(ctx context.Context, p *model.Principal, ws model.Work
 func (u *UseCases) within(ctx context.Context, ws model.WorkspaceID, root model.PaperID, papers map[model.PaperID]*model.Paper) (map[model.PaperID]*model.Paper, error) {
 	parent := map[model.PaperID]model.PaperID{}
 	for id, q := range papers {
-		parent[id] = q.ParentID
+		parent[id] = q.Above()
 	}
 	// at[id] is the ancestor currently reached from paper id
 	at := map[model.PaperID]model.PaperID{}
@@ -701,7 +740,7 @@ func (u *UseCases) within(ctx context.Context, ws model.WorkspaceID, root model.
 			}
 			found := map[model.PaperID]bool{}
 			for _, q := range got {
-				parent[q.ID] = q.ParentID
+				parent[q.ID] = q.Above()
 				found[q.ID] = true
 			}
 			for id, cur := range at {
@@ -727,6 +766,9 @@ func (u *UseCases) Export(ctx context.Context, p *model.Principal, ws model.Work
 	if paper.IsHTML() {
 		return "", goerr.Wrap(model.ErrInvalidArgument, "an HTML paper has no Markdown form; read its HTML instead", goerr.V("paper_id", id))
 	}
+	if paper.IsDatabase() {
+		return u.exportDatabase(ctx, p, paper)
+	}
 	page, err := u.ListBlocks(ctx, p, ws, id, "", 0)
 	if err != nil {
 		return "", err
@@ -735,5 +777,41 @@ func (u *UseCases) Export(ctx context.Context, p *model.Principal, ws model.Work
 	for pid, r := range page.Papers {
 		titles[pid] = r.Title
 	}
+	if paper.IsItem() {
+		db, values, err := u.itemValues(ctx, paper)
+		if err != nil {
+			return "", err
+		}
+		return markdown.RenderItem(paper.Title, db.Properties, valueMap(values), page.Blocks, titles), nil
+	}
 	return markdown.Render(paper.Title, page.Blocks, titles), nil
+}
+
+func valueMap(values []*model.PropertyValue) map[model.PropertyID]any {
+	out := make(map[model.PropertyID]any, len(values))
+	for _, v := range values {
+		out[v.PropertyID] = v.Value
+	}
+	return out
+}
+
+// exportDatabase renders a database as a Markdown table of all its items,
+// read a page at a time.
+func (u *UseCases) exportDatabase(ctx context.Context, p *model.Principal, db *model.Paper) (string, error) {
+	var rows []markdown.DatabaseRow
+	after := ""
+	for {
+		page, err := u.ListItems(ctx, p, db.WorkspaceID, db.ID, ItemsInput{After: after, Limit: MaxItemsLimit})
+		if err != nil {
+			return "", err
+		}
+		for _, r := range page.Items {
+			rows = append(rows, markdown.DatabaseRow{Title: r.Item.Title, Values: valueMap(r.Values)})
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		after = page.NextCursor
+	}
+	return markdown.RenderDatabase(db.Title, "Name", db.Properties, rows), nil
 }
