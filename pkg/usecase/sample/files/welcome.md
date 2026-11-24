@@ -35,8 +35,9 @@ A paper is an ordered list of **blocks**. Each block is one paragraph, heading, 
 | HTML paper | AI only | Release dashboard |
 
 ```bash
-# Run papers locally with these samples
-papers serve --no-authn --demo --config examples/config
+# Replace the data of a Firestore database with these samples
+papers firestore reset --demo --firestore-project-id my-project \
+  --config examples/config --attachment-backend dir --attachment-dir ./attachments
 ```
 
 ![A paper is a list of blocks; a paper block nests a child paper](images/overview.png)

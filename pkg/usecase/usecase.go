@@ -116,8 +116,8 @@ func New(repo interfaces.Repository, workspaces interfaces.Workspaces, store int
 	return u, nil
 }
 
-// systemActor is papers itself: it creates the home papers and, in demo
-// mode, the sample papers.
+// systemActor is papers itself: it creates the home papers and the sample
+// papers (firestore reset --demo).
 var systemActor = model.Actor{Kind: model.ActorSystem, Name: "papers"}
 
 // Init prepares the stored data for the configured workspaces: it creates

@@ -13,13 +13,22 @@ import (
 	"github.com/m-mizutani/goerr/v2"
 	"github.com/urfave/cli/v3"
 
+	"github.com/m-mizutani/papers/pkg/cli/config"
+	"github.com/m-mizutani/papers/pkg/domain/interfaces"
 	"github.com/m-mizutani/papers/pkg/repository/firestore"
+	"github.com/m-mizutani/papers/pkg/usecase"
 	"github.com/m-mizutani/papers/pkg/utils/safe"
 )
 
 // resetFirestore is replaced in tests to observe whether reset reached the
 // database.
 var resetFirestore = firestore.Reset
+
+// openRepository opens the repository reset --demo writes the sample papers
+// through; tests replace it with the memory repository.
+var openRepository = func(ctx context.Context, projectID, databaseID string) (interfaces.Repository, error) {
+	return firestore.New(ctx, projectID, databaseID)
+}
 
 // errResetAborted is returned when the reset confirmation is not "yes".
 var errResetAborted = errors.New(`reset aborted: confirmation was not "yes"`)
@@ -125,16 +134,39 @@ func printIndex(w io.Writer, res *firestore.IndexResult) {
 }
 
 func cmdFirestoreReset() *cli.Command {
-	var target firestoreTarget
-	var force bool
+	var (
+		target      firestoreTarget
+		force       bool
+		demo        bool
+		workspaces  config.Workspaces
+		attachments config.Attachments
+	)
+	flags := append(target.flags(),
+		&cli.BoolFlag{Name: "force-dangerous-apply", Usage: "Delete without asking for confirmation", Sources: cli.EnvVars("PAPERS_FORCE_DANGEROUS_APPLY"), Destination: &force},
+		&cli.BoolFlag{Name: "demo", Usage: "After deleting, create each workspace's home and write the sample papers (needs --config and a gcs or dir attachment backend)", Sources: cli.EnvVars("PAPERS_DEMO"), Destination: &demo},
+	)
+	flags = append(flags, workspaces.Flags()...)
+	flags = append(flags, attachments.Flags()...)
 	return &cli.Command{
 		Name:  "reset",
-		Usage: "Delete every document in the Firestore database (indexes and TTL policies are kept)",
-		Flags: append(target.flags(),
-			&cli.BoolFlag{Name: "force-dangerous-apply", Usage: "Delete without asking for confirmation", Sources: cli.EnvVars("PAPERS_FORCE_DANGEROUS_APPLY"), Destination: &force},
-		),
+		Usage: "Delete every document in the Firestore database (indexes and TTL policies are kept); with --demo, write the sample papers afterwards",
+		Flags: flags,
 		Action: func(ctx context.Context, c *cli.Command) error {
 			w := c.Root().Writer
+
+			// Everything --demo needs that can fail is prepared before
+			// anything is deleted.
+			var uc *usecase.UseCases
+			if demo {
+				var closeRepo func()
+				var err error
+				uc, closeRepo, err = prepareSamples(ctx, &target, &workspaces, &attachments)
+				if err != nil {
+					return err
+				}
+				defer closeRepo()
+			}
+
 			_, _ = fmt.Fprintf(w, "This deletes every document in %s.\n", &target)
 			if host := os.Getenv("FIRESTORE_EMULATOR_HOST"); host != "" {
 				_, _ = fmt.Fprintf(w, "Firestore emulator: %s\n", host)
@@ -154,8 +186,54 @@ func cmdFirestoreReset() *cli.Command {
 				_, _ = fmt.Fprintf(w, "deleted  %s  %d documents\n", col.Collection, col.Documents)
 			}
 			_, _ = fmt.Fprintf(w, "deleted %d documents in total\n", report.Total)
-			return nil
+
+			if uc == nil {
+				return nil
+			}
+			if err := uc.Init(ctx); err != nil {
+				return err
+			}
+			results, err := uc.SeedSamples(ctx)
+			printSeedResults(w, results)
+			return err
 		},
+	}
+}
+
+// prepareSamples loads the workspace configuration, the attachment store and
+// the repository, and builds the use cases that write the sample papers.
+func prepareSamples(ctx context.Context, target *firestoreTarget, workspaces *config.Workspaces, attachments *config.Attachments) (*usecase.UseCases, func(), error) {
+	registry, err := workspaces.Configure(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !attachments.KeepsFiles() {
+		return nil, nil, goerr.New("--demo needs an attachment backend that keeps files (gcs or dir); memory loses the sample images when reset exits")
+	}
+	store, err := attachments.Configure(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	repo, err := openRepository(ctx, target.projectID, target.databaseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	closeRepo := func() { safe.Close(ctx, repo) }
+	uc, err := usecase.New(repo, registry, store, config.DefaultUseCaseConfig())
+	if err != nil {
+		closeRepo()
+		return nil, nil, goerr.Wrap(err, "failed to build use cases")
+	}
+	return uc, closeRepo, nil
+}
+
+func printSeedResults(w io.Writer, results []usecase.SeedResult) {
+	for _, r := range results {
+		if r.Seeded {
+			_, _ = fmt.Fprintf(w, "seeded   %s  %d sample papers\n", r.Workspace, r.Papers)
+		} else {
+			_, _ = fmt.Fprintf(w, "skipped  %s  not empty\n", r.Workspace)
+		}
 	}
 }
 

@@ -38,7 +38,7 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - `pkg/service/google/` – Google OIDC; `pkg/service/workspace/` – workspace configuration and Rego; `pkg/service/attachment/` – image stores (Cloud Storage, directory, memory)
 - `pkg/usecase/` – application logic; every method takes the principal and enforces access (`ops.go` batches and conflicts, `version.go`, `tree.go`, `read.go`)
 - `pkg/usecase/markdown/` – Markdown <-> blocks
-- `pkg/usecase/sample/` – the sample papers demo mode (`serve --demo`) writes into empty workspaces; `usecase/sample.go` writes them
+- `pkg/usecase/sample/` – the sample papers `firestore reset --demo` writes after deleting every document; `usecase/sample.go` writes them
 - `frontend/` – React + Vite + TypeScript, embedded via `frontend/static.go`
 
 ## Documents (MANDATORY)
@@ -50,8 +50,8 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 
 ## Demo samples (MANDATORY)
 
-`papers serve --demo` (demo mode; not the in-browser demo of `frontend/src/mock/`)
-fills each workspace that is still empty with the sample papers defined in
+`papers firestore reset --demo` (not the in-browser demo of `frontend/src/mock/`)
+deletes every document and then fills each workspace with the sample papers defined in
 `pkg/usecase/sample/`. Keep them showing what papers can do:
 
 - When you add a block type, a paper kind, a markup feature or anything else that

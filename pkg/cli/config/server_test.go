@@ -31,13 +31,9 @@ func parseServer(t *testing.T, args ...string) *config.Server {
 	return &x
 }
 
-func TestDemoIsOffByDefault(t *testing.T) {
-	t.Setenv("PAPERS_DEMO", "")
-	gt.False(t, parseServer(t).Demo())
-}
-
-func TestDemoFromFlagOrEnvironment(t *testing.T) {
-	gt.True(t, parseServer(t, "--demo").Demo())
-	t.Setenv("PAPERS_DEMO", "true")
-	gt.True(t, parseServer(t).Demo())
+func TestDefaultUseCaseConfigMatchesTheFlagDefaults(t *testing.T) {
+	for _, name := range []string{"PAPERS_MAX_OPS_PER_BATCH", "PAPERS_PAPER_TOUCH_INTERVAL", "PAPERS_TRASH_RETENTION", "PAPERS_JOB_LEASE", "PAPERS_JOB_STEP"} {
+		t.Setenv(name, "")
+	}
+	gt.Equal(t, parseServer(t).UseCaseConfig(), config.DefaultUseCaseConfig())
 }

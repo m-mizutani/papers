@@ -91,7 +91,6 @@ Every flag can also be set through the environment variable next to it.
 | `--no-authn` / `PAPERS_NO_AUTHN` | `false` | Development only: every request is the dev user |
 | `--dev-user-email` / `PAPERS_DEV_USER_EMAIL`, `--dev-user-name` / `PAPERS_DEV_USER_NAME` | `dev@localhost`, `Developer` | The dev user of `--no-authn` |
 | `--enable-mcp` / `PAPERS_ENABLE_MCP` | `true` | Serve `/mcp` |
-| `--demo` / `PAPERS_DEMO` | `false` | Demo mode: at startup, fill each workspace that is still empty (no papers but an empty home) with sample papers. A workspace is filled once; one people already wrote in is left alone. Not the in-browser demo of `pnpm build:demo` |
 | `--ws-origin` / `PAPERS_WS_ORIGINS` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` / `PAPERS_REPOSITORY_BACKEND` | `memory` | `firestore` or `memory` (development only) |
 | `--firestore-project-id` / `PAPERS_FIRESTORE_PROJECT_ID`, `--firestore-database-id` / `PAPERS_FIRESTORE_DATABASE_ID` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |
@@ -124,6 +123,6 @@ A test checks that every flag of every command has a `PAPERS_*` environment vari
 | `--wait-timeout` / `PAPERS_WAIT_TIMEOUT` | `30m` | How long to wait for the indexes to become ready |
 | `--prune` / `PAPERS_PRUNE` | `false` | Delete indexes of the managed collection groups that papers does not need (they are only reported otherwise) |
 
-`papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` (`PAPERS_FORCE_DANGEROUS_APPLY`) skips the question, so never leave that variable set. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted.
+`papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` (`PAPERS_FORCE_DANGEROUS_APPLY`) skips the question, so never leave that variable set. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted. With `--demo` (`PAPERS_DEMO`) it then creates each workspace's home and writes the sample papers of `pkg/usecase/sample/` into it (not the in-browser demo of `pnpm build:demo`); it reads the workspace configuration (`--config`, `--global-config`) and the attachment store (`--attachment-backend` `gcs` or `dir`, with the same flags and variables as `papers serve`) and stops before deleting anything when they are missing or invalid. It prints one line per workspace: `seeded` with the number of sample papers, or `skipped` when someone wrote in the workspace while the reset ran.
 
 Both take `--firestore-project-id` and `--firestore-database-id` (or `PAPERS_FIRESTORE_PROJECT_ID`, `PAPERS_FIRESTORE_DATABASE_ID`).
