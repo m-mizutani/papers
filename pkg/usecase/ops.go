@@ -26,6 +26,9 @@ const (
 	OpMove           OpKind = "move"
 	OpSetTitle       OpKind = "set_title"
 	OpInsertMarkdown OpKind = "insert_markdown"
+	// OpSetHTML replaces the document of an HTML paper (its html_page
+	// block), based on BaseRev like an update.
+	OpSetHTML OpKind = "set_html"
 
 	OpInsertRow OpKind = "insert_row"
 	OpDeleteRow OpKind = "delete_row"
@@ -74,6 +77,12 @@ type Op struct {
 	BaseRev  int64   `json:"base_rev,omitempty"`
 	Title    *string `json:"title,omitempty"`
 	Markdown *string `json:"markdown,omitempty"`
+	// HTML is the document of set_html, and of the child an insert of a
+	// paper block creates with PaperKind html (required there).
+	HTML *string `json:"html,omitempty"`
+	// PaperKind is the kind of the child paper an insert of a paper block
+	// creates (blocks when absent).
+	PaperKind *model.PaperKind `json:"paper_kind,omitempty"`
 
 	// Cells fills a new table, row by row. Without cells, Rows and Cols
 	// give its size (default 2 x 2).
@@ -198,6 +207,20 @@ type applier struct {
 	presence   []*model.Event
 	// unbounded lifts the per-batch limits (version restore).
 	unbounded bool
+
+	// html is the document of the batch's set_html, stored beforehand.
+	html *stagedHTML
+	// children are the stored documents and issued IDs of HTML papers the
+	// batch's inserts create, by op index; idx is the op being applied.
+	children map[int]*stagedChild
+	idx      int
+}
+
+// stagedChild is an HTML paper an insert creates: its ID is issued and its
+// document stored before the transaction.
+type stagedChild struct {
+	id   model.PaperID
+	html *stagedHTML
 }
 
 func (a *applier) touch(b *model.Block) {
@@ -357,7 +380,7 @@ func normalizeContent(t model.BlockType, content string) (string, error) {
 	return out, nil
 }
 
-// checkImage requires an attached image to belong to this paper.
+// checkImage requires an attached image to be an image of this paper.
 func (a *applier) checkImage(props model.BlockProps) error {
 	if props.AttachmentID == "" {
 		return nil
@@ -365,11 +388,15 @@ func (a *applier) checkImage(props model.BlockProps) error {
 	if !model.ValidID(string(props.AttachmentID)) {
 		return goerr.Wrap(model.ErrInvalidArgument, "invalid attachment id")
 	}
-	if _, err := a.u.repo.GetAttachment(a.ctx, a.paper.WorkspaceID, a.paper.ID, props.AttachmentID); err != nil {
+	att, err := a.u.repo.GetAttachment(a.ctx, a.paper.WorkspaceID, a.paper.ID, props.AttachmentID)
+	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			return goerr.Wrap(model.ErrInvalidArgument, "the attachment does not belong to this paper", goerr.V("attachment_id", props.AttachmentID))
 		}
 		return goerr.Wrap(err, "failed to check attachment")
+	}
+	if !att.IsImage() {
+		return goerr.Wrap(model.ErrInvalidArgument, "an image block shows only image attachments", goerr.V("attachment_id", props.AttachmentID))
 	}
 	return nil
 }
@@ -386,6 +413,12 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 	}
 	if t.RequiredParent() != "" {
 		return "", goerr.Wrap(model.ErrInvalidArgument, "table cells are created with rows and columns", goerr.V("type", t))
+	}
+	if t == model.BlockHTMLPage {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "html_page blocks are made only with an HTML paper; create one with paper_kind html")
+	}
+	if (op.PaperKind != nil || op.HTML != nil) && t != model.BlockPaper {
+		return "", goerr.Wrap(model.ErrInvalidArgument, "paper_kind and html are only for inserting a paper block", goerr.V("type", t))
 	}
 	order, err := a.orderAfter(op.After, "")
 	if err != nil {
@@ -437,9 +470,12 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 			return "", err
 		}
 		child = &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Title: title, ParentID: a.paper.ID,
+			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Kind: model.PaperKindBlocks, Title: title, ParentID: a.paper.ID,
 			Visibility: model.VisibilityPublic,
 			CreatedBy:  a.actor, CreatedAt: a.now, UpdatedBy: a.actor, UpdatedAt: a.now,
+		}
+		if sc := a.children[a.idx]; sc != nil {
+			child.ID, child.Kind = sc.id, model.PaperKindHTML
 		}
 		props.PaperID = child.ID
 	}
@@ -473,6 +509,11 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 	if child != nil {
 		if err := a.tx.PutPaper(child); err != nil {
 			return "", goerr.Wrap(err, "failed to create child paper")
+		}
+		if sc := a.children[a.idx]; sc != nil {
+			if _, err := newHTMLPage(a.tx, child, sc.html, a.actor); err != nil {
+				return "", err
+			}
 		}
 		a.others[child.ID] = child
 	}
@@ -621,7 +662,7 @@ func (a *applier) update(op Op) error {
 		if err := nt.Validate(); err != nil {
 			return err
 		}
-		if b.Type == model.BlockTableCell || nt.RequiredParent() != "" || nt == model.BlockTable || nt == model.BlockPaper {
+		if b.Type == model.BlockTableCell || nt.RequiredParent() != "" || nt == model.BlockTable || nt == model.BlockPaper || nt == model.BlockHTMLPage {
 			return goerr.Wrap(model.ErrInvalidArgument, "this type change is not possible; insert a new block instead", goerr.V("block_id", b.ID), goerr.V("type", nt))
 		}
 		if b.Type == model.BlockTable {
@@ -1033,7 +1074,12 @@ func (a *applier) noteEditing(id model.BlockID) error {
 }
 
 func (a *applier) apply(op Op) error {
+	if a.paper.IsHTML() && op.Kind != OpSetTitle && op.Kind != OpSetHTML {
+		return goerr.Wrap(model.ErrInvalidArgument, "an HTML paper's body is written only with set_html", goerr.V("op", op.Kind), goerr.V("paper_id", a.paper.ID))
+	}
 	switch op.Kind {
+	case OpSetHTML:
+		return a.setHTML(op)
 	case OpInsert:
 		_, err := a.insert(op)
 		return err
@@ -1141,14 +1187,19 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 			return u.applyPaperOp(ctx, p, wsID, paperID, op)
 		}
 	}
-	if _, _, err := u.writablePaper(ctx, p, wsID, paperID); err != nil {
+	_, target, err := u.writablePaper(ctx, p, wsID, paperID)
+	if err != nil {
+		return nil, err
+	}
+	html, children, err := u.stageBatchHTML(ctx, p, target, in.Ops)
+	if err != nil {
 		return nil, err
 	}
 
 	now := u.now()
 	var result *BatchResult
 	var jobs []*model.Job
-	err := u.repo.RunTx(ctx, wsID, func(tx interfaces.Tx) error {
+	err = u.repo.RunTx(ctx, wsID, func(tx interfaces.Tx) error {
 		paper, err := tx.GetPaper(paperID)
 		if err != nil {
 			return goerr.Wrap(err, "failed to get paper", goerr.V("paper_id", paperID))
@@ -1161,9 +1212,10 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 			orig: map[model.BlockID]*model.Block{}, created: map[model.BlockID]bool{},
 			touched: map[model.BlockID]*model.Block{}, refs: map[string]string{},
 			others: map[model.PaperID]*model.Paper{}, bytes: map[model.BlockID]int{},
-			result: &BatchResult{},
+			result: &BatchResult{}, html: html, children: children,
 		}
 		for i, op := range in.Ops {
+			a.idx = i
 			if err := a.apply(op); errors.Is(err, errConflictRecorded) {
 				continue
 			} else if err != nil {
@@ -1184,6 +1236,86 @@ func (u *UseCases) Apply(ctx context.Context, p *model.Principal, wsID model.Wor
 	}
 	u.kick(ctx, jobs)
 	return result, nil
+}
+
+// stageBatchHTML checks the HTML a batch carries and stores it before the
+// transaction: the document of set_html (at most one, for an HTML paper),
+// and those of the HTML papers its inserts create, under IDs issued now.
+func (u *UseCases) stageBatchHTML(ctx context.Context, p *model.Principal, paper *model.Paper, ops []Op) (*stagedHTML, map[int]*stagedChild, error) {
+	var html *stagedHTML
+	children := map[int]*stagedChild{}
+	sets := 0
+	// What the transaction would refuse anyway is refused before anything
+	// is stored.
+	for _, op := range ops {
+		if op.PaperKind != nil && op.Kind != OpInsert {
+			return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "paper_kind is only for inserting a paper block", goerr.V("op", op.Kind))
+		}
+		if paper.IsHTML() && op.Kind != OpSetTitle && op.Kind != OpSetHTML {
+			return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "an HTML paper's body is written only with set_html", goerr.V("op", op.Kind), goerr.V("paper_id", paper.ID))
+		}
+	}
+	for _, op := range ops {
+		switch {
+		case op.Kind == OpSetHTML:
+			if sets++; sets > 1 {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "a batch has at most one set_html")
+			}
+			if !paper.IsHTML() {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "set_html is only for HTML papers", goerr.V("paper_id", paper.ID))
+			}
+			if op.HTML == nil {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "set_html requires html")
+			}
+		case op.Kind == OpInsert && op.PaperKind != nil:
+			if err := op.PaperKind.Validate(); err != nil {
+				return nil, nil, err
+			}
+			if *op.PaperKind == model.PaperKindHTML && op.HTML == nil {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "an HTML paper is created with its html")
+			}
+			if *op.PaperKind != model.PaperKindHTML && op.HTML != nil {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "html is only for an HTML paper (paper_kind html)")
+			}
+			if op.Type == nil || *op.Type != model.BlockPaper {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "paper_kind and html are only for inserting a paper block")
+			}
+			if *op.PaperKind == model.PaperKindHTML {
+				ok, err := u.canHaveChildren(ctx, paper)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !ok {
+					return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "this paper cannot have child papers", goerr.V("paper_id", paper.ID))
+				}
+			}
+		case op.HTML != nil:
+			return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "html is only for set_html and for inserting an HTML paper", goerr.V("op", op.Kind))
+		}
+		if op.HTML != nil {
+			if err := checkHTML(*op.HTML); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	for i, op := range ops {
+		switch {
+		case op.Kind == OpSetHTML:
+			s, err := u.stageHTML(ctx, p, paper.WorkspaceID, paper.ID, *op.HTML)
+			if err != nil {
+				return nil, nil, err
+			}
+			html = s
+		case op.Kind == OpInsert && op.HTML != nil:
+			id := model.NewPaperID()
+			s, err := u.stageHTML(ctx, p, paper.WorkspaceID, id, *op.HTML)
+			if err != nil {
+				return nil, nil, err
+			}
+			children[i] = &stagedChild{id: id, html: s}
+		}
+	}
+	return html, children, nil
 }
 
 func (u *UseCases) applyPaperOp(ctx context.Context, p *model.Principal, ws model.WorkspaceID, paper model.PaperID, op Op) (*BatchResult, error) {

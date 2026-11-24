@@ -261,3 +261,91 @@ func TestMCPUnfiledAndFields(t *testing.T) {
 	}})
 	gt.False(t, ok)
 }
+
+func TestMCPHTMLPaper(t *testing.T) { // T20, T24, T54 (guide)
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	session := connectMCP(t, ts, agent.bearer)
+
+	type guideOut struct {
+		Guide   string `json:"guide"`
+		Sandbox string `json:"sandbox"`
+	}
+	g, ok := callTool[guideOut](t, session, "papers_guide", map[string]any{"workspace_id": "team"})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(g.Guide, "set_html"))
+	gt.True(t, strings.Contains(g.Sandbox, "may load"))
+	g, ok = callTool[guideOut](t, session, "papers_guide", map[string]any{"workspace_id": "other"})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(g.Sandbox, "cannot load"))
+
+	// T62: an HTML paper needs its html
+	_, ok = callTool[struct{}](t, session, "papers_create_paper", map[string]any{"workspace_id": "team", "title": "Empty", "kind": "html"})
+	gt.False(t, ok)
+
+	type created struct {
+		ID model.PaperID `json:"id"`
+	}
+	cp, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": "team", "title": "Weekly", "kind": "html", "html": "<p>fourteen</p>"})
+	gt.True(t, ok)
+
+	type readOut struct {
+		Kind   model.PaperKind `json:"kind"`
+		HTML   string          `json:"html"`
+		Blocks []struct {
+			ID   model.BlockID   `json:"id"`
+			Type model.BlockType `json:"type"`
+			Rev  int64           `json:"rev"`
+		} `json:"blocks"`
+	}
+	r, ok := callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": "team", "paper": string(cp.ID)})
+	gt.True(t, ok)
+	gt.Equal(t, r.Kind, model.PaperKindHTML)
+	gt.Equal(t, r.HTML, "<p>fourteen</p>")
+	gt.A(t, r.Blocks).Length(1)
+	gt.Equal(t, r.Blocks[0].Type, model.BlockHTMLPage)
+
+	// title and HTML together through papers_write
+	type writeOut struct {
+		Revs map[model.BlockID]int64 `json:"revs"`
+	}
+	w, ok := callTool[writeOut](t, session, "papers_write", map[string]any{"workspace_id": "team", "paper": string(cp.ID), "ops": []map[string]any{
+		{"op": "set_title", "title": "Weekly report"},
+		{"op": "set_html", "html": "<p>nine</p>", "base_rev": r.Blocks[0].Rev},
+	}})
+	gt.True(t, ok)
+	gt.Equal(t, w.Revs[r.Blocks[0].ID], int64(2))
+	r, ok = callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": "team", "paper": string(cp.ID)})
+	gt.True(t, ok)
+	gt.Equal(t, r.HTML, "<p>nine</p>")
+
+	// a stale base explains how to recover
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "papers_write", Arguments: map[string]any{"workspace_id": "team", "paper": string(cp.ID), "ops": []map[string]any{
+		{"op": "set_html", "html": "<p>lost</p>", "base_rev": 1},
+	}}})
+	gt.NoError(t, err)
+	gt.True(t, res.IsError)
+	text := res.Content[0].(*mcp.TextContent).Text
+	gt.True(t, strings.Contains(text, "conflict"))
+	gt.True(t, strings.Contains(text, "papers_read"))
+
+	// other block ops are refused with a pointer to set_html
+	res, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "papers_write", Arguments: map[string]any{"workspace_id": "team", "paper": string(cp.ID), "ops": []map[string]any{
+		{"op": "insert", "type": "paragraph", "content": "x"},
+	}}})
+	gt.NoError(t, err)
+	gt.True(t, res.IsError)
+	gt.True(t, strings.Contains(res.Content[0].(*mcp.TextContent).Text, "set_html"))
+
+	// a version reads back its own html
+	_, ok = callTool[struct{}](t, session, "papers_save_version", map[string]any{"workspace_id": "team", "paper": string(cp.ID)})
+	gt.True(t, ok)
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": "team", "paper": string(cp.ID), "ops": []map[string]any{
+		{"op": "set_html", "html": "<p>eleven</p>", "base_rev": 2},
+	}})
+	gt.True(t, ok)
+	r, ok = callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": "team", "paper": string(cp.ID), "at": "1"})
+	gt.True(t, ok)
+	gt.Equal(t, r.HTML, "<p>nine</p>")
+}

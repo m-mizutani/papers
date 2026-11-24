@@ -16,6 +16,12 @@ import (
 
 const maxRequestBody = 4 << 20
 
+// maxHTMLRequestBody bounds the JSON of requests that may carry an HTML
+// paper's document (creating a paper, a batch): the document is at most
+// model.MaxHTMLSize bytes, and escaping in JSON may make it up to six times
+// longer (\u003c for <). Cloud Run accepts requests up to 32 MiB.
+const maxHTMLRequestBody = 32 << 20
+
 type errorBody struct {
 	Error errorDetail `json:"error"`
 }
@@ -92,9 +98,31 @@ func writeError(ctx context.Context, w http.ResponseWriter, err error) {
 }
 
 func decodeJSON(r *http.Request, v any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody))
+	return decodeJSONLimit(r, v, maxRequestBody)
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// decodeJSONLimit decodes a JSON body of at most limit bytes; a longer one
+// is refused as too large.
+func decodeJSONLimit(r *http.Request, v any, limit int64) error {
+	counted := &countingReader{r: io.LimitReader(r.Body, limit+1)}
+	dec := json.NewDecoder(counted)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
+		if counted.n > limit {
+			return goerr.Wrap(model.ErrInvalidArgument, "the request body is too large", goerr.V("max_bytes", limit))
+		}
 		return goerr.Wrap(model.ErrInvalidArgument, "invalid JSON body", goerr.V("cause", err.Error()))
 	}
 	return nil

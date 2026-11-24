@@ -633,3 +633,89 @@ func TestBlockFields(t *testing.T) {
 		gt.Equal(t, again[0].Props.Fields["rto"], "10m")
 	})
 }
+
+func TestHTMLPapers(t *testing.T) {
+	runRepositoryTest(t, "kind, html page block and attachment in one transaction", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		home, _ := homeAndChild(t, repo)
+		p := paperIn(home.WorkspaceID, "", "Report")
+		p.Kind = model.PaperKindHTML
+		a := &model.Attachment{
+			ID: model.NewAttachmentID(), WorkspaceID: p.WorkspaceID, PaperID: p.ID,
+			ContentType: model.HTMLContentType, Size: 12, SHA256: "html-sum",
+			CreatedBy: p.CreatedBy, CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
+		}
+		page := blockIn(p, "", "a1", "hello")
+		page.Type = model.BlockHTMLPage
+		page.Props = model.BlockProps{AttachmentID: a.ID}
+		gt.NoError(t, repo.RunTx(ctx, p.WorkspaceID, func(tx interfaces.Tx) error {
+			if err := tx.PutPaper(p); err != nil {
+				return err
+			}
+			if err := tx.PutAttachment(a); err != nil {
+				return err
+			}
+			return tx.PutBlock(page)
+		}))
+
+		got := gt.R1(repo.GetPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		gt.Equal(t, got.Kind, model.PaperKindHTML)
+		gotA := gt.R1(repo.GetAttachment(ctx, p.WorkspaceID, p.ID, a.ID)).NoError(t)
+		gt.Equal(t, gotA.ID, a.ID)
+		gt.Equal(t, gotA.WorkspaceID, a.WorkspaceID)
+		gt.Equal(t, gotA.PaperID, a.PaperID)
+		gt.Equal(t, gotA.ContentType, a.ContentType)
+		gt.Equal(t, gotA.Size, a.Size)
+		gt.Equal(t, gotA.SHA256, a.SHA256)
+		gt.Equal(t, gotA.CreatedBy, a.CreatedBy)
+		gt.True(t, gotA.CreatedAt.Equal(a.CreatedAt))
+		byHash := gt.R1(repo.FindAttachmentByHash(ctx, p.WorkspaceID, p.ID, "html-sum")).NoError(t)
+		gt.Equal(t, byHash.ID, a.ID)
+		blocks := gt.R1(repo.ListBlocks(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		gt.A(t, blocks).Length(1)
+		gt.Equal(t, blocks[0].Type, model.BlockHTMLPage)
+		gt.Equal(t, blocks[0].Props.AttachmentID, a.ID)
+	})
+
+	runRepositoryTest(t, "attachment of a failed transaction is not stored", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		_, p := homeAndChild(t, repo)
+		a := &model.Attachment{
+			ID: model.NewAttachmentID(), WorkspaceID: p.WorkspaceID, PaperID: p.ID,
+			ContentType: model.HTMLContentType, Size: 3, SHA256: "s",
+			CreatedBy: p.CreatedBy, CreatedAt: time.Now().UTC(),
+		}
+		boom := errors.New("boom")
+		err := repo.RunTx(ctx, p.WorkspaceID, func(tx interfaces.Tx) error {
+			if err := tx.PutAttachment(a); err != nil {
+				return err
+			}
+			return boom
+		})
+		gt.True(t, errors.Is(err, boom))
+		_, err = repo.GetAttachment(ctx, p.WorkspaceID, p.ID, a.ID)
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+	})
+
+	runRepositoryTest(t, "a paper without a kind reads as blocks", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		_, p := homeAndChild(t, repo) // written without Kind, as older records are
+		got := gt.R1(repo.GetPaper(ctx, p.WorkspaceID, p.ID)).NoError(t)
+		gt.Equal(t, got.Kind.Or(), model.PaperKindBlocks)
+		gt.False(t, got.IsHTML())
+	})
+}
+
+func TestTxAttachmentOfUnknownPaper(t *testing.T) {
+	runRepositoryTest(t, "attachment of an unknown paper rejected", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		_, p := homeAndChild(t, repo)
+		err := repo.RunTx(ctx, p.WorkspaceID, func(tx interfaces.Tx) error {
+			return tx.PutAttachment(&model.Attachment{
+				ID: model.NewAttachmentID(), WorkspaceID: p.WorkspaceID, PaperID: model.NewPaperID(),
+				ContentType: model.HTMLContentType, Size: 3, SHA256: "s", CreatedBy: p.CreatedBy, CreatedAt: time.Now().UTC(),
+			})
+		})
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	})
+}

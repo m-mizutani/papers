@@ -41,6 +41,7 @@ Block types (type: props)
 - paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them all, otherwise archives the child with everything under it.
 - table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
 - mermaid, svg (a complete <svg> with a viewBox), html (self-contained, rendered in a sandboxed iframe): only AI writes these; props.height sets the frame height.
+- HTML papers: a paper whose whole body is one HTML document you write; people only view it (in a sandboxed frame where its scripts run) and cannot edit it. Create one with papers_create_paper kind:"html" and its html (required; the paper and its HTML are written together or not at all), or with {"op":"insert","type":"paper","title":"...","paper_kind":"html","html":"..."} in its parent's batch. Replace the whole document with {"op":"set_html","html":"...","base_rev":N}: N is the rev of its one block (type html_page) from papers_read, which also returns the current html; it can go in the same batch as set_title. No other block op works on an HTML paper, and it cannot have child papers. Its title, place, visibility, versions, archive and trash work as for any paper. The document is at most 5 MiB of UTF-8; make it self-contained or use absolute URLs (relative URLs do not resolve). Its scripts cannot reach papers, its API or the viewer's cookies, and cannot open new windows. Whether it may load anything from other hosts (CDN scripts, images, fetch) is up to the workspace: see sandbox in papers_guide with workspace_id.
 - In svg and html, mark each value people may change with data-field="name" on its element and put the value in props.fields ({"rto":"15m"}); people then edit just those values in place. Names: lowercase letter first, then lowercase letters, digits or _ (at most 32 characters); at most 32 fields; each value one line, at most 200 bytes. Field values are searchable.
 
 Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
@@ -123,7 +124,15 @@ type mcpGuideOut struct {
 	// Home is the workspace's home paper as Markdown: its summary and
 	// entry points, written by people and agents.
 	Home string `json:"home,omitempty"`
+	// Sandbox says what HTML (HTML papers, html and svg blocks) may load
+	// in the workspace.
+	Sandbox string `json:"sandbox,omitempty"`
 }
+
+const (
+	sandboxOpen   = "HTML in this workspace may load scripts, styles, images, fonts and connections from other hosts."
+	sandboxClosed = "HTML in this workspace cannot load anything from other hosts (no CDN scripts, external images, fonts or fetch): embed every script, style and image (data: URLs) in the HTML."
+)
 
 type mcpWorkspace struct {
 	ID          model.WorkspaceID `json:"id"`
@@ -186,17 +195,20 @@ type mcpBlock struct {
 }
 
 type mcpReadOut struct {
-	ID             model.PaperID     `json:"id"`
-	Title          string            `json:"title"`
-	Path           []mcpPaperRef     `json:"path"`
-	Status         model.PaperStatus `json:"status"`
-	Version        int               `json:"version"`
-	At             string            `json:"at"`
-	URL            string            `json:"url"`
-	Blocks         []mcpBlock        `json:"blocks"`
-	Children       []mcpPaperRef     `json:"children,omitempty"`
-	Next           string            `json:"next,omitempty"`
-	WorkspaceRules string            `json:"workspace_rules,omitempty"`
+	ID       model.PaperID     `json:"id"`
+	Kind     model.PaperKind   `json:"kind"`
+	Title    string            `json:"title"`
+	Path     []mcpPaperRef     `json:"path"`
+	Status   model.PaperStatus `json:"status"`
+	Version  int               `json:"version"`
+	At       string            `json:"at"`
+	URL      string            `json:"url"`
+	Blocks   []mcpBlock        `json:"blocks"`
+	Children []mcpPaperRef     `json:"children,omitempty"`
+	Next     string            `json:"next,omitempty"`
+	// HTML is the document of an HTML paper at the state read.
+	HTML           string `json:"html,omitempty"`
+	WorkspaceRules string `json:"workspace_rules,omitempty"`
 }
 
 type mcpCreateIn struct {
@@ -204,7 +216,9 @@ type mcpCreateIn struct {
 	Title       string            `json:"title" jsonschema:"paper title (single line)"`
 	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit to create an unfiled paper"`
 	Private     bool              `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
-	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown"`
+	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown (not for an HTML paper)"`
+	Kind        model.PaperKind   `json:"kind,omitempty" jsonschema:"blocks (default) or html: an HTML paper whose whole body is the html you give"`
+	HTML        string            `json:"html,omitempty" jsonschema:"the document of an HTML paper (required with kind html; UTF-8, at most 5 MiB)"`
 }
 
 type mcpWriteIn struct {
@@ -329,6 +343,10 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				return out, err
 			}
 			out.WorkspaceRules, out.Language = ws.Description, ws.Language
+			out.Sandbox = sandboxOpen
+			if !ws.Sandbox.ExternalResources {
+				out.Sandbox = sandboxClosed
+			}
 			md, err := s.uc.Export(ctx, p, in.WorkspaceID, ws.HomePaperID)
 			if err != nil {
 				return out, err
@@ -371,25 +389,25 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			return out, nil
 		})
 
-	addTool(server, "papers_read", "Read a paper: blocks with ids and revs (send rev back as base_rev), its place in the tree, and its child papers. Reads the current state unless at is given; long papers come in ranges (pass next as after).",
+	addTool(server, "papers_read", "Read a paper: blocks with ids and revs (send rev back as base_rev), its place in the tree, and its child papers; for an HTML paper also its html. Reads the current state unless at is given; long papers come in ranges (pass next as after).",
 		func(ctx context.Context, p *model.Principal, in mcpReadIn) (mcpReadOut, error) {
 			return s.mcpRead(ctx, p, in)
 		})
 
-	addTool(server, "papers_create_paper", "Create a paper under a parent (unfiled without one, or a private one), optionally with initial Markdown.",
+	addTool(server, "papers_create_paper", "Create a paper under a parent (unfiled without one, or a private one), optionally with initial Markdown, or an HTML paper (kind html) with its HTML.",
 		func(ctx context.Context, p *model.Principal, in mcpCreateIn) (mcpPaperRef, error) {
 			vis := model.VisibilityPublic
 			if in.Private {
 				vis = model.VisibilityPrivate
 			}
-			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown})
+			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown, Kind: in.Kind, HTML: in.HTML})
 			if err != nil {
 				return mcpPaperRef{}, err
 			}
 			return mcpPaperRef{ID: q.ID, Title: q.Title, Status: q.Status(), Private: q.IsPrivate()}, nil
 		})
 
-	addTool(server, "papers_write", "Apply ops to a paper atomically (see papers_guide). Fails with a conflict when a block changed since your base_rev. Does not save a version.",
+	addTool(server, "papers_write", "Apply ops to a paper atomically (see papers_guide; an HTML paper takes set_html and set_title). Fails with a conflict when a block changed since your base_rev. Does not save a version.",
 		func(ctx context.Context, p *model.Principal, in mcpWriteIn) (mcpWriteOut, error) {
 			q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
 			if err != nil {
@@ -488,7 +506,7 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 		return mcpReadOut{}, err
 	}
 	out := mcpReadOut{
-		ID: q.ID, Title: view.Paper.Title, Status: view.Paper.Status(), Version: view.Paper.VersionNumber,
+		ID: q.ID, Kind: view.Paper.Kind.Or(), Title: view.Paper.Title, Status: view.Paper.Status(), Version: view.Paper.VersionNumber,
 		Path: []mcpPaperRef{}, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
 	}
 	for _, a := range view.Path {
@@ -523,6 +541,13 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 			}
 		}
 		blocks = keep
+	}
+	if view.Paper.IsHTML() {
+		doc, err := s.uc.ReadHTML(ctx, p, in.WorkspaceID, q.ID, in.At)
+		if err != nil {
+			return mcpReadOut{}, err
+		}
+		out.HTML = doc.HTML
 	}
 	out.Blocks = toMCPBlocks(blocks)
 	for _, b := range blocks {
@@ -561,5 +586,6 @@ func mcpConflictError(c *usecase.ConflictError) error {
 	}
 	return goerr.Wrap(model.ErrConflict, "conflict: nothing was written. These blocks changed since your base_rev; "+
 		"their current state follows. Redo your edit on top of it with the new rev as base_rev, "+
-		"or resend with force:true only if the user wants to overwrite. Deleted blocks must be inserted again. "+string(body))
+		"or resend with force:true only if the user wants to overwrite. Deleted blocks must be inserted again. "+
+		"For an HTML paper (html_page block), read its current html with papers_read. "+string(body))
 }

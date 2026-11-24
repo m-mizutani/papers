@@ -125,7 +125,8 @@ func (u *UseCases) Init(ctx context.Context) error {
 	system := model.Actor{Kind: model.ActorSystem, Name: "papers"}
 	for _, ws := range u.workspaces.List() {
 		home := &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: ws.ID, Title: ws.Name, Visibility: model.VisibilityPublic,
+			Kind: model.PaperKindBlocks,
+			ID:   model.NewPaperID(), WorkspaceID: ws.ID, Title: ws.Name, Visibility: model.VisibilityPublic,
 			CreatedBy: system, CreatedAt: now, UpdatedBy: system, UpdatedAt: now,
 		}
 		if _, err := u.repo.EnsureHome(ctx, ws.ID, home); err != nil {

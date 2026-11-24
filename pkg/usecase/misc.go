@@ -30,12 +30,18 @@ type CreateInput struct {
 	Parent     string
 	After      *string
 	Markdown   string
+	// Kind is the kind of the new paper (blocks when empty). An HTML paper
+	// is created with its HTML, in one transaction.
+	Kind model.PaperKind
+	HTML string
 }
 
 // CreatePaper creates a paper. For a public paper with a parent this is the
 // insert of a paper block into the parent (one batch); without a parent, and
 // for a private paper, only the paper is written. The body follows when
-// Markdown is given.
+// Markdown is given. An HTML paper is written with its html_page block and
+// its document in the same transaction, so it is created whole or not at
+// all.
 func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model.WorkspaceID, in CreateInput) (*model.Paper, error) {
 	if _, err := u.writableWorkspace(ctx, p, ws); err != nil {
 		return nil, err
@@ -43,6 +49,20 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 	title := strings.TrimSpace(in.Title)
 	if err := model.ValidateTitle(title); err != nil {
 		return nil, err
+	}
+	if err := in.Kind.Validate(); err != nil {
+		return nil, err
+	}
+	kind := in.Kind.Or()
+	if kind == model.PaperKindHTML {
+		if in.Markdown != "" {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "an HTML paper has no Markdown; give html")
+		}
+		if err := checkHTML(in.HTML); err != nil {
+			return nil, err
+		}
+	} else if in.HTML != "" {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "html is only for an HTML paper (kind html)")
 	}
 	var paper *model.Paper
 	switch {
@@ -56,10 +76,27 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		now := u.now()
 		actor := p.Actor()
 		paper = &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: ws, Title: title, Visibility: vis,
+			ID: model.NewPaperID(), WorkspaceID: ws, Kind: kind, Title: title, Visibility: vis,
 			CreatedBy: actor, CreatedAt: now, UpdatedBy: actor, UpdatedAt: now,
 		}
-		if err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(paper) }); err != nil {
+		var html *stagedHTML
+		if kind == model.PaperKindHTML {
+			var err error
+			if html, err = u.stageHTML(ctx, p, ws, paper.ID, in.HTML); err != nil {
+				return nil, err
+			}
+		}
+		if err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			if err := tx.PutPaper(paper); err != nil {
+				return err
+			}
+			if html != nil {
+				if _, err := newHTMLPage(tx, paper, html, actor); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
 			return nil, goerr.Wrap(err, "failed to create paper")
 		}
 	default:
@@ -67,7 +104,11 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		if err != nil {
 			return nil, err
 		}
-		res, err := u.Apply(ctx, p, ws, parent.ID, BatchInput{Ops: []Op{{Kind: OpInsert, Type: ptr(model.BlockPaper), Title: &title, After: in.After}}})
+		op := Op{Kind: OpInsert, Type: ptr(model.BlockPaper), Title: &title, After: in.After}
+		if kind == model.PaperKindHTML {
+			op.PaperKind, op.HTML = ptr(kind), ptr(in.HTML)
+		}
+		res, err := u.Apply(ctx, p, ws, parent.ID, BatchInput{Ops: []Op{op}})
 		if err != nil {
 			return nil, err
 		}
@@ -229,8 +270,12 @@ type UploadInput struct {
 // Upload attaches an image to a paper. The same bytes attached twice to
 // one paper yield the same attachment.
 func (u *UseCases) Upload(ctx context.Context, p *model.Principal, ws model.WorkspaceID, id model.PaperID, in UploadInput) (*model.Attachment, error) {
-	if _, _, err := u.writablePaper(ctx, p, ws, id); err != nil {
+	_, paper, err := u.writablePaper(ctx, p, ws, id)
+	if err != nil {
 		return nil, err
+	}
+	if paper.IsHTML() {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "an HTML paper has no images; embed them in its HTML", goerr.V("paper_id", id))
 	}
 	if !model.AllowedAttachmentTypes[in.ContentType] {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "only images can be attached for now", goerr.V("content_type", in.ContentType))
@@ -244,9 +289,9 @@ func (u *UseCases) Upload(ctx context.Context, p *model.Principal, ws model.Work
 	}
 	sum := sha256.Sum256(data)
 	hash := hex.EncodeToString(sum[:])
-	if a, err := u.repo.FindAttachmentByHash(ctx, ws, id, hash); err == nil {
+	if a, err := u.repo.FindAttachmentByHash(ctx, ws, id, hash); err == nil && a.IsImage() {
 		return a, nil
-	} else if !errors.Is(err, model.ErrNotFound) {
+	} else if err != nil && !errors.Is(err, model.ErrNotFound) {
 		return nil, goerr.Wrap(err, "failed to look up attachment")
 	}
 	name := path.Base(strings.ReplaceAll(strings.TrimSpace(in.Name), "\\", "/"))
@@ -292,6 +337,10 @@ func (u *UseCases) OpenAttachment(ctx context.Context, p *model.Principal, ws mo
 	a, err := u.repo.GetAttachment(ctx, ws, id, att)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to get attachment")
+	}
+	if !a.IsImage() {
+		// HTML documents are served only by OpenHTML, sandboxed.
+		return nil, notFound("attachment", att)
 	}
 	url, err := u.store.SignedURL(ctx, a.StoreKey(), 5*time.Minute)
 	if err != nil {

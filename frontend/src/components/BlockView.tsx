@@ -75,6 +75,8 @@ export interface BlockContext {
   menuFor: string | null
   marks?: Map<string, Mark>
   slashOpen: boolean
+  /** Whether the workspace lets AI-authored HTML load from other hosts. */
+  external: boolean
   actions: BlockActions
 }
 
@@ -97,12 +99,13 @@ function ChildCard({ block, ctx }: { block: Block; ctx: BlockContext }) {
   const ref = ctx.state.children.get(block.props.paper_id ?? '')
   if (!ref) return <div className="child arch"><span className="pi" aria-hidden>▤</span><span className="ct"><span className="cn">{t('childHidden')}</span></span></div>
   const status = ref.version_number > 0 ? `v${ref.version_number}` : t('draft')
+  const html = ref.kind === 'html'
   return (
     <Link className={`child${ref.status === 'archived' ? ' arch' : ''}`} to={`/ws/${ctx.ws}/p/${ref.id}`} onClick={(e) => e.stopPropagation()}>
-      <span className="pi" aria-hidden>▤</span>
+      <span className={`pi${html ? ' code' : ''}`} aria-hidden>{html ? '</>' : '▤'}</span>
       <span className="ct">
         <span className="cn">{ref.title || t('untitled')}</span>
-        <span className="cs">{[status, ref.status === 'archived' ? t('archived') : null].filter(Boolean).join(' · ')}</span>
+        <span className="cs">{[html ? t('htmlBadge') : null, status, ref.status === 'archived' ? t('archived') : null].filter(Boolean).join(' · ')}</span>
       </span>
       <span className="go" aria-hidden>→</span>
     </Link>
@@ -220,7 +223,7 @@ function Body({ block, ctx }: { block: Block; ctx: BlockContext }) {
         <div className="rich">
           {title && <div className="bar">{title}</div>}
           <RichFrame kind={block.type} content={block.content} height={block.props.height} title={title ?? actorName(block.created_by)}
-            fields={block.props.fields} onField={ctx.canEdit ? (name, value) => ctx.actions.setField(block, name, value) : undefined} />
+            fields={block.props.fields} onField={ctx.canEdit ? (name, value) => ctx.actions.setField(block, name, value) : undefined} external={ctx.external} />
         </div>
       )
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'
-import { RichFrame, acceptField, buildSrcDoc, frameTitle } from './RichFrame'
+import { RichFrame, SANDBOX_CSP, acceptField, buildSrcDoc, frameTitle, withSandboxCSP } from './RichFrame'
 
 describe('RichFrame', () => {
   it('sandboxes content without same-origin access', () => {
@@ -47,5 +47,33 @@ describe('fields', () => {
     expect(onField).not.toHaveBeenCalled()
     window.dispatchEvent(new MessageEvent('message', { data: { papersField: 1, k: 'rto', v: '9m' }, source: frame?.contentWindow ?? null }))
     expect(onField).toHaveBeenCalledWith('rto', '9m')
+  })
+})
+
+describe('external resources (workspace sandbox)', () => {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`
+
+  it('puts the policy first when the workspace keeps HTML to what it embeds', () => {
+    // T55
+    for (const kind of ['html', 'svg'] as const) {
+      const doc = buildSrcDoc(kind, kind === 'svg' ? '<svg/>' : '<p>x</p>', {}, false, false)
+      expect(doc.startsWith(`<!doctype html>${csp}`)).toBe(true)
+      expect(buildSrcDoc(kind, '<p>x</p>', {}, false, true)).not.toContain('Content-Security-Policy')
+    }
+    const { container } = render(<RichFrame kind="html" content="<p>x</p>" title="t" external={false} />)
+    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain(SANDBOX_CSP)
+  })
+
+  it('keeps one doctype and puts the policy before the document', () => {
+    // T56
+    const full = withSandboxCSP('<!DOCTYPE html><html><head><script src="https://cdn.example/x.js"></script></head><body>x</body></html>')
+    expect(full.startsWith(`<!doctype html>${csp}<html>`)).toBe(true)
+    expect(full.match(/<!doctype/gi)).toHaveLength(1)
+    const script = withSandboxCSP('  <script>alert(1)</script><p>x</p>')
+    expect(script.startsWith(`<!doctype html>${csp}`)).toBe(true)
+    expect(script.indexOf(csp)).toBeLessThan(script.indexOf('<script>'))
+    const fragment = withSandboxCSP('<p>x</p>')
+    expect(fragment).toBe(`<!doctype html>${csp}<p>x</p>`)
+    expect(SANDBOX_CSP).toContain("default-src 'none'")
   })
 })

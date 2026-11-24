@@ -119,6 +119,11 @@ func fieldText(fields map[string]string) string {
 	return strings.Join(values, " ")
 }
 
+// HTMLText is the text an HTML paper's document shows, for search: its
+// text nodes outside script, style, template and noscript, with runs of
+// white space joined, capped at MaxSearchTextLength bytes.
+func HTMLText(src string) string { return capText(markupText(src)) }
+
 func isHiddenTag(name []byte) bool {
 	switch string(name) {
 	case "script", "style", "template", "noscript":

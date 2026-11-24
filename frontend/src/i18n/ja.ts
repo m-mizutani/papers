@@ -302,4 +302,9 @@ export const ja: Record<MsgKey, string> = {
   viaApi: 'API 経由',
   renderFailed: '図を描けませんでした',
   forUser: '{name} の代理',
+  htmlBadge: 'HTML',
+  htmlFrameTitle: '{title} の内容',
+  htmlLoadFailed: '内容を読み込めませんでした。',
+  openHtml: 'HTML を新しいタブで開く',
+  showLatest: '最新に更新',
 }

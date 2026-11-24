@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -197,4 +198,29 @@ func TestPaperQueryAndCursor(t *testing.T) {
 	same := validPaper()
 	same.CreatedAt = p.CreatedAt
 	gt.Equal(t, c.After(model.SortCreated, same), same.ID < p.ID)
+}
+
+func TestPaperKind(t *testing.T) { // T1
+	for _, k := range []model.PaperKind{"", model.PaperKindBlocks, model.PaperKindHTML} {
+		p := validPaper()
+		p.Kind = k
+		gt.NoError(t, p.Validate())
+	}
+	p := validPaper()
+	p.Kind = "pdf"
+	gt.True(t, errors.Is(p.Validate(), model.ErrInvalidArgument))
+
+	gt.Equal(t, model.PaperKind("").Or(), model.PaperKindBlocks)
+	gt.Equal(t, model.PaperKindHTML.Or(), model.PaperKindHTML)
+	p = validPaper()
+	gt.False(t, p.IsHTML())
+	p.Kind = model.PaperKindHTML
+	gt.True(t, p.IsHTML())
+
+	// JSON always names the kind, also for records written before kinds
+	old := validPaper()
+	data := gt.R1(json.Marshal(old)).NoError(t)
+	gt.S(t, string(data)).Contains(`"kind":"blocks"`)
+	data = gt.R1(json.Marshal(p)).NoError(t)
+	gt.S(t, string(data)).Contains(`"kind":"html"`)
 }

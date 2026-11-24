@@ -84,7 +84,7 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - No hardcoded colours, spacing or sizes outside the tokens in `frontend/src/styles/global.css`.
 - All user-facing text goes through i18n (`frontend/src/i18n/keys.ts`, `en.ts`, `ja.ts`).
 - Enter-key handlers must respect IME composition: use `isEnter` / `isImeComposing` from `src/utils/keyboard.ts` (enforced by ESLint).
-- AI-authored HTML/SVG renders only inside the sandboxed `RichFrame` (no `allow-same-origin`). Never inject block content as HTML elsewhere.
+- AI-authored HTML/SVG renders only inside the sandboxed `RichFrame` (blocks) or `HtmlPage` (HTML papers), never with `allow-same-origin`. Never inject block content as HTML elsewhere.
 
 ### Screen changes and screenshots (MANDATORY)
 - Any change that alters what a screen shows (components, styles, tokens, layout, i18n copy) must be checked with screenshots taken by Playwright, and you must look at them before you report the work done. Passing tests and type checks are not a substitute.

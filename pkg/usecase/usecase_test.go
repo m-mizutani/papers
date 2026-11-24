@@ -167,6 +167,27 @@ type counting struct {
 	calls map[string]int
 	// failChildren makes the next calls of ListChildrenOf fail.
 	failChildren int
+	// failTx makes the next transactions fail after their writes are
+	// staged.
+	failTx int
+}
+
+func (c *counting) RunTx(ctx context.Context, ws model.WorkspaceID, fn func(tx interfaces.Tx) error) error {
+	c.mu.Lock()
+	fail := c.failTx > 0
+	if fail {
+		c.failTx--
+	}
+	c.mu.Unlock()
+	return c.Repository.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		if fail {
+			return errors.New("the transaction was aborted")
+		}
+		return nil
+	})
 }
 
 func (c *counting) called(name string) {

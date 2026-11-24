@@ -116,6 +116,9 @@ export const api = {
     request<Attachment>('POST', `${paperPath(ws, paper)}/attachments?name=${enc(file.name)}`, undefined, { type: file.type, data: file }),
   attachmentURL: (ws: string, paper: string, id: string) => `${paperPath(ws, paper)}/attachments/${enc(id)}`,
   markdownURL: (ws: string, paper: string) => `${paperPath(ws, paper)}/markdown`,
+  /** One document of an HTML paper, served sandboxed; documents never change. */
+  htmlURL: (ws: string, paper: string, attachment: string) => `${paperPath(ws, paper)}/html/${enc(attachment)}`,
+  fetchHTML: (ws: string, paper: string, attachment: string) => request<string>('GET', `${paperPath(ws, paper)}/html/${enc(attachment)}`),
   liveURL: (ws: string, paper: string) => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${window.location.host}${paperPath(ws, paper)}/live`

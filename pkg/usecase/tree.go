@@ -112,10 +112,10 @@ func (u *UseCases) checkNotHome(ctx context.Context, paper *model.Paper, what st
 }
 
 // canHaveChildren reports whether paper may be a parent: the home or a
-// filed paper (public with a parent). Unfiled and private papers have no
-// children.
+// filed paper (public with a parent). Unfiled, private and HTML papers
+// have no children.
 func (u *UseCases) canHaveChildren(ctx context.Context, paper *model.Paper) (bool, error) {
-	if paper.IsPrivate() {
+	if paper.IsPrivate() || paper.IsHTML() {
 		return false, nil
 	}
 	if paper.ParentID != "" {

@@ -46,7 +46,7 @@ export async function homeOf(request: APIRequestContext, ws = WS): Promise<strin
  * given or it is asked to be unfiled (or private): tests keep the sidebar's
  * unfiled count small.
  */
-export async function createPaper(request: APIRequestContext, input: { title: string; markdown?: string; parent?: string; visibility?: 'public' | 'private'; unfiled?: boolean }, ws = WS): Promise<Paper> {
+export async function createPaper(request: APIRequestContext, input: { title: string; markdown?: string; parent?: string; visibility?: 'public' | 'private'; unfiled?: boolean; kind?: 'html'; html?: string }, ws = WS): Promise<Paper> {
   const { unfiled, ...rest } = input
   const parent = rest.parent ?? (unfiled || rest.visibility === 'private' ? undefined : await homeOf(request, ws))
   return call<Paper>(request, 'POST', `/workspaces/${ws}/papers`, { ...rest, parent })

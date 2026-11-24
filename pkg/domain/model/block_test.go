@@ -196,3 +196,20 @@ func TestBlockPropsFieldsValidate(t *testing.T) {
 		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
 	}
 }
+
+func TestHTMLPageBlock(t *testing.T) { // T37
+	b := validBlock()
+	b.Type = model.BlockHTMLPage
+	b.Props = model.BlockProps{AttachmentID: model.NewAttachmentID()}
+	gt.NoError(t, b.Validate())
+	gt.False(t, model.BlockHTMLPage.HumanEditable())
+
+	b.Props.AttachmentID = ""
+	gt.True(t, errors.Is(b.Validate(), model.ErrInvalidArgument))
+	b.Props.AttachmentID = "nope"
+	gt.True(t, errors.Is(b.Validate(), model.ErrInvalidArgument))
+
+	att := model.NewAttachmentID()
+	n := model.BlockProps{AttachmentID: att, Height: 30, URL: "https://x", Fields: map[string]string{"a": "b"}, Level: 2}.Normalize(model.BlockHTMLPage)
+	gt.Equal(t, n, model.BlockProps{AttachmentID: att})
+}

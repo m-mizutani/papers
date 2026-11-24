@@ -34,6 +34,11 @@ const (
 	BlockHTML    BlockType = "html"
 	BlockSVG     BlockType = "svg"
 	BlockMermaid BlockType = "mermaid"
+
+	// BlockHTMLPage is the whole body of an HTML paper: it points to the
+	// paper's text/html attachment and its content is the HTML's text
+	// nodes, kept for search. Only the server creates it.
+	BlockHTMLPage BlockType = "html_page"
 )
 
 type blockTypeSpec struct {
@@ -62,6 +67,7 @@ var blockTypeSpecs = map[BlockType]blockTypeSpec{
 	BlockHTML:      {},
 	BlockSVG:       {},
 	BlockMermaid:   {},
+	BlockHTMLPage:  {},
 }
 
 // BlockTypes lists every block type in display order.
@@ -69,7 +75,7 @@ func BlockTypes() []BlockType {
 	return []BlockType{
 		BlockParagraph, BlockHeading, BlockQuote, BlockBullet, BlockNumbered,
 		BlockTodo, BlockCallout, BlockCode, BlockDivider, BlockImage,
-		BlockTable, BlockTableCell, BlockPaper, BlockHTML, BlockSVG, BlockMermaid,
+		BlockTable, BlockTableCell, BlockPaper, BlockHTML, BlockSVG, BlockMermaid, BlockHTMLPage,
 	}
 }
 
@@ -108,6 +114,7 @@ type BlockProps struct {
 	Icon     string `json:"icon,omitempty"`
 
 	// image: an attachment of the same paper, or an external URL.
+	// html_page: the paper's text/html attachment (always set).
 	URL          string       `json:"url,omitempty"`
 	AttachmentID AttachmentID `json:"attachment_id,omitempty"`
 
@@ -182,6 +189,8 @@ func (p BlockProps) Normalize(t BlockType) BlockProps {
 		}
 	case BlockMermaid:
 		n.Height = p.Height
+	case BlockHTMLPage:
+		n.AttachmentID = p.AttachmentID
 	}
 	return n
 }
@@ -262,6 +271,10 @@ func (p BlockProps) validate(t BlockType) error {
 	case BlockPaper:
 		if !ValidID(string(p.PaperID)) {
 			return goerr.Wrap(ErrInvalidArgument, "paper block needs a paper id", goerr.V("paper_id", p.PaperID))
+		}
+	case BlockHTMLPage:
+		if !ValidID(string(p.AttachmentID)) {
+			return goerr.Wrap(ErrInvalidArgument, "an html_page block needs an attachment id", goerr.V("attachment_id", p.AttachmentID))
 		}
 	case BlockHTML, BlockSVG, BlockMermaid:
 		if p.Height < 0 || p.Height > MaxRichHeight {
