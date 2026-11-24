@@ -44,7 +44,7 @@ task build && ./papers serve --no-authn --config examples/config   # http://loca
 ### Workspaces
 
 ```toml
-# examples/config/security.toml — one file per workspace
+# examples/config/security/security.toml — one file per workspace
 [workspace]
 id = "security"           # never change: the storage namespace
 name = "Security Team"
@@ -53,8 +53,13 @@ emoji = "🛡️"
 language = "ja"
 
 [authz]                   # omit to let every signed-in user in
-policy = ["policies/security.rego"]
+policy = ["security.rego"]  # relative to this file
 ```
+
+Every `*.toml` file below the `--config` directory is a workspace, subdirectories
+included, so a workspace's TOML and Rego files can share a directory
+(`examples/config/security/`). Names starting with `.` are skipped and symbolic
+links below the directory are not followed.
 
 The policy is Rego in package `papers.authz` defining a boolean `allow`; the
 input is `{"workspace": {"id"}, "user": {"id", "email", "domain"}}`. Decisions

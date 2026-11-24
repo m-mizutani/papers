@@ -126,8 +126,8 @@ The container of papers and the basic unit of access, about the size of a team o
 ### Defining one
 
 ```text
-# One file per workspace in the directory given to --config
-# workspaces/security.toml
+# One file per workspace anywhere below the directory given to --config
+# workspaces/security/security.toml
 [workspace]
 id          = "security"            # never change: it is the storage namespace
 name        = "Security Team"
@@ -139,7 +139,7 @@ emoji       = "🛡️"
 language    = "en"                  # optional
 
 [authz]                              # who may use this workspace (returns allow)
-policy = ["policies/security.rego"]
+policy = ["security.rego"]          # relative to this file
 
 [sandbox]                            # optional: what AI-authored HTML may do here
 external_resources = false           # default true
@@ -155,6 +155,7 @@ external_resources = false           # default true
 
 
 
+- **Files**: every `*.toml` file below the `--config` directory defines one workspace, subdirectories included. Directories only organize the files and mean nothing to the workspaces; the id comes from the file. Names starting with `.` are skipped and symbolic links below the directory are not followed. Workspaces are listed in ascending order of their slash-separated paths relative to the directory. Policy paths are relative to the TOML file.
 - **Everything an administrator would decide is written in configuration files**. They ship with deployments, so who can change them is decided by who can deploy. The UI and the API have no way to change global settings.
 - Everything is validated at startup, and any invalid file stops the server from starting. Changes take effect on restart.
 - Display groups of workspaces (how the sidebar groups them) are written in the global configuration file (`--global-config`). Groups only organize the display and have no effect on access.

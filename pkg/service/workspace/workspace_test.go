@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/m-mizutani/goerr/v2"
 	"github.com/m-mizutani/gt"
 
 	"github.com/m-mizutani/papers/pkg/domain/model"
@@ -168,4 +169,90 @@ func TestSandboxExternalResources(t *testing.T) {
 	explicit, ok := r.Get("explicit")
 	gt.True(t, ok)
 	gt.True(t, explicit.Sandbox.ExternalResources)
+}
+
+func ids(r *workspace.Registry) []model.WorkspaceID {
+	var out []model.WorkspaceID
+	for _, w := range r.List() {
+		out = append(out, w.ID)
+	}
+	return out
+}
+
+func TestLoadReadsSubdirectories(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("files two levels down are read", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "a.toml", "[workspace]\nid = \"a\"\n")
+		write(t, dir, "x/y/b.toml", "[workspace]\nid = \"b\"\n")
+		r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+		gt.Equal(t, ids(r), []model.WorkspaceID{"a", "b"})
+	})
+
+	t.Run("a flat directory loads as before", func(t *testing.T) {
+		r := gt.R1(workspace.Load(ctx, setup(t), "")).NoError(t)
+		gt.Equal(t, ids(r), []model.WorkspaceID{"open", "security"})
+	})
+
+	t.Run("subdirectories without toml files configure nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "policies/p.rego", policy)
+		_, err := workspace.Load(ctx, dir, "")
+		gt.Error(t, err)
+	})
+
+	t.Run("the id comes from the file, not the directory", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "team/ws.toml", "[workspace]\nid = \"alpha\"\n")
+		r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+		gt.Equal(t, ids(r), []model.WorkspaceID{"alpha"})
+	})
+
+	t.Run("policies resolve from the directory of their file", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "sec/sec.toml", "[workspace]\nid = \"sec\"\n[authz]\npolicy = [\"sec.rego\"]\n")
+		write(t, dir, "sec/sec.rego", policy)
+		r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+		in := &model.User{ID: model.NewUserID(), Email: "alice@example.com"}
+		out := &model.User{ID: model.NewUserID(), Email: "bob@other.com"}
+		gt.True(t, gt.R1(r.Allow(ctx, in, "sec")).NoError(t))
+		gt.False(t, gt.R1(r.Allow(ctx, out, "sec")).NoError(t))
+	})
+
+	t.Run("names starting with a dot are skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "a.toml", "[workspace]\nid = \"a\"\n")
+		write(t, dir, ".hidden/b.toml", "not toml")
+		write(t, dir, ".c.toml", "not toml")
+		r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+		gt.Equal(t, ids(r), []model.WorkspaceID{"a"})
+	})
+
+	t.Run("an id defined in two directories names both files", func(t *testing.T) {
+		dir := t.TempDir()
+		x := write(t, dir, "a/x.toml", "[workspace]\nid = \"same\"\n")
+		y := write(t, dir, "b/y.toml", "[workspace]\nid = \"same\"\n")
+		_, err := workspace.Load(ctx, dir, "")
+		gt.Error(t, err)
+		gt.Equal(t, goerr.Values(err)["files"], any([]string{x, y}))
+	})
+
+	t.Run("workspaces are ordered by relative path", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "z.toml", "[workspace]\nid = \"z\"\n")
+		write(t, dir, "a/m.toml", "[workspace]\nid = \"m\"\n")
+		write(t, dir, "a-b.toml", "[workspace]\nid = \"ab\"\n")
+		r := gt.R1(workspace.Load(ctx, dir, "")).NoError(t)
+		gt.Equal(t, ids(r), []model.WorkspaceID{"ab", "m", "z"})
+	})
+
+	t.Run("the directory itself may be a symbolic link", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "real/a.toml", "[workspace]\nid = \"a\"\n")
+		link := filepath.Join(dir, "link")
+		gt.NoError(t, os.Symlink(filepath.Join(dir, "real"), link))
+		r := gt.R1(workspace.Load(ctx, link, "")).NoError(t)
+		gt.Equal(t, ids(r), []model.WorkspaceID{"a"})
+	})
 }

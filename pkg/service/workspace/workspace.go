@@ -1,7 +1,13 @@
 // Package workspace loads the workspace configuration and evaluates who may
 // use each workspace.
 //
-// The configuration is a directory with one TOML file per workspace:
+// The configuration is a directory with one TOML file per workspace. Every
+// *.toml file below the directory is read, subdirectories included, so the
+// files can be grouped into directories; directories only organize files and
+// mean nothing to the workspaces. Files and directories whose names start
+// with "." are skipped, and symbolic links are not followed. Workspaces are
+// listed in ascending order of their slash-separated paths relative to the
+// directory.
 //
 //	[workspace]
 //	id = "security"
@@ -30,6 +36,7 @@ package workspace
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -110,32 +117,33 @@ type Option func(*Registry)
 // WithClock replaces the clock of the decision cache (tests).
 func WithClock(now func() time.Time) Option { return func(r *Registry) { r.now = now } }
 
-// Load reads every *.toml file of dir and, if globalPath is not empty, the
-// global configuration.
+// Load reads every *.toml file below dir (see the package documentation) and,
+// if globalPath is not empty, the global configuration.
 func Load(ctx context.Context, dir, globalPath string, opts ...Option) (*Registry, error) {
 	if dir == "" {
 		return nil, goerr.New("workspace configuration directory is required")
 	}
-	files, err := filepath.Glob(filepath.Join(dir, "*.toml"))
+	files, err := findFiles(dir)
 	if err != nil {
-		return nil, goerr.Wrap(err, "failed to list workspace configuration", goerr.V("dir", dir))
+		return nil, err
 	}
 	if len(files) == 0 {
 		return nil, goerr.New("no workspace is configured", goerr.V("dir", dir))
 	}
-	slices.Sort(files)
 	r := &Registry{entries: map[model.WorkspaceID]*entry{}, cache: map[cacheKey]decision{}, now: time.Now}
 	for _, opt := range opts {
 		opt(r)
 	}
+	defined := map[model.WorkspaceID]string{}
 	for _, f := range files {
 		e, err := loadFile(ctx, f)
 		if err != nil {
 			return nil, err
 		}
-		if _, dup := r.entries[e.ws.ID]; dup {
-			return nil, goerr.New("workspace id is defined twice", goerr.V("id", e.ws.ID), goerr.V("file", f))
+		if prev, dup := defined[e.ws.ID]; dup {
+			return nil, goerr.New("workspace id is defined twice", goerr.V("id", e.ws.ID), goerr.V("files", []string{prev, f}))
 		}
+		defined[e.ws.ID] = f
 		r.entries[e.ws.ID] = e
 		r.order = append(r.order, e.ws.ID)
 	}
@@ -145,6 +153,48 @@ func Load(ctx context.Context, dir, globalPath string, opts ...Option) (*Registr
 		}
 	}
 	return r, nil
+}
+
+// findFiles returns the workspace files below dir in ascending order of their
+// slash-separated paths relative to dir.
+func findFiles(dir string) ([]string, error) {
+	type found struct{ rel, path string }
+	var files []found
+	// The directory itself may be a symbolic link (a mount, for example);
+	// only links below it are not followed.
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to read workspace configuration directory", goerr.V("dir", dir))
+	}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return goerr.Wrap(err, "failed to read workspace configuration directory", goerr.V("path", path))
+		}
+		if path != root && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() || filepath.Ext(path) != ".toml" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return goerr.Wrap(err, "failed to resolve workspace configuration path", goerr.V("path", path))
+		}
+		files = append(files, found{rel: filepath.ToSlash(rel), path: filepath.Join(dir, rel)})
+		return nil
+	})
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to list workspace configuration", goerr.V("dir", dir))
+	}
+	slices.SortFunc(files, func(a, b found) int { return strings.Compare(a.rel, b.rel) })
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = f.path
+	}
+	return out, nil
 }
 
 func loadFile(ctx context.Context, path string) (*entry, error) {

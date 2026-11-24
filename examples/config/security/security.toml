@@ -9,8 +9,8 @@ Write procedures as numbered lists and put commands in code blocks.
 emoji = "🛡️"
 language = "ja"
 
-[authz]                   # who may use the workspace; see policies/security.rego
-policy = ["policies/security.rego"]
+[authz]                   # who may use the workspace; see security.rego
+policy = ["security.rego"]
 
 [sandbox]                 # what AI-authored HTML (HTML papers, html and svg blocks) may do
 external_resources = false  # only what the HTML embeds runs; omit or true to allow other hosts

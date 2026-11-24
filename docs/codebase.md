@@ -15,7 +15,7 @@ There are three ways in and one destination: the browser and the AI both end up 
 | WebSocket `/live` | Pages with a paper open        | `controller/http/live.go`         | Receives others' changes only (server to client)                                     |
 | MCP `/mcp`        | AI agents                      | `controller/http/mcp.go`          | Nine tools such as `papers_read`, `papers_write` and `papers_save_version`           |
 
-Roughly 14,000 lines of Go (about 5,500 of them tests) and 6,000 of frontend. Configuration is the `--config` directory (TOML and Rego per workspace); examples are in `examples/`.
+Roughly 14,000 lines of Go (about 5,500 of them tests) and 6,000 of frontend. Configuration is the `--config` directory (TOML and Rego per workspace, read with its subdirectories); examples are in `examples/`.
 
 ## Layers and packages
 

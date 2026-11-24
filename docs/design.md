@@ -6,7 +6,7 @@ Last updated 2026-11-22 (the rebuilt model as implemented: workspaces from confi
 
 ## Decisions
 
-- **Workspaces are defined in configuration files**One TOML file per workspace in the `--config` directory. A Rego rule in `[authz]` (`data.papers.authz.allow`) decides who may use it; with no rule, every signed-in user may (warned at startup). Decisions are cached for 60 seconds, and a decision that cannot be made denies. Neither the UI nor the API can create or change a workspace.
+- **Workspaces are defined in configuration files**One TOML file per workspace anywhere below the `--config` directory (subdirectories included; names starting with `.` skipped). A Rego rule in `[authz]` (`data.papers.authz.allow`) decides who may use it; with no rule, every signed-in user may (warned at startup). Decisions are cached for 60 seconds, and a decision that cannot be made denies. Neither the UI nor the API can create or change a workspace.
 - **No roles; a paper is public or private**A public paper is for everyone who may use the workspace; a private one only for its creator (for an AI, the user it acts for). Deleting, restoring and purging are the creator's alone, and only when everything under the paper is theirs too; others archive. There are no system administrators.
 - **Every ID is a server-issued UUID v4 in base62 (22 characters)**Incoming IDs are checked for the format and for v4; anything else is 404. A new block is referred to within its batch by `ref` and `after: "ref:n1"`, and the answer maps each ref to its ID.
 - **The current state, and versions saved on purpose**Commits, change history and per-block versions are gone. A block keeps only an internal revision (`Rev`, +1 whenever its contents change). A version is the paper's list of (block ID, Rev, parent, position) plus a BlockSnapshot of each block that changed. People and AI save versions; the system never does.
@@ -23,7 +23,7 @@ flowchart LR
   ai["AI agents"] -- "MCP / REST (token)" --> run
   subgraph run["Cloud Run: papers serve"]
     uc["usecase (access, ops, versions, tree)"]
-    cfg["config: workspaces/*.toml + Rego"]
+    cfg["config: workspaces/**/*.toml + Rego"]
   end
   run --> fs[("Firestore Enterprise: papers, blocks, versions, events")]
   run --> gcs[("Cloud Storage: attached images")]
