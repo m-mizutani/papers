@@ -61,7 +61,7 @@ func TestSeedSamplesWritesTheSamplesIntoAnEmptyWorkspace(t *testing.T) {
 	blocks := gt.R1(e.repo.ListBlocks(ctx, wsA, home)).NoError(t)
 	gt.A(t, blocks).Length(4)
 	gt.Equal(t, blocks[0].Type, model.BlockParagraph)
-	gt.True(t, strings.Contains(blocks[0].Content, "demo mode"))
+	gt.True(t, strings.Contains(blocks[0].Content, "papers firestore reset --demo"))
 
 	papers := allPapers(t, e, wsA)
 	gt.A(t, papers).Length(5) // the home and four samples
@@ -173,7 +173,7 @@ func TestSeedSamplesTwiceAtOnceWritesOneSet(t *testing.T) {
 	gt.A(t, gt.R1(e.repo.ListBlocks(ctx, wsA, e.home(t, wsA))).NoError(t)).Length(4)
 }
 
-// TestSamplesCoverBlockTypes keeps demo mode showing every block type and
+// TestSamplesCoverBlockTypes keeps the sample papers showing every block type and
 // paper kind. When it fails after adding a block type, add that block to a
 // sample in pkg/usecase/sample (see "Demo samples" in CLAUDE.md).
 func TestSamplesCoverBlockTypes(t *testing.T) {

@@ -76,11 +76,6 @@ func cmdServe() *cli.Command {
 			if err := uc.Init(logging.With(ctx, logger)); err != nil {
 				return err
 			}
-			if server.Demo() {
-				if _, err := uc.SeedSamples(logging.With(ctx, logger)); err != nil {
-					return err
-				}
-			}
 			authUC, err := auth.Configure(ctx, repository, server.BaseURL())
 			if err != nil {
 				return err

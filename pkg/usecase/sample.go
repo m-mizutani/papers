@@ -16,16 +16,18 @@ import (
 	"github.com/m-mizutani/papers/pkg/utils/logging"
 )
 
-// Demo mode (papers serve --demo) writes the sample papers of package sample
-// into every workspace that is still nearly empty: its home has no blocks
-// and it has no paper besides the home. Nothing records that a workspace was
+// papers firestore reset --demo writes the sample papers of package sample
+// after deleting every document. SeedSamples still writes only into a
+// workspace that is nearly empty (its home has no blocks and it has no
+// paper besides the home), so a workspace someone wrote in while the reset
+// ran is left alone. Nothing records that a workspace was
 // seeded; the blocks the first batch puts into the home are the record, so a
 // workspace is seeded at most once and never after people wrote in it.
 
 // errNotEmpty stops the home batch when the home already has blocks.
 var errNotEmpty = errors.New("workspace is not empty")
 
-// SeedResult is what demo mode did to one workspace.
+// SeedResult is what SeedSamples did to one workspace.
 type SeedResult struct {
 	Workspace model.WorkspaceID
 	// Seeded is false when the workspace was not empty.

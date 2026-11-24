@@ -1,5 +1,5 @@
-// Package sample holds the sample papers that demo mode (papers serve
-// --demo) writes into a workspace that is still empty. The definition is
+// Package sample holds the sample papers that papers firestore reset --demo
+// writes into each workspace after deleting every document. The definition is
 // embedded in the binary and never changes at run time; the papers written
 // from it are ordinary papers with nothing marking them as samples.
 //

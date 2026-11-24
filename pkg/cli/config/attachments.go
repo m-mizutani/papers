@@ -45,6 +45,10 @@ func (x Attachments) LogValue() slog.Value {
 	return slog.GroupValue(slog.String("backend", x.backend), slog.String("dir", x.dir), slog.String("bucket", x.bucket))
 }
 
+// KeepsFiles reports whether the selected store keeps files after the
+// process exits (every backend but memory).
+func (x *Attachments) KeepsFiles() bool { return x.backend != "memory" }
+
 func (x *Attachments) Configure(ctx context.Context) (interfaces.AttachmentStore, error) {
 	switch x.backend {
 	case "memory":

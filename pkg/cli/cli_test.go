@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -44,4 +46,30 @@ func TestEveryFlagHasEnvironmentVariable(t *testing.T) {
 	}
 	walk("papers", pcli.NewAppForTest())
 	gt.N(t, seen).Greater(40)
+}
+
+func TestServeHasNoDemoFlag(t *testing.T) {
+	// T1: the sample papers moved to firestore reset --demo.
+	var serve *cli.Command
+	for _, c := range pcli.NewAppForTest().Commands {
+		if c.Name == "serve" {
+			serve = c
+		}
+	}
+	gt.V(t, serve).NotNil().Required()
+	for _, f := range serve.Flags {
+		for _, n := range f.Names() {
+			gt.V(t, n).NotEqual("demo")
+		}
+		for _, e := range envVars(f) {
+			gt.V(t, e).NotEqual("PAPERS_DEMO")
+		}
+	}
+
+	// T2: --demo is an unknown flag of serve.
+	app := pcli.NewAppForTest()
+	app.Writer, app.ErrWriter = io.Discard, io.Discard
+	err := app.Run(context.Background(), []string{"papers", "serve", "--demo"})
+	gt.Error(t, err)
+	gt.S(t, err.Error()).Contains("demo")
 }

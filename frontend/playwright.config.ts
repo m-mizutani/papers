@@ -5,11 +5,9 @@ import { defineConfig, devices } from '@playwright/test'
 // the example workspaces) with the built UI embedded, and drive it in
 // Chromium. Build the UI first (`pnpm build`). PAPERS_BIN runs a prebuilt
 // server binary instead of `go run`. A second server on the next port runs
-// in anonymous mode for e2e/anonymous.spec.ts (see ANONYMOUS_URL), and a third
-// one after it in demo mode for e2e/demo.spec.ts (see DEMO_URL).
+// in anonymous mode for e2e/anonymous.spec.ts (see ANONYMOUS_URL).
 const port = Number(process.env.E2E_PORT ?? 18090)
 const anonymousPort = port + 1
-const demoPort = port + 2
 // The server runs from the repository root, so PAPERS_BIN is made absolute here.
 const server = process.env.PAPERS_BIN ? resolve(process.env.PAPERS_BIN) : 'go run .'
 
@@ -53,15 +51,6 @@ export default defineConfig({
       command: `${server} serve --anonymous --addr 127.0.0.1:${anonymousPort} --base-url http://127.0.0.1:${anonymousPort} --config examples/config --global-config examples/global.toml`,
       cwd: '..',
       url: `http://127.0.0.1:${anonymousPort}/healthz`,
-      timeout: 180_000,
-      reuseExistingServer: false,
-      stdout: 'ignore',
-      stderr: 'pipe',
-    },
-    {
-      command: `${server} serve --no-authn --demo --addr 127.0.0.1:${demoPort} --base-url http://127.0.0.1:${demoPort} --config examples/config --global-config examples/global.toml`,
-      cwd: '..',
-      url: `http://127.0.0.1:${demoPort}/healthz`,
       timeout: 180_000,
       reuseExistingServer: false,
       stdout: 'ignore',

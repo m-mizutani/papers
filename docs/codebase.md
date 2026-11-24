@@ -34,7 +34,7 @@ flowchart TB
   end
   http -- "all call usecase" --> uc["pkg/usecase: access, ops and conflicts, versions, tree, jobs, search, auth"]
   uc --> md["usecase/markdown: Markdown ⇄ blocks"]
-  uc --> sample["usecase/sample: the sample papers of demo mode (--demo)"]
+  uc --> sample["usecase/sample: the sample papers of firestore reset --demo"]
   uc -- uses --> domain["pkg/domain: model (entities, IDs, visibility, order keys, jobs), interfaces (Repository, Tx, Workspaces, AttachmentStore)"]
   uc -- "calls through ports" --> impl
   subgraph impl["implements the interfaces"]
@@ -123,7 +123,7 @@ Overview
 
 ### Startup
 
-`papers serve` reads the configuration directory (validating the TOML and compiling the Rego; any invalid file stops the start) and wires storage, the attachment store, the use cases and the controller, in that order. `UseCases.Init` creates each workspace's home (exactly one, however often the server starts). In demo mode (`--demo`), `UseCases.SeedSamples` (`usecase/sample.go`) then writes the sample papers of `pkg/usecase/sample/` (Markdown, HTML and images embedded in the binary) into each workspace that is still empty, once. Background loops purge the trash older than 30 days every hour and take over background jobs whose instance stopped.
+`papers serve` reads the configuration directory (validating the TOML and compiling the Rego; any invalid file stops the start) and wires storage, the attachment store, the use cases and the controller, in that order. `UseCases.Init` creates each workspace's home (exactly one, however often the server starts). Background loops purge the trash older than 30 days every hour and take over background jobs whose instance stopped.
 
 ### Opening a paper
 
@@ -159,7 +159,7 @@ There is no state management library. The state of the open paper is updated by 
 | `src/ui/`               | Popovers, menus, modals and toasts                                                                                                                                                                                                                                                                 |
 | `src/utils/`            | Keyboard (the platform's primary modifier, IME), order keys, preferences (theme, language), actors                                                                                                                                                                                                 |
 | `src/i18n/`             | English and Japanese. Every text on screen goes through it                                                                                                                                                                                                                                         |
-| `src/mock/`             | An in-browser server for the in-browser demo; `pnpm build:demo` builds a version that runs without a server (not demo mode, `--demo`, whose samples live in `pkg/usecase/sample/`)                                                                                                                                                                                                   |
+| `src/mock/`             | An in-browser server for the in-browser demo; `pnpm build:demo` builds a version that runs without a server (not `papers firestore reset --demo`, whose samples live in `pkg/usecase/sample/`)                                                                                                                                                                                                   |
 | `src/styles/global.css` | Tokens for colours, spacing and sizes, and the markup palette. No other literal values are written                                                                                                                                                                                                 |
 | `e2e/`                  | Playwright end-to-end tests of the user flows against the built server (`task test:e2e`)                                                                                                                                                                                                           |
 
@@ -173,7 +173,7 @@ Only the ones easy to break when changing code. The full list is in `CLAUDE.md`.
 - **No locks; revisions protect.** update and delete require the base Rev, and a conflict is refused once. The UI sends the Rev an edit started from.
 - **The system never makes versions on its own.** Only the save operation makes one.
 - **The paper document is not written on every write.** Its updated time moves at most once a minute; contents live on blocks.
-- **A new query needs its index.** Add it to `RequiredIndexes` in `indexes.go`; `papers firestore migrate` creates it (`migrate.go`). `reset.go` empties a database for `papers firestore reset`.
+- **A new query needs its index.** Add it to `RequiredIndexes` in `indexes.go`; `papers firestore migrate` creates it (`migrate.go`). `reset.go` empties a database for `papers firestore reset`; with `--demo`, `pkg/cli/firestore.go` then runs `UseCases.Init` and `UseCases.SeedSamples` (`usecase/sample.go`), which write the sample papers of `pkg/usecase/sample/` (Markdown, HTML and images embedded in the binary).
 - **Reads are batched.** Child papers, favorites and search hits are read with one `GetPapers`; the papers list reads its parents with one `GetPapers`, and the workspace list reads every "continue" paper with one `GetRecents` and one `GetPapersIn`. Use-case tests count reads.
 - **AI-written HTML/SVG renders only inside a sandboxed frame** (`RichFrame` for blocks, `HtmlPage` for HTML papers; never same-origin). Block markup is rendered as React elements, never inserted as HTML. A workspace's `[sandbox] external_resources` false puts a policy first in every such frame.
 - **Storage contract tests run on both implementations.** `pkg/repository/*_test.go`. The markup cases run in both Go and TypeScript.
