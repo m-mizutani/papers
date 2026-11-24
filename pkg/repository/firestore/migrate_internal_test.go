@@ -48,13 +48,25 @@ func newFakeAdmin() *fakeAdmin {
 	}
 }
 
-// serverForm is idx as the server returns it once created.
+// serverForm is idx as the server returns it once created. Like the
+// production server, it makes a search index sparse and fills in the default
+// search index options.
 func serverForm(idx *adminpb.Index, name string, state adminpb.Index_State) *adminpb.Index {
 	out := proto.Clone(idx).(*adminpb.Index)
 	out.Name = name
 	out.State = state
 	if out.GetDensity() == adminpb.Index_DENSITY_UNSPECIFIED && !isSearchIndex(out) {
 		out.Density = adminpb.Index_DENSE
+	}
+	if isSearchIndex(out) {
+		if out.Density == adminpb.Index_DENSITY_UNSPECIFIED {
+			out.Density = adminpb.Index_SPARSE_ANY
+		}
+		if out.SearchIndexOptions == nil {
+			out.SearchIndexOptions = &adminpb.Index_SearchIndexOptions{
+				TextLanguage: "und", TextLanguageOverrideFieldPath: "language",
+			}
+		}
 	}
 	if !isSearchIndex(out) {
 		out.Fields = withImplicitName(out.Fields)
@@ -316,6 +328,45 @@ func TestMigrateAlreadyExistsWithoutMatch(t *testing.T) {
 	gt.Equal(t, r.Failed(), 1)
 }
 
+func TestMigrateSearchIndexWithAnotherLanguage(t *testing.T) {
+	// A search index with a language other than the default is not the
+	// wanted one, and the failure shows the language.
+	f := newFakeAdmin()
+	f.addAll(adminpb.Index_READY, adminpb.Field_TtlConfig_ACTIVE)
+	parent := parentOf(colSearch)
+	f.indexes[parent][0].SearchIndexOptions.TextLanguage = "ja"
+	f.onCreate = func(string, *adminpb.Index) (string, error) {
+		return "", status.Error(codes.AlreadyExists, "index already exists")
+	}
+	r, err := newTestMigrator(f).Apply(context.Background(), MigrateOptions{})
+	gt.NoError(t, err)
+	res := resultFor(r, "Search")
+	gt.Equal(t, res.Status, IndexFailed)
+	gt.S(t, res.Detail).Contains("textLanguage=ja")
+	gt.Equal(t, r.Failed(), 1)
+}
+
+func TestDescribeSearchIndexOptions(t *testing.T) {
+	// Search index options other than the defaults are shown.
+	spec := RequiredIndexes[0]
+	for _, s := range RequiredIndexes {
+		if s.isSearch() {
+			spec = s
+		}
+	}
+	idx := serverForm(spec.proto(), "n", adminpb.Index_READY)
+	gt.Equal(t, describeIndex(colSearch, idx), "search (Text text) [density=SPARSE_ANY]")
+	idx.SearchIndexOptions.TextLanguage = "ja"
+	gt.Equal(t, describeIndex(colSearch, idx), "search (Text text) [density=SPARSE_ANY, textLanguage=ja]")
+	idx.SearchIndexOptions.TextLanguage = "und"
+	idx.SearchIndexOptions.TextLanguageOverrideFieldPath = "lang"
+	gt.Equal(t, describeIndex(colSearch, idx), "search (Text text) [density=SPARSE_ANY, textLanguageOverrideFieldPath=lang]")
+
+	ordered := serverForm(RequiredIndexes[0].proto(), "n", adminpb.Index_READY)
+	ordered.SearchIndexOptions = &adminpb.Index_SearchIndexOptions{TextLanguage: "und", TextLanguageOverrideFieldPath: "language"}
+	gt.S(t, describeIndex(RequiredIndexes[0].CollectionGroup, ordered)).Contains("textLanguage=und, textLanguageOverrideFieldPath=language")
+}
+
 func TestMigrateCreateWithoutNameListsAgain(t *testing.T) {
 	f := newFakeAdmin()
 	f.addAll(adminpb.Index_READY, adminpb.Field_TtlConfig_ACTIVE)
@@ -558,6 +609,27 @@ func TestMatchesSpec(t *testing.T) {
 			i.SearchIndexOptions = &adminpb.Index_SearchIndexOptions{}
 		})))
 		gt.True(t, matchesSpec(last, server(last, func(i *adminpb.Index) { i.ShardCount = 4 })))
+		// An ordered index with the default search options
+		gt.False(t, matchesSpec(last, server(last, func(i *adminpb.Index) {
+			i.SearchIndexOptions = &adminpb.Index_SearchIndexOptions{TextLanguage: "und", TextLanguageOverrideFieldPath: "language"}
+		})))
+	})
+	t.Run("search index options", func(t *testing.T) {
+		opts := func(lang, override string) func(*adminpb.Index) {
+			return func(i *adminpb.Index) {
+				i.SearchIndexOptions = &adminpb.Index_SearchIndexOptions{TextLanguage: lang, TextLanguageOverrideFieldPath: override}
+			}
+		}
+		// The defaults the server fills in
+		gt.True(t, matchesSpec(search, server(search, opts("und", "language"))))
+		// No options
+		gt.True(t, matchesSpec(search, server(search, func(i *adminpb.Index) { i.SearchIndexOptions = nil })))
+		// Empty options
+		gt.True(t, matchesSpec(search, server(search, opts("", ""))))
+		// Another language
+		gt.False(t, matchesSpec(search, server(search, opts("ja", "language"))))
+		// Another override field
+		gt.False(t, matchesSpec(search, server(search, opts("und", "lang"))))
 	})
 	t.Run("query scope", func(t *testing.T) {
 		for _, s := range []adminpb.Index_QueryScope{adminpb.Index_COLLECTION_GROUP, adminpb.Index_COLLECTION_RECURSIVE} {
