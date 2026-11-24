@@ -65,6 +65,7 @@ const (
 	colSnapshots   = "snapshots"
 	colEvents      = "events"
 	colAttachments = "attachments"
+	colProperties  = "properties"
 	colForwards    = "forwards"
 	colJobs        = "jobs"
 	colJobItems    = "items"

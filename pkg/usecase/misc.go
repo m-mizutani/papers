@@ -31,7 +31,8 @@ type CreateInput struct {
 	After      *string
 	Markdown   string
 	// Kind is the kind of the new paper (blocks when empty). An HTML paper
-	// is created with its HTML, in one transaction.
+	// is created with its HTML, in one transaction; a database starts with
+	// no properties and no items.
 	Kind model.PaperKind
 	HTML string
 }
@@ -63,6 +64,14 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		}
 	} else if in.HTML != "" {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "html is only for an HTML paper (kind html)")
+	}
+	if kind == model.PaperKindDatabase {
+		if in.Visibility == model.VisibilityPrivate {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "a database is always public")
+		}
+		if in.Markdown != "" {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "a database has no body; markdown is not possible")
+		}
 	}
 	var paper *model.Paper
 	switch {
@@ -105,8 +114,11 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 			return nil, err
 		}
 		op := Op{Kind: OpInsert, Type: ptr(model.BlockPaper), Title: &title, After: in.After}
-		if kind == model.PaperKindHTML {
+		switch kind {
+		case model.PaperKindHTML:
 			op.PaperKind, op.HTML = ptr(kind), ptr(in.HTML)
+		case model.PaperKindDatabase:
+			op.PaperKind = ptr(kind)
 		}
 		res, err := u.Apply(ctx, p, ws, parent.ID, BatchInput{Ops: []Op{op}})
 		if err != nil {

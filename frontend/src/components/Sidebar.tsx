@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api } from '../api/client'
+import { rememberKind } from '../api/kinds'
 import type { Me, PaperRef, Sidebar as SidebarData, Workspace, WorkspaceGroup } from '../api/types'
 import { accountNote, canSignOut } from './account'
 import { useTranslation } from '../i18n'
@@ -23,26 +24,28 @@ function TreeItem({ ws, paper, depth, current, expand, version, label, icon, onU
   onNewInside: (parent: string) => void
 }) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(expand.has(paper.id))
+  // A database's items do not show in the tree.
+  const db = paper.kind === 'database'
+  const [open, setOpen] = useState(expand.has(paper.id) && !db)
   const [kids, setKids] = useState<PaperRef[]>()
   useEffect(() => {
-    if (expand.has(paper.id)) setOpen(true)
-  }, [expand, paper.id])
+    if (expand.has(paper.id) && !db) setOpen(true)
+  }, [expand, paper.id, db])
   useEffect(() => {
-    if (!open) return
+    if (!open || db) return
     let live = true
     void api.children(ws, paper.id).then((k) => { if (live) setKids(k.filter((x) => x.status !== 'archived')) }).catch(() => { if (live) setKids([]) })
     return () => { live = false }
-  }, [open, ws, paper.id, version])
-  const canHaveChildren = paper.visibility === 'public' && (!!paper.parent_id || label !== undefined)
+  }, [open, ws, paper.id, version, db])
+  const canHaveChildren = !db && paper.visibility === 'public' && (!!paper.parent_id || label !== undefined)
   const leaf = kids !== undefined && kids.length === 0
   const to = label !== undefined ? `/ws/${ws}` : `/ws/${ws}/p/${paper.id}`
   return (
     <div>
       <div className={`tree-item${current === paper.id ? ' active' : ''}`} style={{ paddingLeft: `calc(var(--tree-indent) * ${depth})` }}>
         <button type="button" className={`tw${leaf || !canHaveChildren ? ' leaf' : ''}`} aria-label={open ? t('collapse') : t('expand')} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'}</button>
-        {icon && <span className="ticon" aria-hidden>{icon}</span>}
-        <Link className="tl" to={to}>{label ?? (paper.title || t('untitled'))}</Link>
+        {(icon || db) && <span className={`ticon${db ? ' db' : ''}`} aria-hidden>{db ? '⊞' : icon}</span>}
+        <Link className="tl" to={to} onClick={() => rememberKind(paper.id, paper.kind)}>{label ?? (paper.title || t('untitled'))}</Link>
         <span className="ta">
           {canHaveChildren && <button type="button" title={t('newInside', { title: label ?? (paper.title || t('untitled')) })} aria-label={t('newInside', { title: label ?? (paper.title || t('untitled')) })} onClick={() => onNewInside(paper.id)}>＋</button>}
           {onUnfavorite && <button type="button" title={t('removeFavorite')} aria-label={t('removeFavorite')} onClick={onUnfavorite}>✕</button>}

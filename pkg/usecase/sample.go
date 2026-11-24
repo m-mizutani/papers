@@ -3,10 +3,12 @@ package usecase
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"mime"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/m-mizutani/goerr/v2"
@@ -121,6 +123,14 @@ func (u *UseCases) seedWorkspace(ctx context.Context, ws model.WorkspaceID) (See
 		if !ok {
 			return res, goerr.New("a sample paper was not created", goerr.V("key", e.Key))
 		}
+		if e.Kind == model.PaperKindDatabase {
+			n, err := u.seedDatabase(ctx, paper, e.File)
+			if err != nil {
+				return res, err
+			}
+			res.Papers += n
+			continue
+		}
 		more, err := u.seedPaper(ctx, paper, e.File, childrenOf(entries, e.Key), nil)
 		if err != nil {
 			return res, err
@@ -168,6 +178,9 @@ func (u *UseCases) seedPaper(ctx context.Context, paper *model.Paper, file strin
 	ops := []Op{{Kind: OpInsertMarkdown, Markdown: &md}}
 	for _, c := range children {
 		op := Op{Kind: OpInsert, Ref: c.Key, Type: ptr(model.BlockPaper), Title: ptr(c.Title)}
+		if c.Kind == model.PaperKindDatabase {
+			op.PaperKind = ptr(model.PaperKindDatabase)
+		}
 		if c.Kind == model.PaperKindHTML {
 			doc, err := sample.Read(c.File)
 			if err != nil {
@@ -213,4 +226,49 @@ func (u *UseCases) seedPaper(ctx context.Context, paper *model.Paper, file strin
 		return nil, goerr.New("a new sample paper could not be read", goerr.V("paper_id", paper.ID))
 	}
 	return out, nil
+}
+
+// seedDatabase fills a sample database: its definition's ops go to the
+// database's batch (properties, elements and items with their values, in
+// one transaction, as an agent would send them), then the items that have
+// a body get it. It returns the number of items written.
+func (u *UseCases) seedDatabase(ctx context.Context, db *model.Paper, file string) (int, error) {
+	def, err := sample.ReadDatabase(file)
+	if err != nil {
+		return 0, err
+	}
+	ops := make([]Op, 0, len(def.Ops))
+	for i, raw := range def.Ops {
+		var op Op
+		if err := json.Unmarshal(raw, &op); err != nil {
+			return 0, goerr.Wrap(err, "failed to read a sample database op", goerr.V("file", file), goerr.V("index", i))
+		}
+		ops = append(ops, op)
+	}
+	res, err := u.applyBatch(ctx, nil, systemActor, db, BatchInput{Ops: ops}, nil)
+	if err != nil {
+		return 0, goerr.Wrap(err, "failed to write a sample database", goerr.V("file", file))
+	}
+	if len(def.Bodies) == 0 {
+		return len(res.Items), nil
+	}
+	byID := map[model.PaperID]*model.Paper{}
+	for _, q := range res.Items {
+		byID[q.ID] = q
+	}
+	refs := make([]string, 0, len(def.Bodies))
+	for ref := range def.Bodies {
+		refs = append(refs, ref)
+	}
+	slices.Sort(refs)
+	for _, ref := range refs {
+		item, ok := byID[model.PaperID(res.Refs[ref])]
+		if !ok {
+			return 0, goerr.New("a sample database body names no item", goerr.V("file", file), goerr.V("ref", ref))
+		}
+		if _, err := u.seedPaper(ctx, item, def.Bodies[ref], nil, nil); err != nil {
+			return 0, err
+		}
+	}
+	return len(res.Items), nil
 }

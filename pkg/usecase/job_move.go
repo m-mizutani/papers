@@ -62,6 +62,10 @@ type moveSource struct {
 	snaps   map[model.SnapshotRef]*model.BlockSnapshot
 	// children are the child papers that come along.
 	children map[model.PaperID]bool
+	// items are a database's items that come along, in order, and values
+	// an item's property values.
+	items  []model.PaperID
+	values []*model.PropertyValue
 }
 
 func (u *UseCases) readMoveSource(ctx context.Context, j *model.Job, it *model.JobItem) (*moveSource, error) {
@@ -104,6 +108,31 @@ func (u *UseCases) readMoveSource(ctx context.Context, j *model.Job, it *model.J
 	}
 	for _, k := range items {
 		src.children[k.PaperID] = true
+	}
+	if src.paper.IsDatabase() && len(src.paper.Items) > 0 {
+		along, err := u.repo.GetJobItems(ctx, ws, j.ID, src.paper.Items)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to read job items")
+		}
+		comes := map[model.PaperID]bool{}
+		for _, k := range along {
+			comes[k.PaperID] = true
+		}
+		for _, id := range src.paper.Items {
+			if comes[id] {
+				src.items = append(src.items, id)
+			}
+		}
+	}
+	if src.paper.IsItem() {
+		err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
+			var err error
+			src.values, err = tx.ListItemPropertyValues(it.PaperID)
+			return err
+		})
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to read property values", goerr.V("paper_id", it.PaperID))
+		}
 	}
 	if src.latest != nil {
 		for _, vb := range src.latest.Blocks {
@@ -199,9 +228,12 @@ func (u *UseCases) copyStep(ctx context.Context, j *model.Job) error {
 	if it.Cursor == 0 {
 		d := src.paper.Clone()
 		d.ID, d.WorkspaceID, d.JobID = it.CopyID, dst, j.ID
-		if it.PaperID == j.PaperID {
+		switch {
+		case it.PaperID == j.PaperID:
 			d.ParentID = j.Target.ParentID
-		} else {
+		case src.paper.IsItem():
+			d.DatabaseID = copyPaperID(j, src.paper.DatabaseID)
+		default:
 			d.ParentID = copyPaperID(j, src.paper.ParentID)
 		}
 		d.VersionNumber = 0
@@ -210,7 +242,26 @@ func (u *UseCases) copyStep(ctx context.Context, j *model.Job) error {
 		}
 		d.DeletedAt, d.DeletedWith = nil, ""
 		d.UpdatedBy, d.UpdatedAt = j.CreatedBy, now
-		if err := u.repo.RunTx(ctx, dst, func(tx interfaces.Tx) error { return tx.PutPaper(d) }); err != nil {
+		if d.IsDatabase() {
+			d.Items = nil
+			for _, id := range src.items {
+				d.Items = append(d.Items, copyPaperID(j, id))
+			}
+		}
+		err := u.repo.RunTx(ctx, dst, func(tx interfaces.Tx) error {
+			if err := tx.PutPaper(d); err != nil {
+				return err
+			}
+			for _, v := range src.values {
+				cv := v.Clone()
+				cv.WorkspaceID, cv.DatabaseID, cv.PaperID = dst, d.DatabaseID, d.ID
+				if err := tx.PutPropertyValue(cv); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			return goerr.Wrap(err, "failed to write copied paper", goerr.V("paper_id", d.ID))
 		}
 		if err := u.copyAttachments(ctx, j, src, d); err != nil {
@@ -274,6 +325,7 @@ func (u *UseCases) copyStep(ctx context.Context, j *model.Job) error {
 			v := &model.Version{
 				WorkspaceID: dst, PaperID: it.CopyID, Number: 1, Title: src.latest.Title,
 				Note: src.latest.Note, CreatedBy: src.latest.CreatedBy, CreatedAt: src.latest.CreatedAt,
+				Values: src.latest.Values,
 			}
 			for _, vb := range src.vblocks {
 				nvb := model.VersionBlock{BlockID: copyBlockID(j, vb.BlockID), Rev: revOf(vb.BlockID, vb.Rev, true), Order: vb.Order}

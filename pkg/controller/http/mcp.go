@@ -51,7 +51,18 @@ Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"set_title","title":"..."}
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
 - Paper-level ops, each alone in its batch: move_paper {parent (required), after, workspace} or {unfiled:true} (out of the tree; only for a paper without child papers), set_visibility {visibility, parent} (parent is optional: making a paper public without one leaves it unfiled), save_version {note}, restore_version {version}, archive / unarchive {subtree}.
-- Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs in the background after the call returns; read the papers again to see the result. Deleting a child whose subtree has someone else's paper archives it instead. While a move runs, its papers cannot be written (error "busy"); afterwards the old paper id answers with where it moved.`
+- Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs in the background after the call returns; read the papers again to see the result. Deleting a child whose subtree has someone else's paper archives it instead. While a move runs, its papers cannot be written (error "busy"); afterwards the old paper id answers with where it moved.
+
+Databases (tables of papers, like Notion databases)
+- A database is a paper of kind "database" (papers_create_paper with kind:"database", or insert {"type":"paper","paper_kind":"database"}). It has no body and no versions; it holds property definitions (columns) and its items in order. Each item is a paper of kind "item" with a body of its own; it stays in its database.
+- Property types: text, date (YYYY-MM-DD), select, multi_select. select and multi_select choose from elements: each element has an id and a value (the text people see). Property values store element ids, never the text: renaming an element changes every item at once.
+- papers_read on a database returns its properties (with element ids and values) and a page of items with their property values; pass filter and sort to narrow and order them. papers_read on an item also returns its property values.
+- Write a database with papers_write on the database. Ops:
+  {"op":"add_property","name":"Status","property_type":"select","ref":"p1"}  update_property {property, name}  move_property {property, after}  delete_property {property}
+  {"op":"add_element","property":"<id>|ref:p1","value":"Doing","color":"blue","ref":"e1"}  update_element {property, element, value?, color?}  move_element {property, element, after}  delete_element {property, element}
+  {"op":"insert_item","title":"...","set":{"<property id>":"<value>"},"ref":"i1"}  {"op":"set_values","item":"<id>","set":{"<property id>":"ref:e1","<multi id>":["<element id>"],"<date id>":"2026-12-10","<text id>":"...","<id>":null}}  move_item {item, after}  set_title {title}
+  Create an element and use it in one batch through its ref. null or "" clears a value. Colors: gray brown orange yellow green blue purple pink red.
+- Item bodies, titles and versions are written as for any paper (papers_write / papers_save_version on the item). A version of an item includes its property values.`
 
 func (s *Server) mcpHandler() http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: mcpServerVersion}, &mcp.ServerOptions{Instructions: mcpInstructions})
@@ -176,12 +187,54 @@ type mcpSearchOut struct {
 }
 
 type mcpReadIn struct {
-	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	Paper       string            `json:"paper" jsonschema:"paper id or path of titles from the home"`
-	At          string            `json:"at,omitempty" jsonschema:"omit for the current state; latest or a version number for a saved version"`
-	After       string            `json:"after,omitempty" jsonschema:"cursor from a previous read (next) to continue a long paper"`
-	Limit       int               `json:"limit,omitempty" jsonschema:"max top-level blocks (default 200); 0 with at reads the whole version"`
-	TOC         bool              `json:"toc,omitempty" jsonschema:"only headings and child papers, to find your way in a long paper"`
+	WorkspaceID model.WorkspaceID         `json:"workspace_id" jsonschema:"workspace id"`
+	Paper       string                    `json:"paper" jsonschema:"paper id or path of titles from the home"`
+	At          string                    `json:"at,omitempty" jsonschema:"omit for the current state; latest or a version number for a saved version"`
+	After       string                    `json:"after,omitempty" jsonschema:"cursor from a previous read (next) to continue a long paper"`
+	Limit       int                       `json:"limit,omitempty" jsonschema:"max top-level blocks (default 200); 0 with at reads the whole version"`
+	TOC         bool                      `json:"toc,omitempty" jsonschema:"only headings and child papers, to find your way in a long paper"`
+	Filter      []usecase.FilterCondition `json:"filter,omitempty" jsonschema:"database only: conditions all items must meet, e.g. [{\"property\":\"<id>\",\"op\":\"is\",\"elements\":[\"<element id>\"]}]; ops: is (select), contains (multi_select), on/before/after (date, with date), between (date, with from and to), starts_with (text, with text), is_empty, is_not_empty"`
+	Sort        string                    `json:"sort,omitempty" jsonschema:"database only: <property id>|title|created|updated followed by :asc or :desc"`
+}
+
+// mcpValue is a property value with what it reads as.
+type mcpValue struct {
+	PropertyID model.PropertyID `json:"property_id"`
+	Property   string           `json:"property"`
+	Value      any              `json:"value"`
+	// ElementValues are the values (texts) of the chosen elements of a
+	// select or multi_select.
+	ElementValues []string `json:"element_values,omitempty"`
+}
+
+type mcpItem struct {
+	ID     model.PaperID `json:"id"`
+	Title  string        `json:"title"`
+	Values []mcpValue    `json:"values"`
+}
+
+func toMCPValues(props []model.Property, values []*model.PropertyValue) []mcpValue {
+	out := []mcpValue{}
+	for _, v := range values {
+		prop := model.FindProperty(props, v.PropertyID)
+		if prop == nil {
+			continue
+		}
+		mv := mcpValue{PropertyID: v.PropertyID, Property: prop.Name, Value: v.Value}
+		if prop.Type.HasElements() {
+			ids, _ := v.Strings()
+			if s, ok := v.Str(); ok {
+				ids = []string{s}
+			}
+			for _, id := range ids {
+				if i := prop.ElementIndex(model.ElementID(id)); i >= 0 {
+					mv.ElementValues = append(mv.ElementValues, prop.Elements[i].Value)
+				}
+			}
+		}
+		out = append(out, mv)
+	}
+	return out
 }
 
 type mcpBlock struct {
@@ -209,6 +262,13 @@ type mcpReadOut struct {
 	// HTML is the document of an HTML paper at the state read.
 	HTML           string `json:"html,omitempty"`
 	WorkspaceRules string `json:"workspace_rules,omitempty"`
+	// DatabaseID is the database an item belongs to.
+	DatabaseID model.PaperID `json:"database_id,omitempty"`
+	// Properties are a database's (or an item's database's) definitions.
+	Properties []model.Property `json:"properties,omitempty"`
+	// Items are a page of a database's items; Values an item's values.
+	Items  []mcpItem  `json:"items,omitempty"`
+	Values []mcpValue `json:"values,omitempty"`
 }
 
 type mcpCreateIn struct {
@@ -217,7 +277,7 @@ type mcpCreateIn struct {
 	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit to create an unfiled paper"`
 	Private     bool              `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
 	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown (not for an HTML paper)"`
-	Kind        model.PaperKind   `json:"kind,omitempty" jsonschema:"blocks (default) or html: an HTML paper whose whole body is the html you give"`
+	Kind        model.PaperKind   `json:"kind,omitempty" jsonschema:"blocks (default); html: an HTML paper whose whole body is the html you give; database: a table whose rows are items (then use papers_write with database ops)"`
 	HTML        string            `json:"html,omitempty" jsonschema:"the document of an HTML paper (required with kind html; UTF-8, at most 5 MiB)"`
 }
 
@@ -511,6 +571,26 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 	}
 	for _, a := range view.Path {
 		out.Path = append(out.Path, toMCPRef(a))
+	}
+	out.DatabaseID = view.Paper.DatabaseID
+	if view.Paper.IsDatabase() {
+		sort, err := usecase.ParseItemSort(in.Sort)
+		if err != nil {
+			return mcpReadOut{}, err
+		}
+		page, err := s.uc.ListItems(ctx, p, in.WorkspaceID, q.ID, usecase.ItemsInput{After: in.After, Limit: min(in.Limit, usecase.MaxItemsLimit), Filter: in.Filter, Sort: sort})
+		if err != nil {
+			return mcpReadOut{}, err
+		}
+		out.Properties, out.Items, out.Next = view.Paper.Properties, []mcpItem{}, page.NextCursor
+		for _, r := range page.Items {
+			out.Items = append(out.Items, mcpItem{ID: r.Item.ID, Title: r.Item.Title, Values: toMCPValues(view.Paper.Properties, r.Values)})
+		}
+		out.URL, out.Blocks = paperURL(in.WorkspaceID, q.ID, ""), []mcpBlock{}
+		return out, nil
+	}
+	if view.Database != nil {
+		out.Properties, out.Values = view.Database.Properties, toMCPValues(view.Database.Properties, view.Values)
 	}
 	var blocks []*model.Block
 	refs := map[model.PaperID]*usecase.PaperRef{}

@@ -2,7 +2,7 @@
 
 Everything papers handles, defined one by one: what the words mean, what values things hold, the promises kept, and how things live and change. The aim is to know what is stored, and what changes when something happens, without reading the code.
 
-Drafted 2026-11-21. The same day D10 and D11 (text formatting and rich editing) were added and workspaces were decided to be defined in configuration files (as in hecatoncheires). It details the design starting from the [codebase map](codebase.md). Also the same day most of D1–D18 were decided, versions were reduced to "copies saved on purpose" (D15), and the model was drawn (entities and relations, paper states, storage layout). The decisions on organizing papers (nesting, the home, versions, moves) are included. On 2026-11-22, work on whole subtrees and moves across workspaces were decided to run as [background jobs](#background-jobs-job) ([D19](#d19-operations-on-whole-subtrees-and-moves-across-workspaces-run-as-background-jobs-decided-2026-11-22)), and the model was implemented. On 2026-11-23, [HTML papers](#d20-html-papers-decided-2026-11-23) (D20) were added: a paper kind whose body is one HTML document written through the API.
+Drafted 2026-11-21. The same day D10 and D11 (text formatting and rich editing) were added and workspaces were decided to be defined in configuration files (as in hecatoncheires). It details the design starting from the [codebase map](codebase.md). Also the same day most of D1–D18 were decided, versions were reduced to "copies saved on purpose" (D15), and the model was drawn (entities and relations, paper states, storage layout). The decisions on organizing papers (nesting, the home, versions, moves) are included. On 2026-11-22, work on whole subtrees and moves across workspaces were decided to run as [background jobs](#background-jobs-job) ([D19](#d19-operations-on-whole-subtrees-and-moves-across-workspaces-run-as-background-jobs-decided-2026-11-22)), and the model was implemented. On 2026-11-23, [HTML papers](#d20-html-papers-decided-2026-11-23) (D20) were added: a paper kind whose body is one HTML document written through the API. On 2026-11-24, [databases](#databases) (D21) were added: papers whose body is a table of items, with typed properties.
 
 > **This document is the source of truth for papers' model and concepts (decided 2026-11-22)**. On terms, entities and relations, values, invariants, access, storage layout, operations, conflict rules and versions, when another document ([design.md](design.md), [codebase.md](codebase.md)) or the code disagrees, this document wins.
 
@@ -18,7 +18,7 @@ Screens, the API, the code and this document use the same words with the same me
 | Paper block            | `paper` block | The block that places a child paper in its parent's body. It holds only the child's ID.                                                                                                           |
 | Parent, child, subtree | `ParentID`    | A paper placed in a body by a paper block is a child; the paper whose body it is, the parent. A paper's subtree is its children, their children, and so on.                                       |
 | HTML paper             | `Kind` `html` | A paper whose whole body is one HTML document written through the API (REST, MCP). People only view it, in a sandboxed frame where its scripts run; everything but the body works as for any paper ([D20](#d20-html-papers-decided-2026-11-23)). |
-| Paper kind             | `PaperKind`   | How a paper's body is held: `blocks` (blocks people and AI edit) or `html` (an HTML paper). Set at creation, never changed.                                                                        |
+| Paper kind             | `PaperKind`   | How a paper's body is held: `blocks` (blocks people and AI edit), `html` (an HTML paper) or `database` (a table of items). Set at creation, never changed.                                                                        |
 | Block                  | `Block`       | The smallest unit of editing and of conflicts: a paragraph, a heading, a table cell, a diagram written by AI, and so on.                                                                          |
 | Contents               | contents      | A block's type, text and properties. "The contents changed" means one of those three changed.                                                                                                     |
 | Position               | position      | A block's parent and order key. Handled apart from the contents; changing a position is never a conflict.                                                                                         |
@@ -37,6 +37,11 @@ Screens, the API, the code and this document use the same words with the same me
 | Unfiled                | unfiled       | A public paper without a parent, other than the home. It is not in the tree and gains no children (only restoring a version can bring back children it had); it shows in the papers list. A paper created without a parent starts unfiled.                    |
 | Favorite               | `Favorite`    | A public paper a user keeps in the sidebar's favorites; personal.                                                                                                                                 |
 | Search entry           | `SearchEntry` | A plain-text copy of a title or a block, kept only for search (derived data).                                                                                                                     |
+| Database               | `Kind` `database` | A paper whose body is a table of items: it holds property definitions (`Properties`) and the order of its items (`Items`). It has no blocks and no versions. See [Databases](#databases). |
+| Item                   | `DatabaseID`  | A paper that belongs to a database: one row of its table. It has no `ParentID`; body, versions and children work as for any paper. |
+| Property               | `Property`    | A column of a database: an ID, a name and a type (text, date, select, multi_select).                                                                                                              |
+| Element                | `Element`     | A choice of a select or multi_select property: an ID, its value (the text shown) and a colour.                                                                                                    |
+| Property value         | `PropertyValue` | What one item holds for one property, in the document `papers/{item ID}/properties/{property ID}` (its `Value` field). A select stores an element ID, never the element's text.           |
 | Change feed            | `Event`       | How changes to an open paper reach screens, as the resulting state.                                                                                                                               |
 
 ## Overview
@@ -67,8 +72,9 @@ erDiagram
   }
   Paper {
     string ID
-    string Kind "blocks / html"
+    string Kind "blocks / html / database"
     string ParentID
+    string DatabaseID "an item's database"
     string Title
     string Visibility "public / private"
     int VersionNumber "0 = draft"
@@ -170,7 +176,8 @@ external_resources = false           # default true
 A title and an ordered list of blocks. People and AI write the same papers with the same operations. What is written becomes the **current state** (the latest, being edited) at once. A [version](#current-state-and-versions) exists only when someone (a person or AI) explicitly saves one, and history is the list of those versions.
 
 - **ID / WorkspaceID**: Never change. A "move" across workspaces is a copy under new IDs plus deleting the original ([Tree](#tree-nested-papers)).
-- **Kind**: `blocks` or `html` ([HTML paper](#d20-html-papers-decided-2026-11-23)). Set when the paper is created and never changed. A record written before kinds existed has none and is `blocks`.
+- **Kind**: `blocks`, `html` ([HTML paper](#d20-html-papers-decided-2026-11-23)) or `database` ([databases](#databases)). Set when the paper is created and never changed. A record written before kinds existed has none and is `blocks`.
+- **DatabaseID**: for an item, the database it belongs to; empty otherwise. Set when the paper is created and never changed. An item has no `ParentID`.
 - **ParentID**: The parent paper. Always matches the paper block for this paper in the parent's body (written in the same transaction). Empty for the home, for unfiled papers and for private papers. No list of ancestors is kept ([Tree](#tree-nested-papers)).
 - **Title**: One line, up to 256 bytes. May be empty ("Untitled" on screen). Included in versions, but has no revision of its own: concurrent changes are last-write-wins ([D1](#d1-titles-are-under-version-history-but-have-no-revision-of-their-own-decided)).
 - **Visibility**: `public` (default) or `private`; meaning in [Access](#access). Only the creator changes it. Private papers are not in the tree; they show in the [papers list](#papers-list), to their creator only.
@@ -259,6 +266,73 @@ The whole tree is not shown. The sidebar shows the home, the user's favorites (`
 ### Papers list
 
 The papers list shows papers outside the tree and lets people find their own. It filters by place (unfiled — which includes the user's private papers —, filed, or all), creator (the user or everyone), visibility (all, public, private) and whether archived papers are included, and sorts by update or creation time, newest first. The default is "my unfiled papers". It never shows the home, papers in the trash, papers a move is working on, or papers the caller may not see. For each paper it shows the parent's title only (not the whole path), read in one batch. It is read a page at a time (at most 100 papers).
+
+## Databases
+
+A **database** is a paper whose body is a table of **items**, which are papers too. Two values say this, on two independent axes:
+
+- `Kind` says what the body is: `blocks`, `html`, or `database` (a table of items). A database is placed in the tree by one paper block like any paper (or is unfiled).
+- `DatabaseID` says where a paper sits: an item belongs to the database it names, is placed in no body and has no `ParentID`. `ParentID` keeps one meaning only: the paper whose body holds this paper's paper block.
+
+So an item may have any kind of body (today `insert_item` makes `blocks` items), and nothing new is needed to combine the two.
+
+```mermaid
+flowchart LR
+  home["Home (paper)"] -- "paper block (ParentID)" --> db["Database 7Hq2<br/>Kind=database<br/>Properties: pA Status, pB Due<br/>Items: [1csQ, 4Rt9]"]
+  i1["Item 1csQ<br/>DatabaseID=7Hq2"] -. "DatabaseID" .-> db
+  i2["Item 4Rt9<br/>DatabaseID=7Hq2"] -. "DatabaseID" .-> db
+  i1 --> v1["properties/pA<br/>Value=e2"]
+  i1 --> v2["properties/pB<br/>Value=2026-12-10"]
+  i1 -- "paper block (ParentID)" --> child["Design notes (paper)"]
+```
+
+### Place in the tree
+
+Both values are set when a paper is created and never change.
+
+| Place                | Kind               | Visibility | ParentID                                | DatabaseID   | Children                                   |
+|----------------------|--------------------|------------|-----------------------------------------|--------------|--------------------------------------------|
+| Filed                | any                | public     | the home, a filed paper or an item      | empty        | blocks: yes / database: items only         |
+| Unfiled              | any                | public     | empty                                   | empty        | blocks: no / database: items only          |
+| **In a database**    | any (today blocks) | public     | empty                                   | the database | yes, by paper blocks in its body           |
+
+- Rules about children (an unfiled paper has none, only a paper without children may be unfiled) count only children placed by paper blocks; items are not children. A database takes no child papers.
+- Walking up (breadcrumbs, cycle checks, "search under here") goes to `ParentID`, or for an item to `DatabaseID`. Work on a subtree (trash, archive, restore, moves across workspaces) takes a database's items from its `Items`.
+- Items never leave their database (`move_paper` of an item is refused) and other papers never enter one. A database has no blocks and no versions. Databases and items are always public.
+- The papers list's "unfiled" means no `ParentID` and no `DatabaseID`; items show under "filed" and "all" with their database as where they are.
+
+### Stored documents
+
+| Document                                    | Fields                                                                                                       |
+|---------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| `papers/{database ID}`                      | the paper record with `Kind="database"`, plus `Properties` (column order, ≤ 100) and `Items` (item IDs in display order, ≤ 10,000) |
+| `papers/{item ID}`                          | the paper record with `DatabaseID` = the database and an empty `ParentID`                                     |
+| `papers/{item ID}/properties/{property ID}` | `Value`, `DatabaseID` (the item's `DatabaseID`), `PropertyID` (the document ID), `UpdatedBy`, `UpdatedAt`     |
+
+- `Property`: `ID` (server-issued, unique in the database, never reused), `Name` (1–100 bytes, no line break, unique in the database after trimming), `Type` (fixed after creation), `Elements` (select and multi_select only, ≤ 100 per property and ≤ 1,000 per database).
+- `Element`: `ID` (server-issued, unique in the database, never reused), `Value` (1–100 bytes, no line break, unique in the property after trimming), `Color` (a [D10](#d10-inline-styling-in-blocks-is-a-markup-string-decided-a) palette name; gray by default).
+- `Value` by type: text — 1–2,000 bytes without a line break; date — a real `YYYY-MM-DD`; select — an element ID; multi_select — 1–100 element IDs, without duplicates, stored in ID order. An empty value has no document.
+- `Items` includes items in the trash and archived ones (restoring puts them back in place) and loses an item just before it is purged.
+- The value documents' `DatabaseID` and `PropertyID` repeat what the path and the item say so that two composite indexes (by `Value`, ascending and descending) can sort a property's values within a database.
+- A version of an item also holds its property values (`Version.Values`).
+
+### Writing
+
+- Everything about a database — property definitions, adding and ordering items, property values — goes to **the database's batch** (`POST …/papers/{database ID}/ops`) and is applied in one transaction. A new element and a value choosing it can be sent together with `ref`. An item's title and body go to the item's own batch.
+- Changing definitions (including deleting a property or an element) and reordering items write only the database's document, however many items there are. Setting a value writes only that value's document.
+- Values pointing to a deleted property or element are not rewritten. Reads treat them as empty under the current definitions, and they are dropped the next time a value of that item is written. Setting a value that points to a missing element is refused (400); restoring a version drops such values silently.
+- Concurrency: definitions and values have no revision. The last writer of an item wins (like titles, [D1](#d1-titles-are-under-version-history-but-have-no-revision-of-their-own-decided)). The database's document is read and changed one item at a time inside a transaction, so concurrent changes to different properties or elements are all kept.
+
+### Reading
+
+- Without a sort, items come in `Items` order: a page reads the database's document, then the items and their values in two batch reads, repeating at most five times to fill a page past trashed, moving or archived items. The cursor is the last item's ID.
+- Filters (up to five, all must hold): select — one of the elements; multi_select — contains one of the elements; date — on, before, after, between; text — starts with; any type — empty, not empty. Without a sort they read in `Items` order.
+- Sorting by a property queries its value documents by `Value` (a select goes element by element in the property's element order); items without a value follow in `Items` order. Sorting by title, creation or update time uses the papers indexes on `DatabaseID`. Multi_select cannot be sorted on.
+- Property values are not searched.
+
+### Change feed
+
+The database's feed carries `paper_updated` (definitions, `Items`, title), `item_put` (an item's record changed), `item_deleted` (an item was purged) and `property_value_put` / `property_value_deleted`. An item's own feed also carries its value events.
 
 ## Background jobs (Job)
 
@@ -589,7 +663,7 @@ What stored data always satisfies, however it is written. Kept by the repository
 14. A paper's update time lags the last write by at most one minute (configurable).
 15. Each configured workspace has exactly one home paper. The home has no parent, is never in the trash, and is public.
 16. Every public paper other than the home that is not in the trash has at most one parent. When it has one (a filed paper), the parent's body has exactly one paper block pointing to it; when it has none (an unfiled paper), no body has a paper block pointing to it. Conversely, every `paper` block not in the trash points to a child whose `ParentID` is that block's paper.
-17. Walking up parents from a filed paper reaches the home (no cycles). Parents are the home or filed papers of the same workspace.
+17. Walking up from a filed paper or an item (through `ParentID`, or an item's `DatabaseID`) reaches the home or an unfiled paper (no cycles). Parents are the home, filed papers or items of the same workspace; an item's database is a database of the same workspace.
 18. Private papers have no children: no paper that is not in the trash has one as its parent, and their bodies have no `paper` block that is not in the trash. A private paper has no parent and is never placed in a body as a paper block. Unfiled papers gain no children by inserting, moving or creating; the only children they have are ones a restored version brought back from the trash.
 19. `paper` blocks exist only at the top level of a body, never in table cells.
 20. The attachment an image block points to belongs to the same paper as the block. Attachment bytes never change.
@@ -597,6 +671,11 @@ What stored data always satisfies, however it is written. Kept by the repository
 22. A paper with a `JobID` and its blocks are written only by that job. A paper with a `JobID` appears in no principal's search, and copies are placed in no parent's body.
 23. An HTML paper's body is exactly one `html_page` block, and an `html_page` block exists only in an HTML paper. Its `attachment_id` always points to a `text/html` attachment of the same paper (an HTML paper's body is never empty). HTML papers have no children and their bodies have no `paper` block.
 24. A paper's kind never changes.
+25. A database has no blocks and no versions. Databases and items are public. An item's `DatabaseID` is set at creation and never changes, and an item has no `ParentID`.
+26. Property IDs and element IDs are unique within their database and are never reused.
+27. A database's `Items` holds each of its items that is not purged exactly once, and no other ID. An item is removed from `Items` just before it is purged; restoring an item missing from `Items` adds it at the end.
+28. Property value documents exist only under items. `DatabaseID` equals the item's `DatabaseID` and `PropertyID` equals the document ID.
+29. A property value document may point to a property or an element the definitions no longer have; reads treat it as empty.
 
 ## Decisions
 
@@ -912,6 +991,17 @@ Agents produce whole pages (reports, dashboards, small tools) as one HTML docume
 > - **External resources are the workspace's choice** (`[sandbox] external_resources`, true by default), for HTML papers and `html` / `svg` blocks alike. Without them the frame's document gets a policy that loads nothing from other hosts. The setting governs loads only: a link or script may still navigate the frame itself to another page, which is accepted.
 > - **Comments later**: the `html_page` block's ID never changes and each document is an immutable attachment, so comments can be attached to the block and the document they were written on.
 > - Serving the documents through signed Cloud Storage URLs may come later, for every attachment at once ([design](design.md#open-questions-and-next-tasks)).
+
+### D21. Databases are papers, their items are papers, and values live under the items (decided 2026-11-24)
+
+A set of papers with arbitrary properties (text, date, select, multi_select) that anyone may edit, with select elements kept as ID and value.
+
+- **The database**: a paper whose `Kind` is `database` (its body is the table of items), not a separate entity (the tree, moves, trash, favorites, URLs, access and jobs would all be built twice) and not a block (blocks do not move between papers, and a parent's versions would carry the definitions).
+- **Items**: papers in the same collection that name their database in `DatabaseID`, set at creation, with no `ParentID` and no paper block. Being an item is independent of `Kind` (what the body is), so an item may later have an HTML body without a new kind. Keeping `ParentID` for paper blocks only means no tree invariant needs an exception for items; the price is that walking up and the subtree jobs also follow `DatabaseID` and `Items`, and the unfiled query also asks for an empty `DatabaseID`.
+- **Values**: documents under the item (`properties/{property ID}`), not fields of the item's record (property IDs as field names need an index per property, and every value change would write the record).
+- **Order of items**: the database's `Items`, beside the definitions (the order is a property of the whole table). The price is the limit of 10,000 items and that adding and reordering write the database's document.
+- **Sorting by a property**: two composite indexes on value documents (`DatabaseID`, `PropertyID`, `Value` ascending / descending), reading one page, rather than reading every value of the database.
+- **Concurrency**: the last writer wins per item; no revisions. **Deleted properties and elements**: values are left and read as empty, then dropped on the item's next write. **Definitions are not versioned**; item versions include values. **Types never change**. **Values are not searched**. **Sort and filter settings are kept in the URL only**. **Databases are always public**.
 
 ## What changes once decided
 

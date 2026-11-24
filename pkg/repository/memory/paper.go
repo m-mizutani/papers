@@ -94,7 +94,7 @@ func (r *Repository) ListPapers(_ context.Context, ws model.WorkspaceID, q model
 		after = &c
 	}
 	got := r.listPapers(ws, func(p *model.Paper) bool {
-		return (!q.Unfiled || p.ParentID == "") &&
+		return (!q.Unfiled || (p.ParentID == "" && p.DatabaseID == "")) &&
 			(q.Creator == "" || p.CreatedBy.UserID == q.Creator) &&
 			(after == nil || after.After(q.Sort, p))
 	})
@@ -303,6 +303,9 @@ type memTx struct {
 	events      []*model.Event
 	jobs        map[model.JobID]*model.Job
 	items       map[model.JobID]map[model.PaperID]*model.JobItem
+	values      map[model.PropertyValueRef]*model.PropertyValue
+	// valueDeletes are staged deletions of property values.
+	valueDeletes map[model.PropertyValueRef]bool
 }
 
 func (t *memTx) paperExists(id model.PaperID) bool {
@@ -539,6 +542,74 @@ func (t *memTx) PutAttachment(a *model.Attachment) error {
 	return nil
 }
 
+func (t *memTx) GetPropertyValues(refs []model.PropertyValueRef) ([]*model.PropertyValue, error) {
+	t.r.mu.RLock()
+	defer t.r.mu.RUnlock()
+	var out []*model.PropertyValue
+	for _, ref := range refs {
+		if t.valueDeletes[ref] {
+			continue
+		}
+		if v, ok := t.values[ref]; ok {
+			out = append(out, v.Clone())
+			continue
+		}
+		if d := t.r.papers[paperKey{t.ws, ref.PaperID}]; d != nil {
+			if v, ok := d.values[ref.PropertyID]; ok {
+				out = append(out, v.Clone())
+			}
+		}
+	}
+	return out, nil
+}
+
+func (t *memTx) ListItemPropertyValues(item model.PaperID) ([]*model.PropertyValue, error) {
+	t.r.mu.RLock()
+	seen := map[model.PropertyID]*model.PropertyValue{}
+	if d := t.r.papers[paperKey{t.ws, item}]; d != nil {
+		for id, v := range d.values {
+			seen[id] = v.Clone()
+		}
+	}
+	t.r.mu.RUnlock()
+	for ref, v := range t.values {
+		if ref.PaperID == item {
+			seen[ref.PropertyID] = v.Clone()
+		}
+	}
+	for ref := range t.valueDeletes {
+		if ref.PaperID == item {
+			delete(seen, ref.PropertyID)
+		}
+	}
+	out := make([]*model.PropertyValue, 0, len(seen))
+	for _, v := range seen {
+		out = append(out, v)
+	}
+	slices.SortFunc(out, func(a, b *model.PropertyValue) int { return cmp.Compare(a.PropertyID, b.PropertyID) })
+	return out, nil
+}
+
+func (t *memTx) PutPropertyValue(v *model.PropertyValue) error {
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	if v.WorkspaceID != t.ws || !t.paperExists(v.PaperID) {
+		return goerr.Wrap(model.ErrInvalidArgument, "property value belongs to an unknown item", goerr.V("paper_id", v.PaperID))
+	}
+	ref := v.Ref()
+	delete(t.valueDeletes, ref)
+	t.values[ref] = v.Clone()
+	return nil
+}
+
+func (t *memTx) DeletePropertyValue(item model.PaperID, property model.PropertyID) error {
+	ref := model.PropertyValueRef{PaperID: item, PropertyID: property}
+	delete(t.values, ref)
+	t.valueDeletes[ref] = true
+	return nil
+}
+
 func (t *memTx) PutForward(f *model.Forward) error {
 	t.forwards = append(t.forwards, clone(f))
 	return nil
@@ -559,11 +630,13 @@ func (r *Repository) RunTx(_ context.Context, ws model.WorkspaceID, fn func(tx i
 	defer r.txMu.Unlock()
 	t := &memTx{
 		r: r, ws: ws,
-		papers:  map[model.PaperID]*model.Paper{},
-		blocks:  map[model.PaperID]map[model.BlockID]*model.Block{},
-		deleted: map[model.PaperID]map[model.BlockID]bool{},
-		jobs:    map[model.JobID]*model.Job{},
-		items:   map[model.JobID]map[model.PaperID]*model.JobItem{},
+		papers:       map[model.PaperID]*model.Paper{},
+		blocks:       map[model.PaperID]map[model.BlockID]*model.Block{},
+		deleted:      map[model.PaperID]map[model.BlockID]bool{},
+		jobs:         map[model.JobID]*model.Job{},
+		items:        map[model.JobID]map[model.PaperID]*model.JobItem{},
+		values:       map[model.PropertyValueRef]*model.PropertyValue{},
+		valueDeletes: map[model.PropertyValueRef]bool{},
 	}
 	if err := fn(t); err != nil {
 		return err
@@ -599,6 +672,16 @@ func (r *Repository) RunTx(_ context.Context, ws model.WorkspaceID, fn func(tx i
 		for id, b := range blocks {
 			d.blocks[id] = b.Clone()
 			d.indexBlock(b)
+		}
+	}
+	for ref := range t.valueDeletes {
+		if d := r.papers[paperKey{ws, ref.PaperID}]; d != nil {
+			delete(d.values, ref.PropertyID)
+		}
+	}
+	for ref, v := range t.values {
+		if d := r.papers[paperKey{ws, ref.PaperID}]; d != nil {
+			d.values[ref.PropertyID] = v.Clone()
 		}
 	}
 	for _, v := range t.versions {

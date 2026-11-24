@@ -5,6 +5,7 @@ import (
 
 	"github.com/m-mizutani/gt"
 
+	"github.com/m-mizutani/papers/pkg/domain/model"
 	"github.com/m-mizutani/papers/pkg/usecase/sample"
 )
 
@@ -25,6 +26,14 @@ func TestReadEveryEntry(t *testing.T) {
 		}
 		body := gt.R1(sample.Read(e.File)).NoError(t)
 		gt.True(t, len(body) > 0)
+		if e.Kind == model.PaperKindDatabase {
+			def := gt.R1(sample.ReadDatabase(e.File)).NoError(t)
+			gt.True(t, len(def.Ops) > 0)
+			for _, f := range def.Bodies {
+				gt.R1(sample.Read(f)).NoError(t)
+			}
+			continue
+		}
 		for _, img := range sample.Images(string(body)) {
 			gt.R1(sample.Read(img)).NoError(t)
 		}
@@ -34,5 +43,10 @@ func TestReadEveryEntry(t *testing.T) {
 
 func TestReadMissingFile(t *testing.T) {
 	_, err := sample.Read("missing.md")
+	gt.Error(t, err)
+}
+
+func TestReadDatabaseRefusesABrokenDefinition(t *testing.T) {
+	_, err := sample.ReadDatabase("home.md") // not JSON
 	gt.Error(t, err)
 }

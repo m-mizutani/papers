@@ -20,6 +20,39 @@ func copyPaperID(j *model.Job, src model.PaperID) model.PaperID {
 	return model.PaperID(model.DeriveID(string(j.ID), "paper", string(src)))
 }
 
+// under lists what sits directly under the papers: their children (by
+// ParentID) and, for a database, its items (from its Items, so no query
+// is needed). Both are read in batches.
+func (u *UseCases) under(ctx context.Context, ws model.WorkspaceID, ids []model.PaperID) ([]*model.Paper, error) {
+	kids, err := u.repo.ListChildrenOf(ctx, ws, ids)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to list children")
+	}
+	papers, err := u.repo.GetPapers(ctx, ws, ids)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to read papers")
+	}
+	var itemIDs []model.PaperID
+	for _, p := range papers {
+		if p.IsDatabase() {
+			itemIDs = append(itemIDs, p.Items...)
+		}
+	}
+	if len(itemIDs) == 0 {
+		return kids, nil
+	}
+	items, err := u.repo.GetPapers(ctx, ws, itemIDs)
+	if err != nil {
+		return nil, goerr.Wrap(err, "failed to read items")
+	}
+	for _, q := range items {
+		if q.IsItem() {
+			kids = append(kids, q)
+		}
+	}
+	return kids, nil
+}
+
 func (u *UseCases) collect(ctx context.Context, j *model.Job) error {
 	if j.Total == 0 {
 		return u.commitStep(ctx, j, func(c *stepCtx) error {
@@ -30,7 +63,7 @@ func (u *UseCases) collect(ctx context.Context, j *model.Job) error {
 			if err := u.includeRoot(c, root); err != nil {
 				return err
 			}
-			it := &model.JobItem{JobID: c.job.ID, WorkspaceID: c.job.WorkspaceID, PaperID: root.ID, ParentID: root.ParentID, ExpireAt: c.job.ExpireAt}
+			it := &model.JobItem{JobID: c.job.ID, WorkspaceID: c.job.WorkspaceID, PaperID: root.ID, ParentID: root.Above(), ExpireAt: c.job.ExpireAt}
 			if c.job.Kind == model.JobMove {
 				it.CopyID = copyPaperID(c.job, root.ID)
 			}
@@ -59,9 +92,9 @@ func (u *UseCases) collect(ctx context.Context, j *model.Job) error {
 		parents[it.PaperID] = it
 		ids = append(ids, it.PaperID)
 	}
-	kids, err := u.repo.ListChildrenOf(ctx, j.WorkspaceID, ids)
+	kids, err := u.under(ctx, j.WorkspaceID, ids)
 	if err != nil {
-		return goerr.Wrap(err, "failed to list children")
+		return err
 	}
 	kidIDs := make([]model.PaperID, len(kids))
 	for i, k := range kids {
@@ -81,7 +114,7 @@ func (u *UseCases) collect(ctx context.Context, j *model.Job) error {
 			have[it.PaperID] = true
 		}
 		for _, k := range fresh {
-			parent, ok := parents[k.ParentID]
+			parent, ok := parents[k.Above()]
 			if !ok || have[k.ID] {
 				continue // moved meanwhile, or already collected
 			}
@@ -95,7 +128,7 @@ func (u *UseCases) collect(ctx context.Context, j *model.Job) error {
 			if !take {
 				continue
 			}
-			it := &model.JobItem{JobID: c.job.ID, WorkspaceID: c.job.WorkspaceID, PaperID: k.ID, ParentID: k.ParentID, Depth: parent.Depth + 1, ExpireAt: c.job.ExpireAt}
+			it := &model.JobItem{JobID: c.job.ID, WorkspaceID: c.job.WorkspaceID, PaperID: k.ID, ParentID: k.Above(), Depth: parent.Depth + 1, ExpireAt: c.job.ExpireAt}
 			if c.job.Kind == model.JobMove {
 				it.CopyID = copyPaperID(c.job, k.ID)
 			}

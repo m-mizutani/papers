@@ -635,6 +635,9 @@ func TestMatchesSpec(t *testing.T) {
 		for _, s := range []adminpb.Index_QueryScope{adminpb.Index_COLLECTION_GROUP, adminpb.Index_COLLECTION_RECURSIVE} {
 			gt.False(t, matchesSpec(last, server(last, func(i *adminpb.Index) { i.QueryScope = s })))
 		}
+		group := specByQuery(t, "QueryPropertyValues (descending)") // properties, collection group
+		gt.True(t, matchesSpec(group, server(group, nil)))
+		gt.False(t, matchesSpec(group, server(group, func(i *adminpb.Index) { i.QueryScope = adminpb.Index_COLLECTION })))
 	})
 	t.Run("T30 search specs", func(t *testing.T) {
 		textSpec := func(i *adminpb.Index) *adminpb.Index_IndexField_SearchConfig {

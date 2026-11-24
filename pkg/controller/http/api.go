@@ -37,6 +37,7 @@ func (s *Server) routeAPI(r chi.Router) {
 		r.Route("/papers/{paper}", func(r chi.Router) {
 			r.Get("/", s.handleGetPaper)
 			r.Get("/blocks", s.handleListBlocks)
+			r.Get("/items", s.handleListItems)
 			r.Post("/ops", s.handleOps)
 			r.Get("/children", s.handleChildren)
 			r.Get("/status", s.handleStatus)
@@ -258,7 +259,7 @@ type createPaperRequest struct {
 	Parent     string           `json:"parent"`
 	After      *string          `json:"after"`
 	Markdown   string           `json:"markdown"`
-	// Kind is blocks (default) or html; an HTML paper needs HTML.
+	// Kind is blocks (default), html or database; an HTML paper needs HTML.
 	Kind model.PaperKind `json:"kind"`
 	HTML string          `json:"html"`
 }
@@ -309,6 +310,31 @@ func (s *Server) handleOps(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.uc.Apply(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.BatchInput{Ops: req.Ops, Force: req.Force})
 	respond(w, r, http.StatusOK, res, err)
+}
+
+// handleListItems reads a page of a database's items:
+// ?after&limit&archived&filter (a JSON list of conditions)&sort.
+func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
+	limit, err := queryInt(r, "limit")
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	q := r.URL.Query()
+	filter, err := usecase.ParseFilter(q.Get("filter"))
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	sort, err := usecase.ParseItemSort(q.Get("sort"))
+	if err != nil {
+		writeError(r.Context(), w, err)
+		return
+	}
+	page, err := s.uc.ListItems(r.Context(), principalFrom(r.Context()), wsParam(r), paperParam(r), usecase.ItemsInput{
+		After: q.Get("after"), Limit: limit, Archived: q.Get("archived") == "true", Filter: filter, Sort: sort,
+	})
+	respond(w, r, http.StatusOK, page, err)
 }
 
 func (s *Server) handleChildren(w http.ResponseWriter, r *http.Request) {

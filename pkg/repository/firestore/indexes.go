@@ -33,6 +33,18 @@ type IndexSpec struct {
 	Fields          []IndexField
 	// Query names the query the index serves, for humans.
 	Query string
+	// Group makes the index serve collection group queries (every
+	// collection with this ID, under any parent) instead of the queries of
+	// one collection.
+	Group bool
+}
+
+// scope is the query scope of the index s describes.
+func (s IndexSpec) scope() adminpb.Index_QueryScope {
+	if s.Group {
+		return adminpb.Index_COLLECTION_GROUP
+	}
+	return adminpb.Index_COLLECTION
 }
 
 func (s IndexSpec) String() string {
@@ -49,10 +61,10 @@ func (s IndexSpec) String() string {
 var RequiredIndexes = []IndexSpec{
 	{CollectionGroup: colTokens, Fields: []IndexField{{"UserID", IndexAsc}}, Query: "ListTokens"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListChildren, ListChildrenOf"},
-	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"UpdatedAt", IndexDesc}}, Query: "ListPapers (unfiled, by update)"},
-	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"CreatedAt", IndexDesc}}, Query: "ListPapers (unfiled, by creation)"},
-	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"CreatedBy.UserID", IndexAsc}, {"UpdatedAt", IndexDesc}}, Query: "ListPapers (unfiled, one creator, by update)"},
-	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"CreatedBy.UserID", IndexAsc}, {"CreatedAt", IndexDesc}}, Query: "ListPapers (unfiled, one creator, by creation)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"DatabaseID", IndexAsc}, {"UpdatedAt", IndexDesc}}, Query: "ListPapers (unfiled, by update)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"DatabaseID", IndexAsc}, {"CreatedAt", IndexDesc}}, Query: "ListPapers (unfiled, by creation)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"DatabaseID", IndexAsc}, {"CreatedBy.UserID", IndexAsc}, {"UpdatedAt", IndexDesc}}, Query: "ListPapers (unfiled, one creator, by update)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"ParentID", IndexAsc}, {"DatabaseID", IndexAsc}, {"CreatedBy.UserID", IndexAsc}, {"CreatedAt", IndexDesc}}, Query: "ListPapers (unfiled, one creator, by creation)"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"UpdatedAt", IndexDesc}}, Query: "ListPapers (by update)"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"CreatedAt", IndexDesc}}, Query: "ListPapers (by creation)"},
 	{CollectionGroup: colPapers, Fields: []IndexField{{"CreatedBy.UserID", IndexAsc}, {"UpdatedAt", IndexDesc}}, Query: "ListPapers (one creator, by update)"},
@@ -69,6 +81,12 @@ var RequiredIndexes = []IndexSpec{
 	{CollectionGroup: colJobItems, Fields: []IndexField{{"Expanded", IndexAsc}, {"Depth", IndexAsc}}, Query: "ListUnexpandedJobItems"},
 	{CollectionGroup: colJobItems, Fields: []IndexField{{"Stage", IndexAsc}, {"Depth", IndexAsc}}, Query: "ListJobItemsAt"},
 	{CollectionGroup: colSearch, Fields: []IndexField{{"Text", IndexText}}, Query: "Search"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"DatabaseID", IndexAsc}, {"Title", IndexAsc}}, Query: "ListItems (by title)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"DatabaseID", IndexAsc}, {"Title", IndexDesc}}, Query: "ListItems (by title, descending)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"DatabaseID", IndexAsc}, {"UpdatedAt", IndexDesc}}, Query: "ListItems (by update)"},
+	{CollectionGroup: colPapers, Fields: []IndexField{{"DatabaseID", IndexAsc}, {"CreatedAt", IndexDesc}}, Query: "ListItems (by creation)"},
+	{CollectionGroup: colProperties, Fields: []IndexField{{"DatabaseID", IndexAsc}, {"PropertyID", IndexAsc}, {"Value", IndexAsc}}, Query: "QueryPropertyValues (ascending, equal value)", Group: true},
+	{CollectionGroup: colProperties, Fields: []IndexField{{"DatabaseID", IndexAsc}, {"PropertyID", IndexAsc}, {"Value", IndexDesc}}, Query: "QueryPropertyValues (descending)", Group: true},
 }
 
 // TTLFields are the fields whose time value expires the document.
@@ -93,7 +111,7 @@ func (s IndexSpec) isSearch() bool {
 // density explicitly (the Enterprise default) so that what the server
 // returns compares deterministically; search indexes leave it to the server.
 func (s IndexSpec) proto() *adminpb.Index {
-	idx := &adminpb.Index{QueryScope: adminpb.Index_COLLECTION, ApiScope: adminpb.Index_ANY_API}
+	idx := &adminpb.Index{QueryScope: s.scope(), ApiScope: adminpb.Index_ANY_API}
 	if !s.isSearch() {
 		idx.Density = adminpb.Index_DENSE
 	}

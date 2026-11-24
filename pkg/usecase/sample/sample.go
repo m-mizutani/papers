@@ -10,6 +10,7 @@ package sample
 
 import (
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"regexp"
 
@@ -31,7 +32,7 @@ type Entry struct {
 	Title string
 	Kind  model.PaperKind
 	// File is the body: Markdown for a blocks paper, an HTML document for
-	// an HTML paper.
+	// an HTML paper, and for a database a JSON Database (its batch).
 	File string
 	// Parent is the key of the parent entry, or "" for the home.
 	Parent string
@@ -45,7 +46,32 @@ func Entries() []Entry {
 		{Key: "agents", Title: "Working with AI agents", Kind: model.PaperKindBlocks, File: "agents.md", Parent: "welcome"},
 		{Key: "rich", Title: "Diagrams and rich blocks", Kind: model.PaperKindBlocks, File: "rich.md"},
 		{Key: "dashboard", Title: "Release dashboard", Kind: model.PaperKindHTML, File: "dashboard.html"},
+		{Key: "roadmap", Title: "Product roadmap", Kind: model.PaperKindDatabase, File: "roadmap.json"},
 	}
+}
+
+// Database is the definition of a sample database: the ops of one batch
+// sent to it, as an agent would send them (properties, elements and items,
+// named by ref), and the Markdown bodies of some items by their ref.
+type Database struct {
+	Ops    []json.RawMessage `json:"ops"`
+	Bodies map[string]string `json:"bodies"`
+}
+
+// ReadDatabase reads a database definition file.
+func ReadDatabase(name string) (*Database, error) {
+	b, err := Read(name)
+	if err != nil {
+		return nil, err
+	}
+	var d Database
+	if err := json.Unmarshal(b, &d); err != nil {
+		return nil, goerr.Wrap(err, "failed to parse sample database", goerr.V("name", name))
+	}
+	if len(d.Ops) == 0 {
+		return nil, goerr.New("a sample database has no ops", goerr.V("name", name))
+	}
+	return &d, nil
 }
 
 // Read returns a file of the definition by its path, such as "welcome.md"

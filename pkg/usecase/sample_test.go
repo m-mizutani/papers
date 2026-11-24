@@ -54,17 +54,17 @@ func TestSeedSamplesWritesTheSamplesIntoAnEmptyWorkspace(t *testing.T) {
 	e := newEnv(t)
 	res := seed(t, e)
 	gt.True(t, res[wsA].Seeded)
-	gt.Equal(t, res[wsA].Papers, 4)
+	gt.Equal(t, res[wsA].Papers, 10) // five papers and the database's five items
 
 	ctx := context.Background()
 	home := e.home(t, wsA)
 	blocks := gt.R1(e.repo.ListBlocks(ctx, wsA, home)).NoError(t)
-	gt.A(t, blocks).Length(4)
+	gt.A(t, blocks).Length(5)
 	gt.Equal(t, blocks[0].Type, model.BlockParagraph)
 	gt.True(t, strings.Contains(blocks[0].Content, "papers firestore reset --demo"))
 
 	papers := allPapers(t, e, wsA)
-	gt.A(t, papers).Length(5) // the home and four samples
+	gt.A(t, papers).Length(11) // the home, five samples and five items
 	titles := byTitle(papers)
 	var order []string
 	for _, b := range blocks[1:] {
@@ -75,7 +75,7 @@ func TestSeedSamplesWritesTheSamplesIntoAnEmptyWorkspace(t *testing.T) {
 			}
 		}
 	}
-	gt.Equal(t, order, []string{"Welcome to papers", "Diagrams and rich blocks", "Release dashboard"})
+	gt.Equal(t, order, []string{"Welcome to papers", "Diagrams and rich blocks", "Release dashboard", "Product roadmap"})
 	gt.Equal(t, titles["Alpha"].ID, home) // the home keeps its title
 }
 
@@ -117,7 +117,7 @@ func TestSeedSamplesOnlyWritesTheEmptyWorkspaces(t *testing.T) {
 	res := seed(t, e)
 	gt.True(t, res[wsA].Seeded)
 	gt.False(t, res[wsB].Seeded)
-	gt.A(t, allPapers(t, e, wsA)).Length(5)
+	gt.A(t, allPapers(t, e, wsA)).Length(11)
 	gt.A(t, allPapers(t, e, wsB)).Length(2)
 }
 
@@ -169,8 +169,8 @@ func TestSeedSamplesTwiceAtOnceWritesOneSet(t *testing.T) {
 	wg.Wait()
 	gt.NoError(t, errors.Join(errs...))
 
-	gt.A(t, allPapers(t, e, wsA)).Length(5)
-	gt.A(t, gt.R1(e.repo.ListBlocks(ctx, wsA, e.home(t, wsA))).NoError(t)).Length(4)
+	gt.A(t, allPapers(t, e, wsA)).Length(11)
+	gt.A(t, gt.R1(e.repo.ListBlocks(ctx, wsA, e.home(t, wsA))).NoError(t)).Length(5)
 }
 
 // TestSamplesCoverBlockTypes keeps the sample papers showing every block type and
@@ -193,7 +193,7 @@ func TestSamplesCoverBlockTypes(t *testing.T) {
 			t.Errorf("no sample paper has a %q block; add one to pkg/usecase/sample", bt)
 		}
 	}
-	for _, k := range []model.PaperKind{model.PaperKindBlocks, model.PaperKindHTML} {
+	for _, k := range []model.PaperKind{model.PaperKindBlocks, model.PaperKindHTML, model.PaperKindDatabase} {
 		if !kinds[k] {
 			t.Errorf("no sample paper is of kind %q; add one to pkg/usecase/sample", k)
 		}
@@ -238,6 +238,12 @@ func TestSamplesAreSelfContained(t *testing.T) {
 	files := []string{sample.HomeFile}
 	for _, en := range sample.Entries() {
 		files = append(files, en.File)
+		if en.Kind == model.PaperKindDatabase {
+			def := gt.R1(sample.ReadDatabase(en.File)).NoError(t)
+			for _, body := range def.Bodies {
+				files = append(files, body)
+			}
+		}
 	}
 	for _, f := range files {
 		body := string(gt.R1(sample.Read(f)).NoError(t))
@@ -306,4 +312,40 @@ func TestSeedSamplesReportsAStoreFailure(t *testing.T) {
 	_, err := uc.SeedSamples(ctx)
 	gt.Error(t, err)
 	gt.True(t, errors.Is(err, errStoreDown))
+}
+
+func TestSeedSamplesBuildsTheSampleDatabase(t *testing.T) {
+	e := newEnv(t)
+	seed(t, e)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	titles := byTitle(allPapers(t, e, wsA))
+
+	db := titles["Product roadmap"]
+	gt.True(t, db != nil).Required()
+	gt.Equal(t, db.Kind, model.PaperKindDatabase)
+	gt.Equal(t, db.ParentID, e.home(t, wsA))
+	gt.Equal(t, db.CreatedBy.Kind, model.ActorSystem)
+	var types []model.PropertyType
+	for _, p := range db.Properties {
+		types = append(types, p.Type)
+	}
+	gt.Equal(t, types, []model.PropertyType{model.PropertySelect, model.PropertyDate, model.PropertyMultiSelect, model.PropertyText})
+	gt.A(t, db.Items).Length(5)
+
+	page := gt.R1(e.uc.ListItems(ctx, alice, wsA, db.ID, usecase.ItemsInput{})).NoError(t)
+	gt.A(t, page.Items).Length(5)
+	gt.Equal(t, page.Items[0].Item.Title, "Rank search results by recent edits")
+	gt.A(t, page.Items[0].Values).Length(4) // every property type has a value
+	for _, row := range page.Items {
+		gt.Equal(t, row.Item.DatabaseID, db.ID)
+		gt.Equal(t, row.Item.CreatedBy.Kind, model.ActorSystem)
+		gt.True(t, len(row.Values) > 0)
+	}
+
+	// an item can carry a body like any paper
+	body := gt.R1(e.repo.ListBlocks(ctx, wsA, page.Items[0].Item.ID)).NoError(t)
+	gt.True(t, len(body) > 0)
+	// and the items are counted among the sample papers
+	gt.True(t, seed(t, e)[wsA].Papers == 0) // a second run writes nothing
 }

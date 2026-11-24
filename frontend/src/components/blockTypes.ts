@@ -9,9 +9,13 @@ export interface TypeChoice {
   icon: string
   /** Words the "/" menu matches, in English and Japanese. */
   keywords: string
-  group: 'basic' | 'media'
+  group: 'basic' | 'media' | 'paper'
   type: BlockType
   props: BlockProps
+  /** A short note next to the label (the "/" menu's paper group). */
+  hint?: MsgKey
+  /** For a paper block: what kind of paper it creates. */
+  paperKind?: 'database'
 }
 
 export const TYPE_CHOICES: TypeChoice[] = [
@@ -26,9 +30,10 @@ export const TYPE_CHOICES: TypeChoice[] = [
   { key: 'callout', label: 'typeCallout', icon: '💡', keywords: 'callout note 注意 コールアウト', group: 'basic', type: 'callout', props: { icon: '💡' } },
   { key: 'code', label: 'typeCode', icon: '</>', keywords: 'code コード', group: 'basic', type: 'code', props: {} },
   { key: 'divider', label: 'typeDivider', icon: '—', keywords: 'divider hr line 区切り 線', group: 'basic', type: 'divider', props: {} },
-  { key: 'paper', label: 'typeChildPaper', icon: '▤', keywords: 'page paper child 子 ペーパー ページ', group: 'media', type: 'paper', props: {} },
   { key: 'table', label: 'typeTable', icon: '▦', keywords: 'table 表 テーブル', group: 'media', type: 'table', props: { header_row: true } },
   { key: 'image', label: 'typeImage', icon: '🖼', keywords: 'image picture 画像 写真', group: 'media', type: 'image', props: {} },
+  { key: 'paper', label: 'typePage', hint: 'typeChildPaperHint', icon: '▤', keywords: 'page paper child 子 ペーパー ページ', group: 'paper', type: 'paper', props: {} },
+  { key: 'database', label: 'typeDatabase', hint: 'typeDatabaseHint', icon: '⊞', keywords: 'database table db データベース 表', group: 'paper', type: 'paper', props: {}, paperKind: 'database' },
 ]
 
 /** The choices of "Turn into": text kinds only. */

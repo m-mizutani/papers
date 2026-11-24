@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useMatch, useNavigate, useParams } from 'react-router'
 import { ApiError, UNAUTHORIZED, api } from './api/client'
-import type { Me, PaperView, Sidebar as SidebarData, Workspace, WorkspaceGroup } from './api/types'
+import { kindOf, rememberKind } from './api/kinds'
+import type { Me, PaperKind, PaperView, Sidebar as SidebarData, Workspace, WorkspaceGroup } from './api/types'
 import { Palette, type Command } from './components/Palette'
 import { Sidebar } from './components/Sidebar'
 import { useTranslation } from './i18n'
+import { DatabasePage } from './pages/DatabasePage'
 import { LoginPage } from './pages/LoginPage'
 import { PaperPage } from './pages/PaperPage'
 import { PapersPage } from './pages/PapersPage'
@@ -112,7 +114,7 @@ function Shell({ me, workspaces, loaded, onSignOut }: { me: Me; workspaces: Work
 
   const paperId = paperMatch?.params.paper
   const expand = useMemo(() => new Set(view && view.paper.id === paperId ? (view.path ?? []).map((p) => p.id) : []), [view, paperId])
-  const under = view && view.paper.id === paperId && view.paper.visibility === 'public' && !view.is_home && view.paper.parent_id ? { id: view.paper.id, title: view.paper.title } : undefined
+  const under = view && view.paper.id === paperId && view.paper.visibility === 'public' && !view.is_home && (view.paper.parent_id || view.paper.database_id) ? { id: view.paper.id, title: view.paper.title } : undefined
   const commands: Command[] = [
     { label: t('newPaper'), icon: '＋', run: () => void create({}) },
     { label: t('newPrivate'), icon: '🔒', run: () => void create({ visibility: 'private' }) },
@@ -171,7 +173,28 @@ function PaperRoute({ me, workspaces, sidebar, onChanged, layout, onView, home, 
   const id = home ? workspace?.home_paper_id ?? '' : paper ?? ''
   if (!id) return null
   const v = version === 'latest' ? 'latest' : version === 'n' ? Number(n) : undefined
-  return <PaperPage key={`${id}:${v ?? ''}`} ws={ws} paperId={id} version={v} me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} onView={onView} />
+  return <KindSwitch key={`${id}:${v ?? ''}`} id={id} ws={ws} v={v} me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} onView={onView} />
+}
+
+function KindSwitch({ id, ws, v, me, workspaces, sidebar, onChanged, layout, onView }: {
+  id: string
+  ws: string
+  v: 'latest' | number | undefined
+  me: Me
+  workspaces: Workspace[]
+  sidebar?: SidebarData
+  onChanged: () => void
+  layout: Layout
+  onView: (v: PaperView | undefined) => void
+}) {
+  const [kind, setKind] = useState(() => kindOf(id))
+  const onKind = useCallback((k: PaperKind | undefined) => {
+    rememberKind(id, k)
+    setKind(k ?? '')
+  }, [id])
+  // A database has no versions: its table shows for every route.
+  if (kind === 'database') return <DatabasePage ws={ws} paperId={id} me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} />
+  return <PaperPage ws={ws} paperId={id} version={v} me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} onView={onView} onKind={onKind} />
 }
 
 function Authed({ me }: { me: Me }) {

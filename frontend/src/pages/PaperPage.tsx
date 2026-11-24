@@ -7,10 +7,13 @@ import { LiveConnection } from '../api/live'
 import {
   applyBlocks, applyChildren, applyPaper, applyPresence, byOrder, cellsOf, editorsOf, initState, listNumbers, replaceTemp, topLevel, type PaperState,
 } from '../api/paperState'
-import type { Actor, BatchResult, Block, BlockProps, BlockType, ChildOutcome, DiffEntry, Me, Op, PaperEvent, PaperStatusInfo, PaperView, Sidebar, VersionSummary, Workspace } from '../api/types'
+import type { Actor, BatchResult, Block, BlockProps, BlockType, ChildOutcome, DiffEntry, Me, Op, PaperEvent, PaperKind, Property, PaperStatusInfo, PaperView, Sidebar, VersionSummary, Workspace } from '../api/types'
 import { BlockView, type BlockContext, type EditingState, type Mark } from '../components/BlockView'
 import { CONTINUING, TEXT_TYPES, TURN_INTO, matchChoices, type TypeChoice } from '../components/blockTypes'
 import type { ConflictChoice, ConflictState } from '../components/ConflictPanel'
+import { PropertyPanel } from '../components/PropertyPanel'
+import { applyItemValueEvent, type ItemValues } from '../api/databaseState'
+import { rememberKind } from '../api/kinds'
 import { HistoryDrawer, totalOf, type ChangeCounts } from '../components/HistoryDrawer'
 import { HtmlPage } from '../components/HtmlPage'
 import { MoveDialog } from '../components/MoveDialog'
@@ -164,7 +167,7 @@ type Dialog =
   | { kind: 'trashChild'; block: Block }
   | { kind: 'cellBusy'; who: Actor; run: () => void }
 
-export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onChanged, layout, onView }: {
+export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onChanged, layout, onView, onKind }: {
   ws: string
   paperId: string
   /** 'latest' or a number: show that saved version read-only. */
@@ -176,6 +179,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   layout: Layout
   /** Tells the shell where the paper is (the sidebar opens its ancestors). */
   onView?: (v: PaperView | undefined) => void
+  /** Tells the route the paper's kind (a database shows as a table). */
+  onKind?: (kind: PaperKind | undefined) => void
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -209,6 +214,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const [diffMarks, setDiffMarks] = useState<{ marks: Map<string, Mark>; removed: Block[] } | null>(null)
   const [title, setTitle] = useState('')
   const [scrolled, setScrolled] = useState(false)
+  // An item's property definitions (its database's) and values.
+  const [itemProps, setItemProps] = useState<Property[]>([])
+  const [itemValues, setItemValues] = useState<ItemValues>(() => ({ values: new Map(), cleared: new Map() }))
 
   const stateRef = useRef<PaperState | undefined>(undefined)
   stateRef.current = state
@@ -251,9 +259,14 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const load = useCallback(async () => {
     try {
       const v = await api.getPaper(ws, paperId)
+      onKind?.(v.paper.kind)
+      if (v.paper.kind === 'database') return
       setView(v)
+      setItemProps(v.database?.properties ?? [])
+      setItemValues({ values: new Map((v.values ?? []).map((x) => [x.property_id, x])), cleared: new Map() })
       if (version !== undefined) {
         const vv = await api.version(ws, paperId, version)
+        setItemValues({ values: new Map((vv.values ?? []).map((x) => [x.property_id, x])), cleared: new Map() })
         setState(initState(vv.paper, vv.blocks))
         setShown(vv.version)
         setShownKids(vv.children ?? [])
@@ -286,7 +299,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       if (e instanceof ApiError && e.status === 404) setFatal('notfound')
       else toast(t('error', { message: e instanceof Error ? e.message : String(e) }))
     }
-  }, [ws, paperId, version, navigate, refreshStatus, t, toast, workspaces])
+  }, [ws, paperId, version, navigate, refreshStatus, t, toast, workspaces, onKind])
 
   const markRecent = useCallback((ids: string[]) => {
     if (ids.length === 0) return
@@ -424,6 +437,10 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
               receive([], [], ev.paper, false)
               if (ev.paper.deleted_at) void load()
             }
+            break
+          case 'property_value_put':
+          case 'property_value_deleted':
+            setItemValues((iv) => applyItemValueEvent(iv, paperId, ev))
             break
           case 'version_saved':
             refreshStatus()
@@ -885,9 +902,10 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         fileRef.current?.click()
         return
       case 'paper': {
-        const res = await run([...drop, { op: 'insert', type: 'paper', title: '', after }], { record: false })
+        const res = await run([...drop, { op: 'insert', type: 'paper', title: '', after, paper_kind: c.paperKind }], { record: false })
         const child = res?.blocks?.find((b) => b.type === 'paper' && !stateRef.current?.children.has(b.props.paper_id ?? ''))?.props.paper_id
           ?? res?.blocks?.find((b) => b.type === 'paper')?.props.paper_id
+        if (child) rememberKind(child, c.paperKind)
         if (child) navigate(`/ws/${ws}/p/${child}`, { state: { focusTitle: true } })
         return
       }
@@ -897,8 +915,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const slashItems = useMemo(() => {
     if (!slash || !state) return []
     const p = state.paper
-    const canChildren = p.visibility === 'public' && (!!view?.is_home || !!p.parent_id)
-    return matchChoices(slash.mode === 'insert' ? slash.filter ?? '' : slash.query, t, canChildren)
+    const canChildren = p.visibility === 'public' && (!!view?.is_home || !!p.parent_id || !!p.database_id)
+    // The in-browser demo server has no databases.
+    return matchChoices(slash.mode === 'insert' ? slash.filter ?? '' : slash.query, t, canChildren).filter((c) => !(isDemo && c.paperKind))
   }, [slash, state, view, t])
 
   const pickSlash = useCallback((c: TypeChoice) => {
@@ -1268,8 +1287,11 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const canEdit = !readOnlyVersion && !!paper && !paper.deleted_at && !paper.job_id
   const owner = paper?.created_by.user_id === me.user.id
   const isHome = !!view?.is_home
-  const filed = !!paper && paper.visibility === 'public' && (isHome || !!paper.parent_id)
-  const unfiled = !!paper && paper.visibility === 'public' && !isHome && !paper.parent_id
+  // An item is in its database: in the tree (its breadcrumbs go through
+  // the database), but it is never moved, unfiled or made private.
+  const item = !!paper?.database_id
+  const filed = !!paper && paper.visibility === 'public' && (isHome || !!paper.parent_id || item)
+  const unfiled = !!paper && paper.visibility === 'public' && !isHome && !paper.parent_id && !item
   const hasChildren = live.some((b) => b.type === 'paper')
   const favorite = !!sidebar?.favorites.some((f) => f.id === paperId)
   const workspace = workspaces.find((w) => w.id === ws)
@@ -1354,12 +1376,14 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       '-',
     ]
     if (!isHome) {
-      if (filed) {
+      if (filed && !item) {
         items.push({ label: t('moveEllipsis'), icon: '↗', disabled: !!paper.job_id, onSelect: () => setDialog({ kind: 'move' }) })
         items.push({ label: t('unfile'), icon: '⇱', disabled: hasChildren || !!paper.job_id, desc: hasChildren ? t('unfileNo') : undefined, onSelect: () => void doPaper(() => api.unfile(ws, paperId), t('unfiledDone')) })
       }
       if (unfiled) items.push({ label: t('moveEllipsis'), icon: '↘', disabled: !!paper.job_id, onSelect: () => setDialog({ kind: 'move' }) })
-      if (paper.visibility === 'public') {
+      if (item) {
+        // an item stays in its database and stays public
+      } else if (paper.visibility === 'public') {
         items.push({ label: t('makePrivate'), icon: '🔒', disabled: !owner || hasChildren, desc: !owner ? t('onlyCreatorVisibility') : hasChildren ? t('privateNoChildren') : undefined, onSelect: () => setDialog({ kind: 'private' }) })
       } else {
         items.push({ label: t('makePublic'), icon: '🌐', onSelect: () => void doPaper(() => api.setVisibility(ws, paperId, 'public'), t('publishedUnfiled')) })
@@ -1566,6 +1590,17 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     if (first) flushSync(() => startEdit(first, 'start'))
                     else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: '' })
                   }} />
+                {paper.database_id && view?.database && (
+                  <PropertyPanel ws={ws} item={paperId} database={view.database.id} properties={itemProps} values={itemValues.values}
+                    readOnly={readOnlyVersion || !canEdit || !!paper.archived_at}
+                    onProperties={setItemProps}
+                    onValues={(put, cleared) => setItemValues((iv) => {
+                      const values = new Map(iv.values)
+                      put.forEach((x) => values.set(x.property_id, x))
+                      cleared.forEach((id) => values.delete(id))
+                      return { ...iv, values }
+                    })} />
+                )}
                 {!isHTML && (
                   <div className="blocks">
                     {shownList.map((b, i) => (
@@ -1665,7 +1700,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                 await api.trashPaper(ws, paperId)
                 toast(t('trashed'), { label: t('undo'), run: () => void api.restorePaper(ws, paperId).then(() => { onChanged(); navigate(base) }) })
                 onChanged()
-                navigate(paper?.parent_id ? `/ws/${ws}/p/${paper.parent_id}` : `/ws/${ws}/papers`)
+                const up = paper?.parent_id ?? paper?.database_id
+                navigate(up ? `/ws/${ws}/p/${up}` : `/ws/${ws}/papers`)
               } catch (e) {
                 toast(t('error', { message: e instanceof Error ? e.message : String(e) }))
               }
