@@ -91,6 +91,7 @@ Every flag can also be set through the environment variable next to it.
 | `--no-authn` / `PAPERS_NO_AUTHN` | `false` | Development only: every request is the dev user |
 | `--dev-user-email` / `PAPERS_DEV_USER_EMAIL`, `--dev-user-name` / `PAPERS_DEV_USER_NAME` | `dev@localhost`, `Developer` | The dev user of `--no-authn` |
 | `--enable-mcp` / `PAPERS_ENABLE_MCP` | `true` | Serve `/mcp` |
+| `--demo` / `PAPERS_DEMO` | `false` | Demo mode: at startup, fill each workspace that is still empty (no papers but an empty home) with sample papers. A workspace is filled once; one people already wrote in is left alone. Not the in-browser demo of `pnpm build:demo` |
 | `--ws-origin` / `PAPERS_WS_ORIGINS` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` / `PAPERS_REPOSITORY_BACKEND` | `memory` | `firestore` or `memory` (development only) |
 | `--firestore-project-id` / `PAPERS_FIRESTORE_PROJECT_ID`, `--firestore-database-id` / `PAPERS_FIRESTORE_DATABASE_ID` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |

@@ -24,6 +24,7 @@ type Server struct {
 	jobLease       time.Duration
 	jobStep        int
 	jobPoll        time.Duration
+	demo           bool
 }
 
 func (x *Server) Flags() []cli.Flag {
@@ -40,6 +41,11 @@ func (x *Server) Flags() []cli.Flag {
 		&cli.BoolFlag{
 			Name: "enable-mcp", Category: "server", Usage: "Serve the MCP endpoint at /mcp",
 			Value: true, Sources: cli.EnvVars("PAPERS_ENABLE_MCP"), Destination: &x.enableMCP,
+		},
+		&cli.BoolFlag{
+			Name: "demo", Category: "server",
+			Usage:   "Demo mode: fill each workspace that is still empty (no papers but an empty home) with sample papers at startup",
+			Sources: cli.EnvVars("PAPERS_DEMO"), Destination: &x.demo,
 		},
 		&cli.StringSliceFlag{
 			Name: "ws-origin", Category: "server",
@@ -79,6 +85,7 @@ func (x Server) LogValue() slog.Value {
 		slog.String("addr", x.addr),
 		slog.String("base_url", x.baseURL),
 		slog.Bool("enable_mcp", x.enableMCP),
+		slog.Bool("demo", x.demo),
 		slog.Duration("trash_retention", x.trashRetention),
 		slog.Duration("job_lease", x.jobLease),
 		slog.Int("job_step", x.jobStep),
@@ -91,6 +98,9 @@ func (x *Server) EnableMCP() bool            { return x.enableMCP }
 func (x *Server) SecureCookie() bool         { return strings.HasPrefix(x.baseURL, "https://") }
 func (x *Server) WebSocketOrigins() []string { return x.wsOrigins }
 func (x *Server) JobPoll() time.Duration     { return x.jobPoll }
+
+// Demo reports whether demo mode writes sample papers into empty workspaces.
+func (x *Server) Demo() bool { return x.demo }
 
 func (x *Server) UseCaseConfig() usecase.Config {
 	return usecase.Config{

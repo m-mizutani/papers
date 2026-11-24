@@ -82,7 +82,7 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		var html *stagedHTML
 		if kind == model.PaperKindHTML {
 			var err error
-			if html, err = u.stageHTML(ctx, p, ws, paper.ID, in.HTML); err != nil {
+			if html, err = u.stageHTML(ctx, actor, ws, paper.ID, in.HTML); err != nil {
 				return nil, err
 			}
 		}
@@ -274,6 +274,13 @@ func (u *UseCases) Upload(ctx context.Context, p *model.Principal, ws model.Work
 	if err != nil {
 		return nil, err
 	}
+	return u.attach(ctx, p.Actor(), paper, in)
+}
+
+// attach stores an image as an attachment of paper, which the caller may
+// write, recording actor as its creator.
+func (u *UseCases) attach(ctx context.Context, actor model.Actor, paper *model.Paper, in UploadInput) (*model.Attachment, error) {
+	ws, id := paper.WorkspaceID, paper.ID
 	if paper.IsHTML() {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "an HTML paper has no images; embed them in its HTML", goerr.V("paper_id", id))
 	}
@@ -304,7 +311,7 @@ func (u *UseCases) Upload(ctx context.Context, p *model.Principal, ws model.Work
 	a := &model.Attachment{
 		ID: model.NewAttachmentID(), WorkspaceID: ws, PaperID: id, Name: name,
 		ContentType: in.ContentType, Size: int64(len(data)), SHA256: hash,
-		CreatedBy: p.Actor(), CreatedAt: u.now(),
+		CreatedBy: actor, CreatedAt: u.now(),
 	}
 	if err := a.Validate(); err != nil {
 		return nil, err

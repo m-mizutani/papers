@@ -578,7 +578,7 @@ func (u *UseCases) moveAcross(ctx context.Context, p *model.Principal, paper *mo
 	if err != nil {
 		return nil, err
 	}
-	j := u.newJob(p, paper.WorkspaceID, model.JobMove, paper.ID, u.now())
+	j := u.newJob(p.Actor(), paper.WorkspaceID, model.JobMove, paper.ID, u.now())
 	j.Target = &model.JobTarget{WorkspaceID: in.Workspace, ParentID: parent.ID, After: in.After}
 	return u.treeJob(ctx, j)
 }

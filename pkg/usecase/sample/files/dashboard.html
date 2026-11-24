@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Release dashboard</title>
+<style>
+  :root { --bg: #f7f8fa; --fg: #1a2230; --soft: #5b6475; --card: #ffffff; --line: #dde2e9; --ok: #2e9e66; --warn: #c2761a; --bad: #c44444; --accent: #2350c8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141821; --fg: #e4e8f0; --soft: #9aa3b5; --card: #1c2130; --line: #343b4a; --ok: #5cc895; --warn: #e0a45a; --bad: #ef7a7a; --accent: #7ea0ff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.6 system-ui, -apple-system, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; display: grid; gap: 20px; }
+  h1 { margin: 0; font-size: 1.6rem; }
+  p.lead { margin: 4px 0 0; color: var(--soft); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .tile .label { font-size: 12px; color: var(--soft); text-transform: uppercase; letter-spacing: .06em; }
+  .tile .value { font-size: 1.8rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; color: var(--soft); text-transform: uppercase; letter-spacing: .06em; }
+  .pill { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 13px; color: var(--card); }
+  .pill.done { background: var(--ok); } .pill.risk { background: var(--warn); } .pill.blocked { background: var(--bad); }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .note { font-size: 13px; color: var(--soft); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Release 2.4 dashboard</h1>
+    <p class="lead">A sample HTML paper: one self-contained document an AI agent wrote. The figures are made up.</p>
+  </header>
+  <section class="tiles" aria-label="Summary">
+    <div class="tile"><div class="label">Items done</div><div class="value" id="done">0</div></div>
+    <div class="tile"><div class="label">At risk</div><div class="value" id="risk">0</div></div>
+    <div class="tile"><div class="label">Blocked</div><div class="value" id="blocked">0</div></div>
+    <div class="tile"><div class="label">Days to freeze</div><div class="value">6</div></div>
+  </section>
+  <section>
+    <div class="filters" role="group" aria-label="Filter by status">
+      <button type="button" data-filter="all" aria-pressed="true">All</button>
+      <button type="button" data-filter="done" aria-pressed="false">Done</button>
+      <button type="button" data-filter="risk" aria-pressed="false">At risk</button>
+      <button type="button" data-filter="blocked" aria-pressed="false">Blocked</button>
+    </div>
+  </section>
+  <table>
+    <thead><tr><th>Item</th><th>Owner</th><th>Status</th></tr></thead>
+    <tbody id="items"></tbody>
+  </table>
+  <p class="note">The filter buttons run this document's own script. Nothing is loaded from other hosts.</p>
+</main>
+<script>
+  var items = [
+    ["Offline editing", "Mobile team", "done"],
+    ["Bulk export to CSV", "Data team", "done"],
+    ["Search by author", "Core team", "risk"],
+    ["Audit log retention", "Security team", "blocked"],
+    ["Faster paper list", "Core team", "done"],
+    ["Keyboard shortcuts help", "Design team", "risk"]
+  ];
+  var names = { done: "Done", risk: "At risk", blocked: "Blocked" };
+  function render(filter) {
+    var body = document.getElementById("items");
+    body.textContent = "";
+    items.forEach(function (it) {
+      if (filter !== "all" && it[2] !== filter) return;
+      var tr = document.createElement("tr");
+      [it[0], it[1]].forEach(function (v) { var td = document.createElement("td"); td.textContent = v; tr.appendChild(td); });
+      var td = document.createElement("td"); var pill = document.createElement("span");
+      pill.className = "pill " + it[2]; pill.textContent = names[it[2]]; td.appendChild(pill); tr.appendChild(td);
+      body.appendChild(tr);
+    });
+  }
+  ["done", "risk", "blocked"].forEach(function (s) {
+    document.getElementById(s).textContent = items.filter(function (it) { return it[2] === s; }).length;
+  });
+  document.querySelectorAll("button[data-filter]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("button[data-filter]").forEach(function (o) { o.setAttribute("aria-pressed", String(o === b)); });
+      render(b.dataset.filter);
+    });
+  });
+  render("all");
+</script>
+</body>
+</html>

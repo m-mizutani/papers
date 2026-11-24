@@ -38,6 +38,7 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - `pkg/service/google/` – Google OIDC; `pkg/service/workspace/` – workspace configuration and Rego; `pkg/service/attachment/` – image stores (Cloud Storage, directory, memory)
 - `pkg/usecase/` – application logic; every method takes the principal and enforces access (`ops.go` batches and conflicts, `version.go`, `tree.go`, `read.go`)
 - `pkg/usecase/markdown/` – Markdown <-> blocks
+- `pkg/usecase/sample/` – the sample papers demo mode (`serve --demo`) writes into empty workspaces; `usecase/sample.go` writes them
 - `frontend/` – React + Vite + TypeScript, embedded via `frontend/static.go`
 
 ## Documents (MANDATORY)
@@ -46,6 +47,21 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 - Designs under discussion are shown as specs on claude.ai, not committed. Only what was decided goes into `docs/`.
 - `docs/model.md` is the source of truth for the model and concepts (terms, entities and relations, invariants, access, storage layout, operations, conflict rules, versions). When another document or the current code disagrees with it, `docs/model.md` wins; update it first when the model changes.
 - `docs/design.md` covers how the model is implemented (write path, versions, tree, jobs, feed, auth, API, Firestore layout, search, deployment, testing, scale); update it whenever the architecture changes. `docs/codebase.md` is a map of the code; keep it in step with the layout.
+
+## Demo samples (MANDATORY)
+
+`papers serve --demo` (demo mode; not the in-browser demo of `frontend/src/mock/`)
+fills each workspace that is still empty with the sample papers defined in
+`pkg/usecase/sample/`. Keep them showing what papers can do:
+
+- When you add a block type, a paper kind, a markup feature or anything else that
+  changes what stored content looks like, add it to a sample in the same change.
+  `TestSamplesCoverBlockTypes` fails while a block type has no sample.
+- When you change or remove a feature a sample shows or explains, update that sample.
+- Samples are made up, written in English, and self-contained: images are files in
+  `pkg/usecase/sample/` stored as attachments, and HTML loads nothing from other hosts.
+- Samples are written by the system actor through the normal write path. Never save
+  a version for them and never add a marker that tells samples from other papers.
 
 ## Rules (inherited from hecatoncheires)
 

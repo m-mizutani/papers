@@ -50,7 +50,7 @@ func checkHTML(html string) error {
 
 // stageHTML stores html as an attachment of the paper, before the
 // transaction that refers to it. The paper need not exist yet.
-func (u *UseCases) stageHTML(ctx context.Context, p *model.Principal, ws model.WorkspaceID, paper model.PaperID, html string) (*stagedHTML, error) {
+func (u *UseCases) stageHTML(ctx context.Context, actor model.Actor, ws model.WorkspaceID, paper model.PaperID, html string) (*stagedHTML, error) {
 	if err := checkHTML(html); err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (u *UseCases) stageHTML(ctx context.Context, p *model.Principal, ws model.W
 	a := &model.Attachment{
 		ID: model.NewAttachmentID(), WorkspaceID: ws, PaperID: paper,
 		ContentType: model.HTMLContentType, Size: int64(len(html)), SHA256: hash,
-		CreatedBy: p.Actor(), CreatedAt: u.now(),
+		CreatedBy: actor, CreatedAt: u.now(),
 	}
 	if err := a.Validate(); err != nil {
 		return nil, err
