@@ -182,8 +182,8 @@ func TestResetDemoWritesTheSamplesAfterDeleting(t *testing.T) {
 	gt.Equal(t, *calls, 1)
 	gt.Equal(t, *opened, 1)
 	gt.Equal(t, workspaceRecords(t, repo), 2)
-	gt.S(t, out).Contains("seeded   product  4 sample papers\n")
-	gt.S(t, out).Contains("seeded   security  4 sample papers\n")
+	gt.S(t, out).Contains("seeded   product  10 sample papers\n")
+	gt.S(t, out).Contains("seeded   security  10 sample papers\n")
 	gt.True(t, strings.Index(out, "deleted 2 documents in total") < strings.Index(out, "seeded   "))
 }
 
@@ -196,7 +196,7 @@ func TestResetDemoFromTheEnvironment(t *testing.T) {
 
 	out, err := runFirestore(t, failingReader{t}, demoArgs(t)...)
 	gt.NoError(t, err)
-	gt.S(t, out).Contains("seeded   product  4 sample papers")
+	gt.S(t, out).Contains("seeded   product  10 sample papers")
 }
 
 func TestResetDemoStopsBeforeDeleting(t *testing.T) {
@@ -295,8 +295,8 @@ func TestResetDemoOnEmulator(t *testing.T) {
 	out, err := runFirestore(t, failingReader{t}, "reset", "--firestore-project-id", projectID, "--force-dangerous-apply",
 		"--demo", "--config", exampleConfig, "--attachment-backend", "dir", "--attachment-dir", t.TempDir())
 	gt.NoError(t, err).Required()
-	gt.S(t, out).Contains("seeded   product  4 sample papers")
-	gt.S(t, out).Contains("seeded   security  4 sample papers")
+	gt.S(t, out).Contains("seeded   product  10 sample papers")
+	gt.S(t, out).Contains("seeded   security  10 sample papers")
 
 	users, err := client.Collection("users").Documents(ctx).GetAll()
 	gt.NoError(t, err).Required()
@@ -311,8 +311,8 @@ func TestResetDemoOnEmulator(t *testing.T) {
 		blocks, _, err := repo.ListBlocksRange(ctx, ws, rec.HomePaperID, "", 1)
 		gt.NoError(t, err).Required()
 		gt.A(t, blocks).Length(1)
-		papers, _, err := repo.ListPapers(ctx, ws, model.PaperQuery{Sort: model.SortCreated, Limit: 10})
+		papers, _, err := repo.ListPapers(ctx, ws, model.PaperQuery{Sort: model.SortCreated, Limit: 20})
 		gt.NoError(t, err).Required()
-		gt.A(t, papers).Length(5) // the home and four samples
+		gt.A(t, papers).Length(11) // the home, five samples and the sample database's five items
 	}
 }

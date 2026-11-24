@@ -1244,7 +1244,7 @@ func (u *UseCases) applyBatch(ctx context.Context, p *model.Principal, actor mod
 			return busy(paper)
 		}
 		if paper.IsDatabase() {
-			res, err := u.applyDatabase(ctx, tx, p, paper, in.Ops, now)
+			res, err := u.applyDatabase(ctx, tx, actor, paper, in.Ops, now)
 			if err != nil {
 				return err
 			}

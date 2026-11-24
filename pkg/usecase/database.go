@@ -177,7 +177,6 @@ type dbApplier struct {
 	u      *UseCases
 	ctx    context.Context
 	tx     interfaces.Tx
-	p      *model.Principal
 	db     *model.Paper
 	actor  model.Actor
 	now    time.Time
@@ -697,9 +696,11 @@ func (a *dbApplier) finish() (*BatchResult, error) {
 }
 
 // applyDatabase runs a database batch within the transaction of Apply.
-func (u *UseCases) applyDatabase(ctx context.Context, tx interfaces.Tx, p *model.Principal, db *model.Paper, ops []Op, now time.Time) (*BatchResult, error) {
+// applyDatabase applies a database's batch as actor (people, agents, or
+// the system writing the sample papers).
+func (u *UseCases) applyDatabase(ctx context.Context, tx interfaces.Tx, actor model.Actor, db *model.Paper, ops []Op, now time.Time) (*BatchResult, error) {
 	a := &dbApplier{
-		u: u, ctx: ctx, tx: tx, p: p, db: db, actor: p.Actor(), now: now, refs: map[string]string{},
+		u: u, ctx: ctx, tx: tx, db: db, actor: actor, now: now, refs: map[string]string{},
 		items: map[model.PaperID]*model.Paper{}, current: map[model.PaperID]map[model.PropertyID]*model.PropertyValue{},
 	}
 	a.values = newValueWriter(tx, db, a.actor, now)

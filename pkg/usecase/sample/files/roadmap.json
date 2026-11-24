@@ -1,0 +1,28 @@
+{
+  "ops": [
+    {"op": "add_property", "ref": "status", "name": "Status", "property_type": "select"},
+    {"op": "add_element", "ref": "planned", "property": "ref:status", "value": "Planned", "color": "gray"},
+    {"op": "add_element", "ref": "doing", "property": "ref:status", "value": "In progress", "color": "blue"},
+    {"op": "add_element", "ref": "done", "property": "ref:status", "value": "Done", "color": "green"},
+    {"op": "add_property", "ref": "due", "name": "Due", "property_type": "date"},
+    {"op": "add_property", "ref": "area", "name": "Area", "property_type": "multi_select"},
+    {"op": "add_element", "ref": "editor", "property": "ref:area", "value": "Editor", "color": "purple"},
+    {"op": "add_element", "ref": "search", "property": "ref:area", "value": "Search", "color": "orange"},
+    {"op": "add_element", "ref": "api", "property": "ref:area", "value": "API", "color": "yellow"},
+    {"op": "add_element", "ref": "mobile", "property": "ref:area", "value": "Mobile", "color": "pink"},
+    {"op": "add_property", "ref": "notes", "name": "Notes", "property_type": "text"},
+    {"op": "insert_item", "ref": "ranking", "title": "Rank search results by recent edits",
+      "set": {"ref:status": "ref:doing", "ref:due": "2026-12-15", "ref:area": ["ref:search", "ref:api"], "ref:notes": "Recent edits first, then title matches"}},
+    {"op": "insert_item", "ref": "offline", "title": "Offline editing on phones",
+      "set": {"ref:status": "ref:planned", "ref:due": "2027-02-01", "ref:area": ["ref:editor", "ref:mobile"]}},
+    {"op": "insert_item", "ref": "comments", "title": "Comments on a range of text",
+      "set": {"ref:status": "ref:planned", "ref:area": ["ref:editor"], "ref:notes": "Needs a design for ranges that survive edits"}},
+    {"op": "insert_item", "ref": "webhooks", "title": "Webhooks for AI agents",
+      "set": {"ref:status": "ref:done", "ref:due": "2026-11-10", "ref:area": ["ref:api"], "ref:notes": "Agents subscribe per workspace"}},
+    {"op": "insert_item", "ref": "theme", "title": "Dark theme polish",
+      "set": {"ref:status": "ref:done", "ref:due": "2026-10-30", "ref:area": ["ref:editor", "ref:mobile"]}}
+  ],
+  "bodies": {
+    "ranking": "ranking.md"
+  }
+}

@@ -20,6 +20,7 @@ A paper is an ordered list of **blocks**. Each block is one paragraph, heading, 
 
 - [x] Open the sample papers
 - [ ] Create a paper of your own
+- [ ] Open the Product roadmap database and add an item
 - [ ] Ask an AI agent to summarise this one
 
 > A paper is never finished; it is the current state of what the team knows.
