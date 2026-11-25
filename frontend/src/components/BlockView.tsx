@@ -72,7 +72,8 @@ export interface BlockContext {
   conflict: ConflictState | null
   recent: Set<string>
   numbers: Map<string, number>
-  selected: string | null
+  /** The selected top-level blocks. */
+  selected: Set<string>
   menuFor: string | null
   marks?: Map<string, Mark>
   slashOpen: boolean
@@ -250,7 +251,7 @@ export function BlockView({ block, prev, ctx }: { block: Block; prev?: Block; ct
   if (editing) classes.push('editing')
   if (ctx.recent.has(block.id)) classes.push('flash')
   if (others.length) classes.push('pres')
-  if (ctx.selected === block.id) classes.push('sel')
+  if (ctx.selected.has(block.id)) classes.push('sel')
   if (ctx.menuFor === block.id) classes.push('menu-open')
   if (block.id.startsWith('tmp:')) classes.push('pending')
   if (mark) classes.push(`mark-${mark}`)
@@ -258,7 +259,7 @@ export function BlockView({ block, prev, ctx }: { block: Block; prev?: Block; ct
   const presenter = others[0]
   return (
     <div className={classes.join(' ')} data-block-id={block.id} style={presenter ? { ['--pc' as string]: actorColor(presenter) } : undefined}
-      tabIndex={ctx.selected === block.id ? -1 : undefined}>
+      tabIndex={ctx.selected.has(block.id) ? -1 : undefined}>
       <div className="g">
         {ctx.canEdit && !mark && (
           <button type="button" className="hdl" aria-label={t('blockMenu')} title={t('blockMenu')}
