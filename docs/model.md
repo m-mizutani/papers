@@ -625,7 +625,7 @@ A token issued through OAuth has two states:
 | Pending | empty        | set                                                | the code's expiry (5 minutes after consent) | no      | no            |
 | Valid   | set          | empty                                              | 90 days after the exchange | yes              | yes           |
 
-Consenting makes a pending token; exchanging the code makes it valid in one transaction, so a code works once; revoking deletes it as any token. A pending token that is never exchanged stays unusable, as an expired token does. Only a browser session may consent (a token cannot obtain tokens), and consent always takes the person's click.
+Consenting makes a pending token; exchanging the code makes it valid in one transaction, so a code works once; revoking deletes it as any token. The valid token keeps the hash of its code (`OAuth.UsedCodeHash`): when that code is presented again, the token is revoked, since whoever holds it may not be the client (RFC 6749 section 4.1.2). A pending token that is never exchanged stays unusable, as an expired token does. Only a browser session may consent (a token cannot obtain tokens), and consent always takes the person's click.
 
 A server may be reached under two public URLs: `--base-url`, where people use the web UI and the consent screen is, and `--mcp-base-url` (defaults to `--base-url`), the URL MCP clients are told to use. The OAuth metadata names the one of the two the request came in on, and nothing for any other host; an authorization or exchange is refused unless its resource is `{base-url}/mcp` or `{mcp-base-url}/mcp`. A relaying proxy on another host therefore cannot make a client send it the token.
 
@@ -707,7 +707,7 @@ What stored data always satisfies, however it is written. Kept by the repository
 27. A database's `Items` holds each of its items that is not purged exactly once, and no other ID. An item is removed from `Items` just before it is purged; restoring an item missing from `Items` adds it at the end.
 28. Property value documents exist only under items. `DatabaseID` equals the item's `DatabaseID` and `PropertyID` equals the document ID.
 29. A property value document may point to a property or an element the definitions no longer have; reads treat it as empty.
-30. A token has either a secret hash or, only while pending, an OAuth code hash, PKCE challenge and code expiry, never neither. An authorization code is exchanged at most once.
+30. A token has either a secret hash or, only while pending, an OAuth code hash, PKCE challenge and code expiry, never neither. An authorization code is exchanged at most once; presenting it again deletes the token it gave.
 
 ## Decisions
 

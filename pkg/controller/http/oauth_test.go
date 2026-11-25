@@ -331,14 +331,15 @@ func TestOAuthTokenEndpoint(t *testing.T) {
 	gt.Equal(t, tok["expires_in"], any(float64(7776000)))
 	gt.Equal(t, tok["scope"], any("write"))
 
-	// the code works once
-	resp = o.exchange(t, host, form)
-	gt.Equal(t, resp.StatusCode, http.StatusBadRequest)
-	gt.Equal(t, readJSON[map[string]any](t, resp)["error"], any("invalid_grant"))
-
 	// the access token is an ordinary bearer token for the REST API too
 	bearer := &client{ts: o.testServer, hc: &http.Client{}, bearer: tok["access_token"].(string)}
 	bearer.expect("GET", "/api/v1/workspaces", nil, http.StatusOK, nil)
+
+	// the code works once, and presenting it again revokes the token it gave
+	resp = o.exchange(t, host, form)
+	gt.Equal(t, resp.StatusCode, http.StatusBadRequest)
+	gt.Equal(t, readJSON[map[string]any](t, resp)["error"], any("invalid_grant"))
+	bearer.expect("GET", "/api/v1/workspaces", nil, http.StatusUnauthorized, nil)
 }
 
 // T14, T29: existing ways keep working, and /api/auth/me names the URL the

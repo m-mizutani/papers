@@ -340,8 +340,13 @@ func (o *OAuth) Exchange(ctx context.Context, req ExchangeRequest) (*ExchangeRes
 	}
 	now := o.auth.now()
 	invalid := oauthErr(model.OAuthInvalidGrant, "the code is invalid, expired or already used")
+	replayed := false
 	tok, err := o.auth.repo.UpdateToken(ctx, model.TokenID(id), func(t *model.APIToken) error {
 		g := t.OAuth
+		if g != nil && !t.Pending() && g.UsedCodeHash != "" && secretMatches(codeSecret, g.UsedCodeHash) {
+			replayed = true
+			return invalid
+		}
 		if !t.Pending() || g.CodeExpiresAt == nil || !now.Before(*g.CodeExpiresAt) {
 			return invalid
 		}
@@ -354,9 +359,18 @@ func (o *OAuth) Exchange(ctx context.Context, req ExchangeRequest) (*ExchangeRes
 		exp := now.Add(OAuthTokenTTL)
 		t.SecretHash = hashSecret(secret)
 		t.ExpiresAt = &exp
+		g.UsedCodeHash = g.CodeHash
 		g.CodeHash, g.CodeChallenge, g.CodeExpiresAt = "", "", nil
 		return nil
 	})
+	if replayed {
+		// The code was exchanged before, so whoever holds the token it gave
+		// may not be the client: revoke it, as RFC 6749 section 4.1.2 advises.
+		if err := o.auth.repo.DeleteToken(ctx, model.TokenID(id)); err != nil && !errors.Is(err, model.ErrNotFound) {
+			return nil, goerr.Wrap(err, "failed to revoke the token of a replayed code")
+		}
+		return nil, invalid
+	}
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			return nil, invalid

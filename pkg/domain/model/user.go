@@ -170,6 +170,9 @@ type OAuthGrant struct {
 	CodeHash      string     `json:"code_hash,omitempty"`
 	CodeChallenge string     `json:"code_challenge,omitempty"`
 	CodeExpiresAt *time.Time `json:"code_expires_at,omitempty"`
+	// UsedCodeHash is the hash of the code once it was exchanged. Presenting
+	// that code again revokes the token (RFC 6749 section 4.1.2).
+	UsedCodeHash string `json:"used_code_hash,omitempty"`
 }
 
 // Pending reports whether the token still waits for its authorization code

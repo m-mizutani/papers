@@ -262,15 +262,25 @@ func TestOAuthExchangeRejects(t *testing.T) {
 		f.clock.Advance(usecase.OAuthCodeTTL - time.Second)
 		gt.R1(f.exchange(req, code, testVerifier)).NoError(t)
 	})
-	t.Run("T7 second exchange", func(t *testing.T) {
+	t.Run("T7 second exchange revokes the token", func(t *testing.T) {
 		ctx := context.Background()
 		f := newOAuth(t)
 		req := f.request(t)
 		code := f.allow(t, req, model.ScopeWrite)
 		first := gt.R1(f.exchange(req, code, testVerifier)).NoError(t)
-		_, err := f.exchange(req, code, testVerifier)
+		gt.R1(f.auth.AuthenticateToken(ctx, first.AccessToken)).NoError(t)
+
+		// a forged code naming the token does not revoke it
+		id, _, _ := strings.Cut(strings.TrimPrefix(code, usecase.OAuthCodePrefix), ".")
+		_, err := f.exchange(req, usecase.OAuthCodePrefix+id+".forged", testVerifier)
 		gt.Equal(t, oauthCode(err), model.OAuthInvalidGrant)
 		gt.R1(f.auth.AuthenticateToken(ctx, first.AccessToken)).NoError(t)
+
+		// the real code presented again does
+		_, err = f.exchange(req, code, testVerifier)
+		gt.Equal(t, oauthCode(err), model.OAuthInvalidGrant)
+		_, err = f.auth.AuthenticateToken(ctx, first.AccessToken)
+		gt.True(t, errors.Is(err, model.ErrUnauthenticated))
 	})
 	t.Run("T8 redirect uri or client differs", func(t *testing.T) {
 		f := newOAuth(t)

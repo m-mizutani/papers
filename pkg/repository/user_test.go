@@ -138,7 +138,7 @@ func TestTokenRepository(t *testing.T) {
 			AgentName: "Claude Code", Scope: model.ScopeRead, CreatedAt: now, ExpiresAt: &codeExp,
 			OAuth: &model.OAuthGrant{
 				ClientID: "pcl_abc", ClientName: "Claude Code", RedirectURI: "http://localhost:3333/callback",
-				CodeHash: "code-hash", CodeChallenge: "challenge", CodeExpiresAt: &codeExp,
+				CodeHash: "code-hash", CodeChallenge: "challenge", CodeExpiresAt: &codeExp, UsedCodeHash: "used-hash",
 			},
 		}
 		gt.NoError(t, repo.PutToken(ctx, tok))
@@ -151,6 +151,7 @@ func TestTokenRepository(t *testing.T) {
 		gt.Equal(t, got.OAuth.CodeHash, tok.OAuth.CodeHash)
 		gt.Equal(t, got.OAuth.CodeChallenge, tok.OAuth.CodeChallenge)
 		gt.True(t, timeEq(*got.OAuth.CodeExpiresAt, codeExp))
+		gt.Equal(t, got.OAuth.UsedCodeHash, "used-hash")
 		gt.True(t, got.Pending())
 	})
 
