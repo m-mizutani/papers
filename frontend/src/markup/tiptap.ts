@@ -19,24 +19,39 @@ export interface PMBreak {
   type: 'hardBreak'
 }
 
-export interface PMDoc {
-  type: 'doc'
-  content: { type: 'paragraph'; content?: (PMText | PMBreak)[] }[]
+/** A mention of a user: one inline atom the caret cannot enter. */
+export interface PMMention {
+  type: 'mention'
+  attrs: { userId: string; name: string }
+  marks?: PMMark[]
 }
 
-function pushText(out: (PMText | PMBreak)[], text: string, marks: PMMark[]) {
+type PMInline = PMText | PMBreak | PMMention
+
+export interface PMDoc {
+  type: 'doc'
+  content: { type: 'paragraph'; content?: PMInline[] }[]
+}
+
+function pushText(out: PMInline[], text: string, marks: PMMark[]) {
   text.split('\n').forEach((part, i) => {
     if (i > 0) out.push({ type: 'hardBreak' })
     if (part) out.push(marks.length ? { type: 'text', text: part, marks: [...marks] } : { type: 'text', text: part })
   })
 }
 
-function walk(nodes: MNode[], marks: PMMark[], out: (PMText | PMBreak)[]) {
+function walk(nodes: MNode[], marks: PMMark[], out: PMInline[]) {
   for (const n of nodes) {
     switch (n.kind) {
       case 'text':
         pushText(out, n.text ?? '', marks)
         break
+      case 'mention': {
+        const m: PMMention = { type: 'mention', attrs: { userId: n.user_id ?? '', name: n.name ?? '' } }
+        if (marks.length) m.marks = [...marks]
+        out.push(m)
+        break
+      }
       case 'code':
         pushText(out, n.text ?? '', [...marks, { type: 'code' }])
         break
@@ -67,7 +82,7 @@ export function toDoc(src: string): PMDoc {
   } catch {
     nodes = [{ kind: 'text', text: src }]
   }
-  const content: (PMText | PMBreak)[] = []
+  const content: PMInline[] = []
   walk(nodes, [], content)
   return { type: 'doc', content: [{ type: 'paragraph', content: content.length ? content : undefined }] }
 }
@@ -99,6 +114,10 @@ export function fromDoc(doc: PMDoc): string {
         continue
       }
       const marks = c.marks ?? []
+      if (c.type === 'mention') {
+        nodes.push(wrap({ kind: 'mention', user_id: c.attrs.userId, name: c.attrs.name }, marks.filter((m) => m.type !== 'code')))
+        continue
+      }
       const code = marks.some((m) => m.type === 'code')
       nodes.push(wrap(code ? { kind: 'code', text: c.text } : { kind: 'text', text: c.text }, marks))
     }

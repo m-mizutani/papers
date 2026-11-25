@@ -393,8 +393,9 @@ func renderTable(table *model.Block, cells []*model.Block) string {
 }
 
 // ValueText is how a property value reads in text: an element's value for
-// a select, the elements' values joined with ", " for a multi_select, and
-// the string itself otherwise. nil reads as "".
+// a select, the elements' values joined with ", " for a multi_select, the
+// people's "@name" joined with ", " for a person, and the string itself
+// otherwise. nil reads as "".
 func ValueText(prop *model.Property, v any) string {
 	if v == nil {
 		return ""
@@ -416,6 +417,13 @@ func ValueText(prop *model.Property, v any) string {
 			if n := elem(id); n != "" {
 				names = append(names, n)
 			}
+		}
+		return strings.Join(names, ", ")
+	case model.PropertyPerson:
+		people, _ := (&model.PropertyValue{Value: v}).People()
+		names := make([]string, len(people))
+		for i, x := range people {
+			names[i] = "@" + x.Name
 		}
 		return strings.Join(names, ", ")
 	}

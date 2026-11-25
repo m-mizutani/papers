@@ -39,9 +39,11 @@ Screens, the API, the code and this document use the same words with the same me
 | Search entry           | `SearchEntry` | A plain-text copy of a title or a block, kept only for search (derived data).                                                                                                                     |
 | Database               | `Kind` `database` | A paper whose body is a table of items: it holds property definitions (`Properties`) and the order of its items (`Items`). It has no blocks and no versions. See [Databases](#databases). |
 | Item                   | `DatabaseID`  | A paper that belongs to a database: one row of its table. It has no `ParentID`; body, versions and children work as for any paper. |
-| Property               | `Property`    | A column of a database: an ID, a name and a type (text, date, select, multi_select).                                                                                                              |
+| Property               | `Property`    | A column of a database: an ID, a name and a type (text, date, select, multi_select, person).                                                                                                      |
 | Element                | `Element`     | A choice of a select or multi_select property: an ID, its value (the text shown) and a colour.                                                                                                    |
 | Property value         | `PropertyValue` | What one item holds for one property, in the document `papers/{item ID}/properties/{property ID}` (its `Value` field). A select stores an element ID, never the element's text.           |
+| Mention                | `mention` node | A person in a block's text, written `[@name]{user=ID}`: the user's ID and the name at the time of writing. Shown as "@name"; a click opens a card linking to the papers the person created. See [People](#people). |
+| Person value           | `PersonRef`   | A person held by a person property: `user_id` and the name at the time of writing.                                                                                                                 |
 | Change feed            | `Event`       | How changes to an open paper reach screens, as the resulting state.                                                                                                                               |
 
 ## Overview
@@ -311,7 +313,7 @@ Both values are set when a paper is created and never change.
 
 - `Property`: `ID` (server-issued, unique in the database, never reused), `Name` (1–100 bytes, no line break, unique in the database after trimming), `Type` (fixed after creation), `Elements` (select and multi_select only, ≤ 100 per property and ≤ 1,000 per database).
 - `Element`: `ID` (server-issued, unique in the database, never reused), `Value` (1–100 bytes, no line break, unique in the property after trimming), `Color` (a [D10](#d10-inline-styling-in-blocks-is-a-markup-string-decided-a) palette name; gray by default).
-- `Value` by type: text — 1–2,000 bytes without a line break; date — a real `YYYY-MM-DD`; select — an element ID; multi_select — 1–100 element IDs, without duplicates, stored in ID order. An empty value has no document.
+- `Value` by type: text — 1–2,000 bytes without a line break; date — a real `YYYY-MM-DD`; select — an element ID; multi_select — 1–100 element IDs, without duplicates, stored in ID order; person — 1–100 `{"user_id", "name"}` pairs (a valid ID and a 1–100 byte one-line name), without duplicate users, stored in user ID order. Whether the user exists is not checked ([People](#people)). An empty value has no document.
 - `Items` includes items in the trash and archived ones (restoring puts them back in place) and loses an item just before it is purged.
 - The value documents' `DatabaseID` and `PropertyID` repeat what the path and the item say so that two composite indexes (by `Value`, ascending and descending) can sort a property's values within a database.
 - A version of an item also holds its property values (`Version.Values`).
@@ -326,8 +328,8 @@ Both values are set when a paper is created and never change.
 ### Reading
 
 - Without a sort, items come in `Items` order: a page reads the database's document, then the items and their values in two batch reads, repeating at most five times to fill a page past trashed, moving or archived items. The cursor is the last item's ID.
-- Filters (up to five, all must hold): select — one of the elements; multi_select — contains one of the elements; date — on, before, after, between; text — starts with; any type — empty, not empty. Without a sort they read in `Items` order.
-- Sorting by a property queries its value documents by `Value` (a select goes element by element in the property's element order); items without a value follow in `Items` order. Sorting by title, creation or update time uses the papers indexes on `DatabaseID`. Multi_select cannot be sorted on.
+- Filters (up to five, all must hold): select — one of the elements; multi_select — contains one of the elements; person — contains one of the users (1–10 user IDs); date — on, before, after, between; text — starts with; any type — empty, not empty. Without a sort they read in `Items` order.
+- Sorting by a property queries its value documents by `Value` (a select goes element by element in the property's element order); items without a value follow in `Items` order. Sorting by title, creation or update time uses the papers indexes on `DatabaseID`. Multi_select and person cannot be sorted on.
 - Property values are not searched.
 
 ### Change feed
@@ -391,7 +393,7 @@ The smallest unit of editing, conflicts and search entries. A block has **conten
 
 | Type                                        | Meaning of the text                                                                                             | Props                                                                          | People edit | Search entry                                         |
 |---------------------------------------------|-----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------|-------------|------------------------------------------------------|
-| `paragraph`                                 | Inline Markdown (bold, italic, strikethrough, code, links) and colour spans `[text]{.colour}` ([D10](#d10-inline-styling-in-blocks-is-a-markup-string-decided-a)) | none                                                                           | ✓           | text                                                 |
+| `paragraph`                                 | Inline Markdown (bold, italic, strikethrough, code, links), colour spans `[text]{.colour}` ([D10](#d10-inline-styling-in-blocks-is-a-markup-string-decided-a)) and mentions `[@name]{user=ID}` ([People](#people)) | none                                                                           | ✓           | text                                                 |
 | `heading`                                   | Inline Markdown                                                                                                 | `level` 1–3                                                                    | ✓           | text                                                 |
 | `quote`                                     | Inline Markdown                                                                                                 | none                                                                           | ✓           | text                                                 |
 | `bulleted_list_item` / `numbered_list_item` | Inline Markdown                                                                                                 | `indent` 0–6 (nesting is indentation, not a tree)                              | ✓           | text                                                 |
@@ -560,6 +562,15 @@ Two similar words, kept apart. The **principal** is "who is making this request"
 - AI always acts for someone. It borrows that person's access, narrowed by the token. There is no user that is AI alone.
 - Users have IDs issued by papers and are tied to external IDs such as Google's through `Identity`. One person may sign in with several external IDs.
 - **Anonymous users** exist only in anonymous mode (`--anonymous`, which excludes Google sign-in and `--no-authn`). A browser that comes without a valid session cookie gets a new user with `Anonymous` set, the email `{userID}@anonymous.invalid`, the name `Anonymous {last 4 characters of the ID}` and a session; it has no `Identity`, so its session is the only way back to it. When the session expires (`--session-ttl`) or the cookie is lost, that browser becomes a new anonymous user; the old user's private papers stay but nobody can see them. Otherwise an anonymous user is an ordinary user: it creates public and private papers, is their creator, and may issue tokens.
+
+### People
+
+A person appears in three places, shown the same way everywhere as "@name": a **mention** in text, a **person value** of a database, and a **writer** (the creator, the last writer, who saved a version; an AI shows as "Claude (for @name)", and papers itself as plain text). A click on "@name" opens a card with the name and a link to the papers list filtered to the papers that person created.
+
+- A mention is inline markup, `[@name]{user=ID}`: the attribute is exactly one `user=` with a 22-character base62 ID, and the name is one line and not empty (a leading `@` in the label is dropped). Its plain text, used for search and Markdown, is `@name`. Anything else in that shape stays ordinary text.
+- Mentions and person values keep the **name at the time of writing**, as writers do; the name is never looked up again, so a renamed person keeps the old name in old text ([D22](#d22-people-are-shown-as-mentions-decided-2026-11-25)).
+- Writing a mention or a person value checks only the form of the ID, never that the user exists. A wrong ID shows the saved name and lists no papers; it reveals nothing about other people.
+- **Finding people** (`GET …/workspaces/{ws}/users`): with `q`, the users who may use the workspace (its rule) whose name or email contains `q` (case-insensitive), sorted by name, at most 20; with `ids` (1–20, comma-separated), those users in that order, unknown IDs left out. Both answer only `id`, `name` and `avatar_url`; emails are matched but never returned. MCP has the same search as `papers_find_users`.
 
 ## Access
 
@@ -1003,6 +1014,18 @@ A set of papers with arbitrary properties (text, date, select, multi_select) tha
 - **Sorting by a property**: two composite indexes on value documents (`DatabaseID`, `PropertyID`, `Value` ascending / descending), reading one page, rather than reading every value of the database.
 - **Concurrency**: the last writer wins per item; no revisions. **Deleted properties and elements**: values are left and read as empty, then dropped on the item's next write. **Definitions are not versioned**; item versions include values. **Types never change**. **Values are not searched**. **Sort and filter settings are kept in the URL only**. **Databases are always public**.
 
+### D22. People are shown as mentions (decided 2026-11-25)
+
+People in text, in database values and as writers are shown as "@name" that opens a card linking to the papers they created.
+
+- **What a click does**: opens a card with the name and "papers created by this person" (not nothing, which would show a person but lead nowhere).
+- **What is stored**: the user ID and the name at the time of writing (not the ID alone, which would make every answer showing people read users and follow renames, and leave removed users and the samples without a name). A renamed person keeps the old name in old text; choosing the person again writes the new one. Mentions are not rewritten when a name changes (that would scan every paper).
+- **How it is written**: `[@name]{user=ID}`, an attribute of the existing span syntax (not `@ID`, which people and AI cannot read and search cannot find by name, and not `<@ID>`, a new syntax that reads badly as Markdown).
+- **Existence**: not checked on write (it would add a user read to every write and keep the samples from being written).
+- **Where candidates come from**: every user, narrowed by each workspace's rule (not a stored membership, which would drift from the rule). To revisit if users grow past a few thousand.
+- **Emails**: matched but not returned.
+- **Person values** hold any number of people (not at most one) and **cannot be sorted on** (like multi_select).
+
 ## What changes once decided
 
 | Decision                                      | Model                                                                                                                                         | Operations and API                                                                                                                                                                                                 | UI                                                                                 |
@@ -1036,3 +1059,4 @@ A set of papers with arbitrary properties (text, date, select, multi_select) tha
 | D13-A removed workspaces (decided)            | none                                                                                                                                          | Warning at startup                                                                                                                                                                                                 | none                                                                               |
 | D14 no groups (decided)                       | `Group` removed; groups removed from the Rego input                                                                                           | Group management APIs removed                                                                                                                                                                                      | Group management screens removed                                                   |
 | No system administrators (decided)            | `Principal.SystemAdmin` removed                                                                                                               | Administrator-only APIs and checks removed; the startup setting naming administrator emails (`AdminEmails`) removed                                                                                                | Administrator screens removed                                                      |
+| D22 people as mentions (decided 2026-11-25)   | The `mention` markup node; the `person` property type and `PersonRef`                                                                          | `GET …/users` (by `q` or `ids`) and MCP `papers_find_users`; the papers list filtered by a user ID; the person filter `contains` with `users`                                                                       | "@name" with a card for mentions, person values and writers; `@` in the editor; choosing people |

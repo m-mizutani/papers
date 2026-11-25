@@ -1,4 +1,4 @@
-import { Mark, mergeAttributes, type Editor as TiptapEditor } from '@tiptap/core'
+import { Mark, Node as TiptapNode, mergeAttributes, type Editor as TiptapEditor } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
 import Document from '@tiptap/extension-document'
@@ -12,6 +12,9 @@ import { Placeholder } from '@tiptap/extensions'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { TextSelection } from '@tiptap/pm/state'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useParams } from 'react-router'
+import type { UserSummary } from '../api/types'
+import { MentionMenu, personName } from './UserMention'
 import { useTranslation } from '../i18n'
 import { leaveToBrowser, NO_PRESS, type Press } from './clicks'
 import { PALETTE } from '../markup/markup'
@@ -40,6 +43,46 @@ const colorMark = (name: 'color' | 'bg', prefix: string) =>
 const Color = colorMark('color', 'mk-c-')
 const Background = colorMark('bg', 'mk-bg-')
 const SingleDoc = Document.extend({ content: 'paragraph' })
+
+// A mention of a user: one atom the caret cannot enter, removed whole.
+const Mention = TiptapNode.create({
+  name: 'mention',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: false,
+  addAttributes() {
+    return {
+      userId: { default: '', parseHTML: (el) => el.getAttribute('data-user-id') ?? '' },
+      name: { default: '', parseHTML: (el) => el.getAttribute('data-name') ?? '' },
+    }
+  },
+  parseHTML() {
+    return [{ tag: 'span[data-user-id]' }]
+  },
+  renderHTML({ node }) {
+    return ['span', { class: 'mention', 'data-user-id': String(node.attrs.userId), 'data-name': String(node.attrs.name) }, `@${String(node.attrs.name)}`]
+  },
+  renderText({ node }) {
+    return `@${String(node.attrs.name)}`
+  },
+})
+
+/** "@" typed at the start, or after a space or a punctuation mark: the text after it, with no double space. */
+export function mentionQuery(before: string): string | null {
+  const m = /(?:^|[\s\p{P}])@([^@\n]{0,40})$/u.exec(before)
+  if (!m) return null
+  const q = m[1] ?? ''
+  if (q.startsWith(' ') || q.includes('  ')) return null
+  return q
+}
+
+interface MentionAt {
+  query: string
+  from: number
+  to: number
+  rect: DOMRect
+}
 
 /** Where the caret goes when the editor opens. */
 export type Caret = 'start' | 'end' | { x: number; y: number } | { offset: number }
@@ -186,6 +229,26 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
   const pasteRef = useRef({ onPasteText, onPasteImage, onSlash })
   pasteRef.current = { onPasteText, onPasteImage, onSlash }
   const [selRect, setSelRect] = useState<DOMRect | null>(null)
+  const ws = useParams().ws ?? ''
+  const [mention, setMention] = useState<MentionAt | null>(null)
+  const mentionKey = useRef<((key: string) => boolean) | null>(null)
+  const mentionOpen = useRef(false)
+  mentionOpen.current = !!mention
+  // The "@" whose menu was closed with Escape stays closed while it is typed on.
+  const mentionDismissed = useRef<number | null>(null)
+  // "@" opens the people to mention, at the caret, after a document or caret change.
+  const findMention = (ed: TiptapEditor) => {
+    const { from, empty } = ed.state.selection
+    const q = empty && ws ? mentionQuery(ed.state.doc.textBetween(Math.max(0, from - 48), from, '\n', '\n')) : null
+    const at = q === null ? null : from - q.length - 1
+    if (q === null || at === null || at === mentionDismissed.current) {
+      if (q === null) mentionDismissed.current = null
+      setMention(null)
+      return
+    }
+    const c = ed.view.coordsAtPos(from)
+    setMention({ query: q, from: at, to: from, rect: new DOMRect(c.left, c.top, 1, c.bottom - c.top) })
+  }
   // The last press this editor received, and whether it was left to the browser.
   const clicks = useRef<Press>(NO_PRESS)
 
@@ -198,7 +261,7 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
 
   const editor = useEditor({
     extensions: [
-      SingleDoc, Paragraph, Text, Bold, Italic, Strike, Code, HardBreak, Color, Background,
+      SingleDoc, Paragraph, Text, Bold, Italic, Strike, Code, HardBreak, Color, Background, Mention,
       Link.configure({ openOnClick: false, autolink: false, linkOnPaste: true, HTMLAttributes: { rel: 'noopener noreferrer', target: null } }),
       Placeholder.configure({ placeholder: placeholder ?? '' }),
     ],
@@ -206,6 +269,7 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
     onUpdate: ({ editor: ed }) => {
       const doc = docJSON(ed)
       onChange(fromDoc(doc), JSON.stringify(doc) !== initial.current)
+      findMention(ed)
       // "/" at the start or after a space opens the block menu.
       const report = pasteRef.current.onSlash
       if (!report) return
@@ -221,6 +285,7 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
       report({ query: m[1] ?? '', from: start, to: from, rect: new DOMRect(c.left, c.top, 1, c.bottom - c.top) })
     },
     onSelectionUpdate: ({ editor: ed }) => {
+      findMention(ed)
       const { from, to, empty } = ed.state.selection
       if (empty) {
         setSelRect(null)
@@ -247,6 +312,7 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
         const k = keysRef.current
         const ed = editorRef.current
         if (!ed) return false
+        if (mentionOpen.current && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key) && mentionKey.current?.(event.key)) return true
         if (k.slashKey && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key) && k.slashKey(event.key as 'ArrowUp')) return true
         if (event.key === 'Escape') {
           k.onEscape()
@@ -370,6 +436,17 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
     <>
       <EditorContent editor={editor} />
       {editor && selRect && <FormatBar editor={editor} anchor={selRect} />}
+      {editor && mention && (
+        <MentionMenu ws={ws} query={mention.query} anchor={mention.rect} keyRef={mentionKey}
+          onClose={() => { mentionDismissed.current = mention.from; setMention(null) }}
+          onPick={(u: UserSummary) => {
+            editor.chain().focus().insertContentAt({ from: mention.from, to: mention.to }, [
+              { type: 'mention', attrs: { userId: u.id, name: personName(u.name) } },
+              { type: 'text', text: ' ' },
+            ]).run()
+            setMention(null)
+          }} />
+      )}
     </>
   )
 }

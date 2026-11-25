@@ -22,7 +22,8 @@ import { SlashMenu } from '../components/SlashMenu'
 import { detectShortcut } from '../components/shortcuts'
 import { History, type Snap, type Step } from '../editing/history'
 import { blockAt, dropAfter, moveOps, normalize, overlapping, selectedIds, stepAfter, type Selection, type Span } from '../editing/selection'
-import { ago, useTranslation } from '../i18n'
+import { ago, tParts, useTranslation } from '../i18n'
+import { ActorMention } from '../components/UserMention'
 import { plainText } from '../markup/markup'
 import { Menu, type MenuItem } from '../ui/Menu'
 import { Modal } from '../ui/Modal'
@@ -1729,7 +1730,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     {paper.visibility === 'private' && <><span className="mdot" /><span>🔒 {t('private')}</span><button type="button" className="linkbtn" onClick={() => void doPaper(() => api.setVisibility(ws, paperId, 'public'), t('publishedUnfiled'))}>{t('makePublic')}</button></>}
                     {unfiled && <><span className="mdot" /><span>{t('unfiled')}</span><button type="button" className="linkbtn" onClick={() => setDialog({ kind: 'move' })}>{t('moveEllipsis')}</button></>}
                     {paper.archived_at && <><span className="mdot" /><span>{t('archived')}</span></>}
-                    <span className="mdot" /><span>{t('editedBy', { name: actorName(paper.updated_by), when: ago(paper.updated_at) })}</span>
+                    <span className="mdot" /><span>{tParts('editedBy', { name: <ActorMention actor={paper.updated_by} />, when: ago(paper.updated_at) })}</span>
                   </div>
                 )}
                 {readOnlyVersion && shown && isHTML && (
@@ -1742,7 +1743,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                 {readOnlyVersion && shown && !isHTML && (
                   <div className="banner ver">
                     <span className="vmark"><span className="vdot" /><span className="vnum">v{shown.number}</span></span>
-                    <span className="sp"><b>{t('viewing', { n: shown.number })}</b> · {t('savedBy', { name: actorName(shown.created_by), when: ago(shown.created_at) })}{shown.note && <span className="muted" style={{ display: 'block' }}>{shown.note}</span>}</span>
+                    <span className="sp"><b>{t('viewing', { n: shown.number })}</b> · {tParts('savedBy', { name: <ActorMention actor={shown.created_by} />, when: ago(shown.created_at) })}{shown.note && <span className="muted" style={{ display: 'block' }}>{shown.note}</span>}</span>
                     <span className="seg" role="group">
                       <button type="button" className={diffMode === 'version' ? 'on' : ''} aria-pressed={diffMode === 'version'} onClick={() => setDiffMode('version')}>{t('changesInVersion')}</button>
                       <button type="button" className={diffMode === 'now' ? 'on' : ''} aria-pressed={diffMode === 'now'} onClick={() => setDiffMode('now')}>{t('comparedToNow')}</button>

@@ -1,3 +1,4 @@
+import { Fragment, createElement, type ReactNode } from 'react'
 import { storedLang } from '../utils/prefs'
 import { en } from './en'
 import { ja } from './ja'
@@ -19,6 +20,23 @@ const lang = detectLang()
 
 export function t(key: MsgKey, params: Record<string, string | number> = {}): string {
   return dictionaries[lang][key].replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`))
+}
+
+/** A message with elements (a mention) in its parameters, as one fragment to render. */
+export function tParts(key: MsgKey, params: Record<string, ReactNode>): ReactNode {
+  const out: ReactNode[] = []
+  const re = /\{(\w+)\}/g
+  const text = dictionaries[lang][key]
+  let last = 0
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    const v = params[m[1] ?? '']
+    out.push(v === undefined ? m[0] : typeof v === 'number' ? String(v) : v)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push(text.slice(last))
+  // Passed as separate children, the parts need no keys.
+  return createElement(Fragment, null, ...out)
 }
 
 /** "3 min ago" and so on, for times shown next to people and versions. */

@@ -30,14 +30,16 @@ const (
 	PropertyDate        PropertyType = "date"
 	PropertySelect      PropertyType = "select"
 	PropertyMultiSelect PropertyType = "multi_select"
+	// PropertyPerson holds people: a list of PersonRef.
+	PropertyPerson PropertyType = "person"
 )
 
 func (t PropertyType) Validate() error {
 	switch t {
-	case PropertyText, PropertyDate, PropertySelect, PropertyMultiSelect:
+	case PropertyText, PropertyDate, PropertySelect, PropertyMultiSelect, PropertyPerson:
 		return nil
 	}
-	return goerr.Wrap(ErrInvalidArgument, "property type must be text, date, select or multi_select", goerr.V("type", t))
+	return goerr.Wrap(ErrInvalidArgument, "property type must be text, date, select, multi_select or person", goerr.V("type", t))
 }
 
 // HasElements reports whether properties of the type choose from elements.
@@ -67,6 +69,7 @@ const (
 	MaxNameLength          = 100
 	MaxTextValueLength     = 2000
 	MaxMultiSelectValues   = 100
+	MaxPersonValues        = 100
 	DefaultElementColor    = "gray"
 )
 
@@ -226,10 +229,76 @@ func asStrings(raw any) ([]string, bool) {
 	return nil, false
 }
 
+// PersonRef is one person of a person value: the user's ID and the name
+// written with it. The name is the one at the time of writing; it is not
+// looked up again.
+type PersonRef struct {
+	UserID UserID `json:"user_id"`
+	Name   string `json:"name"`
+}
+
+// People returns the value when it is a list of people.
+func (v *PropertyValue) People() ([]PersonRef, bool) { return asPeople(v.Value) }
+
+// asPeople reads a list of people from the forms a value takes: the typed
+// list, or maps with "user_id" and "name" as JSON and Firestore decode it.
+func asPeople(raw any) ([]PersonRef, bool) {
+	switch x := raw.(type) {
+	case []PersonRef:
+		return slices.Clone(x), true
+	case []map[string]any:
+		out := make([]PersonRef, 0, len(x))
+		for _, m := range x {
+			p, ok := personOf(m)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, p)
+		}
+		return out, true
+	case []any:
+		out := make([]PersonRef, 0, len(x))
+		for _, e := range x {
+			m, ok := e.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			p, ok := personOf(m)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, p)
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func personOf(m map[string]any) (PersonRef, bool) {
+	id, ok1 := m["user_id"].(string)
+	name, ok2 := m["name"].(string)
+	if !ok1 || !ok2 || len(m) != 2 {
+		return PersonRef{}, false
+	}
+	return PersonRef{UserID: UserID(id), Name: name}, true
+}
+
+// PeopleValue is the stored form of a list of people: maps that encode the
+// same way in JSON and in Firestore.
+func PeopleValue(l []PersonRef) []any {
+	out := make([]any, len(l))
+	for i, p := range l {
+		out[i] = map[string]any{"user_id": string(p.UserID), "name": p.Name}
+	}
+	return out
+}
+
 func (v *PropertyValue) Clone() *PropertyValue {
 	c := *v
 	if l, ok := v.Strings(); ok {
 		c.Value = l
+	} else if l, ok := v.People(); ok {
+		c.Value = PeopleValue(l)
 	}
 	return &c
 }
@@ -253,11 +322,30 @@ func (v *PropertyValue) Validate() error {
 				return goerr.Wrap(ErrInvalidArgument, "invalid element id in property value", goerr.V("element_id", e))
 			}
 		}
+	} else if l, ok := v.People(); ok {
+		if err := validatePeople(l); err != nil {
+			return goerr.Wrap(err, "invalid property value", goerr.V("property_id", v.PropertyID))
+		}
 	} else {
-		return goerr.Wrap(ErrInvalidArgument, "property value must be a string or a list of strings", goerr.V("property_id", v.PropertyID))
+		return goerr.Wrap(ErrInvalidArgument, "property value must be a string, a list of strings or a list of people", goerr.V("property_id", v.PropertyID))
 	}
 	if err := v.UpdatedBy.Validate(); err != nil {
 		return goerr.Wrap(err, "invalid property value updater")
+	}
+	return nil
+}
+
+func validatePeople(l []PersonRef) error {
+	if len(l) == 0 || len(l) > MaxPersonValues {
+		return goerr.Wrap(ErrInvalidArgument, "a person value holds 1 to 100 people", goerr.V("count", len(l)))
+	}
+	for _, p := range l {
+		if !ValidID(string(p.UserID)) {
+			return goerr.Wrap(ErrInvalidArgument, "invalid user id in a person value", goerr.V("user_id", p.UserID))
+		}
+		if err := ValidateName(p.Name, "person name"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -280,6 +368,24 @@ func NormalizeValue(prop *Property, raw any) (any, error) {
 	}
 	bad := func(why string) error {
 		return goerr.Wrap(ErrInvalidArgument, why+" (property "+string(prop.ID)+")", goerr.V("property_id", prop.ID), goerr.V("property", prop.Name))
+	}
+	if prop.Type == PropertyPerson {
+		l, ok := asPeople(raw)
+		if !ok {
+			if s, isStr := raw.(string); isStr && s == "" {
+				return nil, nil
+			}
+			return nil, bad(`a person value is a list of {"user_id","name"}`)
+		}
+		if len(l) == 0 {
+			return nil, nil
+		}
+		slices.SortStableFunc(l, func(a, b PersonRef) int { return strings.Compare(string(a.UserID), string(b.UserID)) })
+		l = slices.CompactFunc(l, func(a, b PersonRef) bool { return a.UserID == b.UserID })
+		if err := validatePeople(l); err != nil {
+			return nil, bad(err.Error())
+		}
+		return PeopleValue(l), nil
 	}
 	if prop.Type == PropertyMultiSelect {
 		l, ok := asStrings(raw)
@@ -365,6 +471,12 @@ func CurrentValue(props []Property, v *PropertyValue) any {
 			return nil
 		}
 		return s
+	case PropertyPerson:
+		l, ok := v.People()
+		if !ok || len(l) == 0 {
+			return nil
+		}
+		return PeopleValue(l)
 	default:
 		s, ok := v.Str()
 		if !ok {

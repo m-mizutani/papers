@@ -3,9 +3,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api } from '../api/client'
 import type { Me, PaperListItem } from '../api/types'
 import { PersonPicker, type Person } from '../components/PersonPicker'
+import { ActorMention, useUserNames } from '../components/UserMention'
 import { ago, useTranslation } from '../i18n'
 import { Menu, type MenuItem } from '../ui/Menu'
-import { actorColor, actorName, initials } from '../utils/actors'
 import { isEnter } from '../utils/keyboard'
 import { readPref, writePref } from '../utils/prefs'
 import { isSet, readFilters, toQuery, type Filters } from './papersFilters'
@@ -57,12 +57,14 @@ export function PapersPage({ ws, me, onNew, onNewPrivate, layoutTop }: { ws: str
     setParams(toQuery(n), { replace: true })
     writePref('papersFilters', JSON.stringify(n))
   }
-  const search = useCallback(async (q: string): Promise<Person[]> => {
-    const s = q.toLowerCase()
-    return Object.entries(names).map(([id, name]) => ({ id, name })).filter((p) => !s || p.name.toLowerCase().includes(s))
-  }, [names])
+  // The people who can use the workspace, found by a part of the name or email.
+  const search = useCallback(async (q: string): Promise<Person[]> => (await api.users(ws, { q })).map((u) => ({ id: u.id, name: u.name })), [ws])
+  // A person named only by the URL (a person's card links here) is looked up once.
+  const other = f.creator !== 'me' && f.creator !== 'all' ? f.creator : ''
+  const looked = useUserNames(ws, other && !names[other] ? [other] : []).names
+  const creatorName = names[f.creator] ?? looked.get(f.creator)
 
-  const creatorLabel = f.creator === 'me' ? t('meMention') : f.creator === 'all' ? t('everyone') : names[f.creator] ? `@${names[f.creator]}` : t('unknownUser')
+  const creatorLabel = f.creator === 'me' ? t('meMention') : f.creator === 'all' ? t('everyone') : creatorName ? `@${creatorName}` : t('unknownUser')
   const visLabel = { all: t('all'), public: t('publicLabel'), private: t('private') }[f.visibility]
   const menuItems = (kind: 'visibility' | 'sort'): MenuItem[] => kind === 'visibility'
     ? (['all', 'public', 'private'] as const).map((v) => ({ label: { all: t('all'), public: t('publicLabel'), private: t('private') }[v], icon: f.visibility === v ? '✓' : '', onSelect: () => set({ visibility: v }) }))
@@ -73,10 +75,7 @@ export function PapersPage({ ws, me, onNew, onNewPrivate, layoutTop }: { ws: str
     ? <span className="tag">🔒 {t('private')}</span>
     : p.parent ? <span className="ploc"><span className="pic" aria-hidden>▤</span>{p.parent.title || t('untitled')}</span> : <span className="tag">{t('unfiled')}</span>)
   const who = (p: PaperListItem) => (
-    <span className="pwho">
-      <span className="face" style={{ background: actorColor(p.created_by) }} aria-hidden>{initials(p.created_by.name || '?')}</span>
-      {actorName(p.created_by)}
-    </span>
+    <span className="pwho"><ActorMention actor={p.created_by} /></span>
   )
   const go = (p: PaperListItem) => navigate(`/ws/${ws}/p/${p.id}`)
   const tabs: [Filters['place'], string][] = [['unfiled', t('unfiled')], ['filed', t('filed')], ['all', t('all')]]

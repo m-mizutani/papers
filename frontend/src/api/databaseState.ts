@@ -1,4 +1,4 @@
-import type { Element, ItemRow, Paper, PaperEvent, Property, PropertyValue, Value } from './types'
+import type { Element, ItemRow, Paper, PaperEvent, PersonRef, Property, PropertyValue, Value } from './types'
 
 // The state of an open database: its definitions and the items read so far,
 // in the order they were read (the database's order, or a sort). Events
@@ -128,16 +128,26 @@ export function shownValue(prop: Property, v: PropertyValue | undefined): Value 
   }
   if (prop.type === 'multi_select') {
     if (!Array.isArray(v.value)) return undefined
-    const keep = v.value.filter((id) => (prop.elements ?? []).some((e) => e.id === id))
+    const keep = (v.value as unknown[]).filter((id): id is string => typeof id === 'string' && (prop.elements ?? []).some((e) => e.id === id))
     return keep.length > 0 ? keep : undefined
   }
+  if (prop.type === 'person') {
+    const people = asPeople(v.value)
+    return people.length > 0 ? people : undefined
+  }
   return typeof v.value === 'string' ? v.value : undefined
+}
+
+/** The people of a person value; anything else reads as none. */
+export function asPeople(v: Value | undefined): PersonRef[] {
+  if (!Array.isArray(v)) return []
+  return (v as unknown[]).filter((x): x is PersonRef => typeof x === 'object' && x !== null && typeof (x as PersonRef).user_id === 'string' && typeof (x as PersonRef).name === 'string')
 }
 
 /** The elements a select or multi_select value chooses, in the property's order. */
 export function chosenElements(prop: Property, v: Value | undefined): Element[] {
   if (v === undefined) return []
-  const ids = new Set(Array.isArray(v) ? v : [v])
+  const ids = new Set<unknown>(Array.isArray(v) ? v : [v])
   return (prop.elements ?? []).filter((e) => ids.has(e.id))
 }
 

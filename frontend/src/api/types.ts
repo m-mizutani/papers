@@ -70,7 +70,20 @@ export interface Paper {
   items?: string[]
 }
 
-export type PropertyType = 'text' | 'date' | 'select' | 'multi_select'
+export type PropertyType = 'text' | 'date' | 'select' | 'multi_select' | 'person'
+
+/** One person of a person value: the user and the name written with it. */
+export interface PersonRef {
+  user_id: string
+  name: string
+}
+
+/** What others may see of a user (never the email). */
+export interface UserSummary {
+  id: string
+  name: string
+  avatar_url?: string
+}
 
 /** A choice of a select or multi_select property: values store only its id. */
 export interface Element {
@@ -86,8 +99,8 @@ export interface Property {
   elements?: Element[]
 }
 
-/** What one item holds for one property: a string (text, date, select element id) or element ids. */
-export type Value = string | string[]
+/** What one item holds for one property: a string (text, date, select element id), element ids, or people. */
+export type Value = string | string[] | PersonRef[]
 
 export interface PropertyValue {
   workspace_id: string
@@ -113,6 +126,8 @@ export interface FilterCondition {
   property: string
   op: 'is' | 'contains' | 'on' | 'before' | 'after' | 'between' | 'starts_with' | 'is_empty' | 'is_not_empty'
   elements?: string[]
+  /** contains on a person property: user ids. */
+  users?: string[]
   date?: string
   from?: string
   to?: string

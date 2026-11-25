@@ -3,9 +3,9 @@ import { keyBetween } from '../utils/order'
 
 // Sample content for the in-browser demo. Everything here is made up.
 
-export const ME: User = { id: 'u-me', email: 'you@example.com', name: 'You' }
-export const ALICE: User = { id: 'u-alice', email: 'alice@example.com', name: 'Alice' }
-export const BOB: User = { id: 'u-bob', email: 'bob@example.com', name: 'Bob' }
+export const ME: User = { id: 'MockUserYou00000000000', email: 'you@example.com', name: 'You' }
+export const ALICE: User = { id: 'MockUserAlice000000000', email: 'alice@example.com', name: 'Alice' }
+export const BOB: User = { id: 'MockUserBob00000000000', email: 'bob@example.com', name: 'Bob' }
 
 export const human = (u: User): Actor => ({ kind: 'human', user_id: u.id, name: u.name })
 export const claudeFor = (u: User): Actor => ({ kind: 'agent', user_id: u.id, name: u.name, agent_name: 'Claude', token_id: 't-claude' })

@@ -413,6 +413,17 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
           && x.paper.created_by.user_id === ME.id && !x.paper.deleted_at && !x.paper.archived_at).length),
       } }
     }
+    if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/users$/))) {
+      const people = [ME, ALICE, BOB]
+      const ids = url.searchParams.get('ids')
+      if (ids) {
+        const byId = new Map(people.map((u) => [u.id, u]))
+        return { status: 200, json: { users: ids.split(',').flatMap((id) => { const u = byId.get(id); return u ? [{ id: u.id, name: u.name }] : [] }) } }
+      }
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const users = people.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name))
+      return { status: 200, json: { users: users.map((u) => ({ id: u.id, name: u.name })) } }
+    }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/search$/))) {
       const q = (url.searchParams.get('q') ?? '').toLowerCase()
       const hits = [...papers.values()].filter((d) => d.paper.workspace_id === m?.[1] && sees(d.paper) && !d.paper.deleted_at && !d.paper.archived_at).flatMap((d) => {
