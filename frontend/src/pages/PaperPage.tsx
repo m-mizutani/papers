@@ -1357,6 +1357,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   // The add line and everything below it continue the paper: an empty last paragraph is reused.
   const addRef = useRef<HTMLDivElement>(null)
   const pressedEmpty = useRef(false)
+  const lastBlock = live[live.length - 1]
+  // the add line reuses an empty last paragraph, so it marks no new position then
+  const reusesLast = !!lastBlock && lastBlock.type === 'paragraph' && !lastBlock.content
   const addAtEnd = () => {
     const last = live[live.length - 1]
     if (last && last.type === 'paragraph' && !last.content) startEdit(last, 'start')
@@ -1797,8 +1800,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                   </div>
                 )}
                 {canEdit && !isHTML && (
-                  <div className="addline" ref={addRef}>
-                    <button type="button" onClick={addAtEnd}><span>{t('clickToAdd')}</span></button>
+                  <div className={reusesLast ? 'addline reuse' : 'addline'} ref={addRef}>
+                    {/* no visible text: hovering or focusing marks where the new paragraph starts */}
+                    <button type="button" aria-label={t('clickToAdd')} onClick={addAtEnd}><span className="addmark" aria-hidden="true" /></button>
                   </div>
                 )}
               </>
