@@ -348,9 +348,12 @@ func TestUnfiledAPI(t *testing.T) {
 			ID         model.PaperID    `json:"id"`
 			Title      string           `json:"title"`
 			Visibility model.Visibility `json:"visibility"`
-			CreatedAt  *string          `json:"created_at"`
-			UpdatedAt  *string          `json:"updated_at"`
-			Parent     *struct {
+			CreatedBy  struct {
+				UserID model.UserID `json:"user_id"`
+			} `json:"created_by"`
+			CreatedAt *string `json:"created_at"`
+			UpdatedAt *string `json:"updated_at"`
+			Parent    *struct {
 				ID    model.PaperID `json:"id"`
 				Title string        `json:"title"`
 			} `json:"parent"`
@@ -369,6 +372,10 @@ func TestUnfiledAPI(t *testing.T) {
 	bob.expect("GET", papers+"?creator=all", nil, http.StatusOK, &page)
 	gt.A(t, page.Papers).Length(1) // alice's unfiled paper, not her private one
 	gt.Equal(t, page.Papers[0].ID, m.ID)
+	// one person's papers by their user ID
+	bob.expect("GET", papers+"?creator="+string(page.Papers[0].CreatedBy.UserID), nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(1)
+	gt.Equal(t, page.Papers[0].ID, m.ID)
 	alice.expect("GET", papers+"?place=filed&creator=all&visibility=public&archived=true&sort=created&limit=1", nil, http.StatusOK, &page)
 	gt.A(t, page.Papers).Length(1)
 	gt.Equal(t, page.Papers[0].ID, runbook)
@@ -380,7 +387,7 @@ func TestUnfiledAPI(t *testing.T) {
 	alice.expect("GET", papers+"?limit=1&cursor="+*page.NextCursor, nil, http.StatusOK, &page)
 	gt.A(t, page.Papers).Length(1)
 	gt.Equal(t, *page.NextCursor, "")
-	for _, bad := range []string{"place=x", "creator=x", "visibility=x", "archived=x", "sort=x", "limit=0", "limit=101", "limit=x", "cursor=x"} {
+	for _, bad := range []string{"place=x", "creator=x", "creator=%25%25", "visibility=x", "archived=x", "sort=x", "limit=0", "limit=101", "limit=x", "cursor=x"} {
 		alice.expect("GET", papers+"?"+bad, nil, http.StatusBadRequest, nil)
 	}
 

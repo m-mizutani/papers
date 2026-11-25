@@ -384,4 +384,13 @@ export const en: Record<MsgKey, string> = {
   papersByPerson: 'Papers created by this person →',
   choosePeople: 'Choose people',
   propPerson: 'Person',
+  colCreated: 'Created',
+  authorIs: 'Author: {name}',
+  visibilityIs: 'Visibility: {value}',
+  meMention: '@Me',
+  unknownUser: 'Unknown user',
+  searchByName: 'Search by name',
+  noOneMatches: 'No one matches',
+  youTag: 'You',
+  papersLoadFailed: "Couldn't load papers",
 }

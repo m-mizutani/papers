@@ -12,7 +12,7 @@ import { Modal } from '../ui/Modal'
 import { Popover, type Anchor } from '../ui/Popover'
 import { useToast } from '../ui/Toast'
 import { actorName } from '../utils/actors'
-import { ActorMention, PeopleChooser, PersonPicker, useUserNames } from '../components/UserMention'
+import { ActorMention, PeopleChooser, PersonValuePicker, useUserNames } from '../components/UserMention'
 import { MOD_LABEL, isEnter } from '../utils/keyboard'
 
 // A database: its items as a table, one column per property. Definitions
@@ -603,7 +603,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
           onChange={(v) => setValue(cellRow.item.id, cellProp.id, v)} actions={elementActions(cellRow, cellProp)} onClose={() => setCell(null)} />
       )}
       {cell && cellRow && cellProp?.type === 'person' && (
-        <PersonPicker ws={ws} value={asPeople(shownValue(cellProp, cellRow.values.get(cellProp.id)))} anchor={cell.anchor} label={cellProp.name}
+        <PersonValuePicker ws={ws} value={asPeople(shownValue(cellProp, cellRow.values.get(cellProp.id)))} anchor={cell.anchor} label={cellProp.name}
           onChange={(v) => setValue(cellRow.item.id, cellProp.id, v)} onClose={() => setCell(null)} />
       )}
       {cell && cellRow && cellProp?.type === 'date' && (

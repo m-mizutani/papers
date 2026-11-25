@@ -212,7 +212,7 @@ export function PeopleChooser({ ws, chosen, onChange, max = 100 }: {
 }
 
 /** The editor of a person value (a cell or the property panel). */
-export function PersonPicker({ ws, value, anchor, label, onChange, onClose }: {
+export function PersonValuePicker({ ws, value, anchor, label, onChange, onClose }: {
   ws: string
   value: PersonRef[] | undefined
   anchor: Anchor

@@ -437,20 +437,8 @@ const (
 )
 
 // PaperCreator narrows a papers list by who created the papers: me, all,
-// or one user's ID.
+// or the ID of one user.
 type PaperCreator string
-
-// user is the user the creator names: the principal for "me", the user
-// with the ID, or "" for everyone.
-func (c PaperCreator) user(p *model.Principal) model.UserID {
-	switch c {
-	case CreatorMe:
-		return p.User.ID
-	case CreatorAll:
-		return ""
-	}
-	return model.UserID(c)
-}
 
 const (
 	CreatorMe  PaperCreator = "me"
@@ -498,8 +486,12 @@ func (in *ListPapersInput) normalize() error {
 	default:
 		return goerr.Wrap(model.ErrInvalidArgument, "place must be unfiled, filed or all", goerr.V("place", in.Place))
 	}
-	if in.Creator != CreatorMe && in.Creator != CreatorAll && !model.ValidID(string(in.Creator)) {
-		return goerr.Wrap(model.ErrInvalidArgument, "creator must be me, all or a user id", goerr.V("creator", in.Creator))
+	switch in.Creator {
+	case CreatorMe, CreatorAll:
+	default:
+		if !model.ValidID(string(in.Creator)) {
+			return goerr.Wrap(model.ErrInvalidArgument, "creator must be me, all or a user ID", goerr.V("creator", in.Creator))
+		}
 	}
 	if in.Visibility != VisibilityAll {
 		if err := in.Visibility.Validate(); err != nil {
@@ -559,7 +551,13 @@ func (u *UseCases) ListPapers(ctx context.Context, p *model.Principal, ws model.
 		return nil, err
 	}
 	q := model.PaperQuery{Unfiled: in.Place == PlaceUnfiled, Sort: in.Sort, Limit: min(in.Limit*2, model.MaxPaperListLimit), Cursor: in.Cursor}
-	q.Creator = in.Creator.user(p)
+	switch in.Creator {
+	case CreatorMe:
+		q.Creator = p.User.ID
+	case CreatorAll:
+	default:
+		q.Creator = model.UserID(in.Creator)
+	}
 	keep := func(x *model.Paper) bool {
 		switch {
 		case x.ID == homeID, x.IsTrashed(), x.IsBusy(), !p.SeesPaper(x):

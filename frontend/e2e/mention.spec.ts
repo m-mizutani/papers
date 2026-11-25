@@ -39,8 +39,8 @@ test('T7 typing @ in a block inserts a mention, removed whole by one Backspace',
 test('T9 the papers list shows the author as a mention', async ({ page, request }) => {
   const paper = await createPaper(request, { title: unique('Listed'), unfiled: true })
   await page.goto(`/ws/${WS}/papers`)
-  const row = page.locator('.dbt tbody tr', { hasText: paper.title })
-  const author = row.locator('.mention')
+  const row = page.locator('.plist tbody tr', { hasText: paper.title })
+  const author = row.locator('td.pwide .mention')
   await expect(author).toHaveText(`@${DEV}`)
   await author.click()
   await expect(page.locator('.personcard')).toContainText(DEV)
@@ -54,9 +54,10 @@ test('T12 a mention in text opens a card whose link lists the person\'s papers',
   await body(page, 0).locator('.mention').click()
   await page.locator('.personcard').getByRole('link', { name: msg('papersByPerson') }).click()
   await expect(page).toHaveURL(new RegExp(`/ws/${WS}/papers\\?place=all&creator=${id}$`))
-  await expect(page.locator('.filters .mention')).toContainText(`@${DEV}`)
-  await expect(page.locator('.dbt tbody tr', { hasText: mine.title })).toBeVisible()
-  await expect(page.locator('.dbt tbody tr', { hasText: paper.title })).toBeVisible()
+  // the card of the signed-in person lists "my" papers
+  await expect(page.locator('.pfilters .pill').first()).toContainText(msg('meMention'))
+  await expect(page.locator('.plist tbody tr', { hasText: mine.title })).toBeVisible()
+  await expect(page.locator('.plist tbody tr', { hasText: paper.title })).toBeVisible()
 })
 
 test('T16 a person property keeps the people chosen in a cell', async ({ page, request }) => {

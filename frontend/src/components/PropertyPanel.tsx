@@ -6,7 +6,7 @@ import { useTranslation } from '../i18n'
 import type { Anchor } from '../ui/Popover'
 import { useToast } from '../ui/Toast'
 import { isEnter } from '../utils/keyboard'
-import { PersonPicker } from './UserMention'
+import { PersonValuePicker } from './UserMention'
 import { AddPropertyPopover, DateEditor, ElementPicker, TYPE_ICON, ValueView, type ElementActions } from './PropertyEditors'
 
 // The property values of an item, under its title (spec 2.9 I1, I2). The
@@ -102,7 +102,7 @@ export function PropertyPanel({ ws, item, database, properties, values, readOnly
           onChange={(v) => setValue(openProp, v)} actions={actions(openProp)} onClose={() => setOpen(null)} />
       )}
       {open && openProp?.type === 'person' && (
-        <PersonPicker ws={ws} value={asPeople(shownValue(openProp, values.get(openProp.id)))} anchor={open.anchor} label={openProp.name}
+        <PersonValuePicker ws={ws} value={asPeople(shownValue(openProp, values.get(openProp.id)))} anchor={open.anchor} label={openProp.name}
           onChange={(v) => setValue(openProp, v)} onClose={() => setOpen(null)} />
       )}
       {open && openProp?.type === 'date' && (
