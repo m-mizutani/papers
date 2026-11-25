@@ -11,7 +11,7 @@ function rectOf(a: Anchor): DOMRect {
   return a instanceof HTMLElement ? a.getBoundingClientRect() : a
 }
 
-export function Popover({ anchor, onClose, className = '', children, placement = 'below', label }: {
+export function Popover({ anchor, onClose, className = '', children, placement = 'below', label, ignoreWithin }: {
   anchor: Anchor
   onClose: () => void
   className?: string
@@ -19,6 +19,8 @@ export function Popover({ anchor, onClose, className = '', children, placement =
   /** below: under the anchor; above: over it (the formatting toolbar). */
   placement?: 'below' | 'above'
   label?: string
+  /** A press inside this element (an editor the popover belongs to) does not close it. */
+  ignoreWithin?: Node | null
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: -9999, top: -9999 })
@@ -43,6 +45,7 @@ export function Popover({ anchor, onClose, className = '', children, placement =
     const down = (e: MouseEvent) => {
       if (ref.current?.contains(e.target as Node)) return
       if (anchor instanceof HTMLElement && anchor.contains(e.target as Node)) return
+      if (ignoreWithin?.contains(e.target as Node)) return
       close.current()
     }
     const key = (e: KeyboardEvent) => {
@@ -57,7 +60,7 @@ export function Popover({ anchor, onClose, className = '', children, placement =
       document.removeEventListener('mousedown', down)
       document.removeEventListener('keydown', key, true)
     }
-  }, [anchor])
+  }, [anchor, ignoreWithin])
 
   return createPortal(
     <div ref={ref} className={`pop ${className}`} style={{ left: pos.left, top: pos.top }} role="dialog" aria-label={label}>

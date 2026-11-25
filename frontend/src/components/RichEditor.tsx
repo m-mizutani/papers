@@ -10,8 +10,10 @@ import Strike from '@tiptap/extension-strike'
 import Text from '@tiptap/extension-text'
 import { Placeholder } from '@tiptap/extensions'
 import { EditorContent, useEditor } from '@tiptap/react'
+import { TextSelection } from '@tiptap/pm/state'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from '../i18n'
+import { leaveToBrowser, NO_PRESS, type Press } from './clicks'
 import { PALETTE } from '../markup/markup'
 import { fromDoc, toDoc, type PMDoc } from '../markup/tiptap'
 import { Popover } from '../ui/Popover'
@@ -113,8 +115,10 @@ function FormatBar({ editor, anchor }: { editor: TiptapEditor; anchor: DOMRect }
   return (
     // Escape (or a click outside) while text is selected collapses the
     // selection, which hides the toolbar; the next Escape leaves the block.
-    // While a colour or link box is open, that box closes first.
-    <Popover anchor={anchor} placement="above" className="fmtpop" onClose={() => { if (!sub) editor.commands.setTextSelection(editor.state.selection.to) }} label={t('formatting')}>
+    // While a colour or link box is open, that box closes first. A press in
+    // the editor is left alone: ProseMirror has already set the selection it
+    // makes (a double click selects a word in the same press that shows the toolbar).
+    <Popover anchor={anchor} placement="above" className="fmtpop" ignoreWithin={editor.view.dom} onClose={() => { if (!sub) editor.commands.setTextSelection(editor.state.selection.to) }} label={t('formatting')}>
       <div ref={barRef} className="fmt" role="toolbar" aria-label={t('formatting')} onMouseDown={keep}>
         <button type="button" className={on('bold')} title={t('bold')} aria-label={t('bold')} onClick={() => toggle('bold')}><b>B</b></button>
         <button type="button" className={on('italic')} title={t('italic')} aria-label={t('italic')} onClick={() => toggle('italic')}><i>I</i></button>
@@ -182,6 +186,8 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
   const pasteRef = useRef({ onPasteText, onPasteImage, onSlash })
   pasteRef.current = { onPasteText, onPasteImage, onSlash }
   const [selRect, setSelRect] = useState<DOMRect | null>(null)
+  // The last press this editor received, and whether it was left to the browser.
+  const clicks = useRef<Press>(NO_PRESS)
 
   const unmounted = useRef(false)
   // The cleanup runs before the editor's own unmount, which blurs it.
@@ -292,6 +298,21 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
           }
         }
         return false
+      },
+      handleDOMEvents: {
+        // A double or triple click whose first press opened this editor (see
+        // clicks.ts): the browser selects the word of a double click, and the
+        // paragraph of a triple click is selected here, as ProseMirror does,
+        // since the browser stops at a line break.
+        mousedown: (view, event) => {
+          const native = leaveToBrowser(clicks.current, event)
+          clicks.current = { detail: event.detail, time: event.timeStamp, native }
+          if (native && event.detail >= 3) {
+            event.preventDefault()
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, view.state.doc.content.size - 1)))
+          }
+          return native
+        },
       },
       handlePaste: (_view, event) => {
         const files = [...(event.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'))
