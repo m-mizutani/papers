@@ -449,3 +449,69 @@ test('T62 a double or triple click selects a word or the paragraph, in a block b
   await expect(editor(page)).toBeFocused()
   await expect.poll(() => selected(page)).toBe('alpha')
 })
+
+test('T83 the add line shows no text; hovering or focusing marks where the new paragraph starts', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Add mark'), markdown: 'first\n\n> [!NOTE]\n> a callout' })
+  await openPaper(page, paper.id)
+  const add = page.getByRole('button', { name: msg('clickToAdd') })
+  const mark = page.locator('.addline .addmark')
+  const shown = () => mark.evaluate((el) => getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)')
+
+  // T1 nothing is written below the last block
+  await expect(add).toHaveText('')
+  expect(await shown()).toBe(false)
+
+  // T2 hovering the add line shows the mark below the last block
+  await add.hover({ position: { x: 200, y: 80 } })
+  await expect.poll(shown).toBe(true)
+  const last = await blocks(page).last().boundingBox()
+  const at = await mark.boundingBox()
+  if (!last || !at) throw new Error('no box')
+  expect(at.y).toBeGreaterThanOrEqual(last.y + last.height)
+
+  // T6 the keyboard reaches the button, focus shows the mark, Enter adds
+  await page.mouse.move(0, 0)
+  await add.focus()
+  await expect.poll(shown).toBe(true)
+  await page.keyboard.press('Enter')
+  await expect(blocks(page)).toHaveCount(3)
+  await expect(editor(page)).toBeFocused()
+
+  // T7 the empty paragraph being edited shows the new guide
+  await expect(editor(page).locator('p.is-editor-empty')).toHaveAttribute('data-placeholder', msg('blockPlaceholder'))
+
+  // T3 with an empty paragraph last, the add line reuses it and shows no mark
+  await finishEditing(page)
+  await add.hover({ position: { x: 200, y: 80 } })
+  expect(await shown()).toBe(false)
+  await add.click({ position: { x: 200, y: 80 } })
+  await expect(blocks(page)).toHaveCount(3)
+  await expect(editor(page)).toBeFocused()
+})
+
+test('T84 an empty paper shows the mark on hover and adds the first paragraph', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Empty add') })
+  await openPaper(page, paper.id)
+  const add = page.getByRole('button', { name: msg('clickToAdd') })
+  const mark = page.locator('.addline .addmark')
+  await add.hover({ position: { x: 200, y: 80 } })
+  await expect.poll(() => mark.evaluate((el) => getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)')).toBe(true)
+  await add.click({ position: { x: 200, y: 80 } })
+  await expect(blocks(page)).toHaveCount(1)
+  await expect(editor(page)).toBeFocused()
+})
+
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 800 } })
+
+  test('T85 no mark appears without hover, and a tap still adds', async ({ page, request }) => {
+    const paper = await createPaper(request, { title: unique('Touch add'), markdown: 'first' })
+    await openPaper(page, paper.id)
+    const add = page.getByRole('button', { name: msg('clickToAdd') })
+    const box = await add.boundingBox()
+    if (!box) throw new Error('no add line')
+    await page.touchscreen.tap(box.x + 100, box.y + 40)
+    expect(await page.locator('.addline .addmark').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+    await expect(blocks(page)).toHaveCount(2)
+  })
+})
