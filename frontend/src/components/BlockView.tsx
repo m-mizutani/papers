@@ -18,6 +18,7 @@ import { RichFrame, frameTitle } from './RichFrame'
 import { gapBetween } from './spacing'
 import { TableBlock } from './TableBlock'
 import { DEFAULT_ICONS, paperIcon } from '../utils/icon'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 export interface EditingState {
   id: string
@@ -199,7 +200,7 @@ function CodeBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
     <div className="code">
       <div className="bar">
         {ed
-          ? <input value={ed.props.language ?? ''} placeholder={t('codeLanguage')} aria-label={t('codeLanguage')} onMouseDown={(e) => e.stopPropagation()}
+          ? <input {...NO_AUTOFILL} value={ed.props.language ?? ''} placeholder={t('codeLanguage')} aria-label={t('codeLanguage')} onMouseDown={(e) => e.stopPropagation()}
               onChange={(e) => ctx.actions.setDraftProps({ ...ed.props, language: e.target.value })} />
           : <span>{block.props.language || ' '}</span>}
         <button type="button" className="btn ghost sm" onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(block.content).catch(() => undefined) }}>{t('copy')}</button>

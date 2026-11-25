@@ -6,6 +6,7 @@ import { tParts, useTranslation } from '../i18n'
 import { Popover, type Anchor } from '../ui/Popover'
 import { actorColor, initials } from '../utils/actors'
 import { isEnter } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 // People, shown the same way everywhere: "@name" that opens a card with
 // the papers the person created. A mention holds the user's ID and the
@@ -193,7 +194,7 @@ export function PeopleChooser({ ws, chosen, onChange, max = 100 }: {
     <>
       <div className="tagin">
         {chosen.map((c) => <UserMention key={c.user_id} id={c.user_id} name={c.name} ws={ws} onRemove={() => onChange(chosen.filter((x) => x.user_id !== c.user_id))} />)}
-        <input autoFocus value={q} aria-label={t('choosePeople')} placeholder={chosen.length ? '' : t('choosePeople')}
+        <input {...NO_AUTOFILL} autoFocus value={q} aria-label={t('choosePeople')} placeholder={chosen.length ? '' : t('choosePeople')}
           onChange={(e) => { setQ(e.target.value); setActive(0) }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, Math.max(shown.length - 1, 0))) }

@@ -36,6 +36,7 @@ import { paperIcon } from '../utils/icon'
 import { isEnter, isNativeEnter, MOD_LABEL, modKey } from '../utils/keyboard'
 import { keyBetween } from '../utils/order'
 import type { Layout } from '../App'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 const RECENT_MS = 1400
 const PRESENCE_REFRESH_MS = 30000
@@ -1772,7 +1773,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     ? <button type="button" ref={iconRef} className="page-icon" aria-label={t('changeIcon')} title={t('changeIcon')} onClick={(e) => setIconPick(e.currentTarget)}>{paper.icon}</button>
                     : <span className="page-icon" role="img" aria-label={t('iconLabel')}>{paper.icon}</span>)
                   : canEdit && <button type="button" ref={iconRef} className="add-icon" onClick={(e) => setIconPick(e.currentTarget)}><span aria-hidden>☺</span>{t('addIcon')}</button>}
-                <textarea ref={titleRef} className="title-input" rows={1} value={title} placeholder={t('untitled')} aria-label={t('paperTitle')} readOnly={!canEdit}
+                <textarea {...NO_AUTOFILL} ref={titleRef} className="title-input" rows={1} value={title} placeholder={t('untitled')} aria-label={t('paperTitle')} readOnly={!canEdit}
                   onChange={(e) => {
                     const next = e.target.value.replace(/\n/g, '')
                     setTitle(next)
@@ -1949,7 +1950,7 @@ function SavedDialog({ n, counts, url, onOpen, onClose }: { n: number; counts: C
         )
         : !counts && n === 1 ? <p style={{ color: 'var(--accent)', marginTop: 0 }}>{t('firstVersion')}</p> : null}
       <div className="urlrow">
-        <input className="inp" readOnly value={url} aria-label="URL" onFocus={(e) => e.target.select()} />
+        <input {...NO_AUTOFILL} className="inp" readOnly value={url} aria-label="URL" onFocus={(e) => e.target.select()} />
         <button type="button" className="btn primary copy-url" onClick={() => void navigator.clipboard?.writeText(url).then(() => setCopied(true), () => undefined)}>{copied ? `✓ ${t('copied')}` : t('copy')}</button>
       </div>
       <p className="muted" style={{ fontSize: 'var(--text-sm)', margin: 'var(--sp-4) 0 0' }}>{t('versionUrlNote')}</p>

@@ -4,6 +4,7 @@ import type { Paper, PaperListItem, Workspace } from '../api/types'
 import { useTranslation } from '../i18n'
 import { Modal } from '../ui/Modal'
 import { DEFAULT_ICONS, paperIcon } from '../utils/icon'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 /**
  * Picks a new parent for a paper (spec: R12). Only filed papers can be
@@ -103,7 +104,7 @@ export function MoveDialog({ paper, ws, workspaces, exclude, homeIcon, onMove, o
       )}
       <div className="field">
         <label htmlFor="mvq">{t('moveTo')}</label>
-        <input id="mvq" className="inp" value={q} placeholder={t('filter')} onChange={(e) => setQ(e.target.value)} />
+        <input {...NO_AUTOFILL} id="mvq" className="inp" value={q} placeholder={t('filter')} onChange={(e) => setQ(e.target.value)} />
         <div className="picker" role="listbox" aria-label={t('moveTo')}>
           {options.map((o) => (
             <button key={o.id} type="button" role="option" aria-selected={sel === o.id} className={`prow${sel === o.id ? ' sel' : ''}`} onClick={() => setSel(o.id)}>

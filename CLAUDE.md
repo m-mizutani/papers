@@ -100,6 +100,7 @@ deletes every document and then fills each workspace with the sample papers defi
 - No hardcoded colours, spacing or sizes outside the tokens in `frontend/src/styles/global.css`.
 - All user-facing text goes through i18n (`frontend/src/i18n/keys.ts`, `en.ts`, `ja.ts`).
 - Enter-key handlers must respect IME composition: use `isEnter` / `isImeComposing` from `src/utils/keyboard.ts` (enforced by ESLint).
+- Every text `<input>` and `<textarea>` spreads `{...NO_AUTOFILL}` from `src/utils/autofill.ts` so password managers (1Password ignores `autocomplete="off"`) do not offer to fill it; papers has no field that wants autofill (enforced by ESLint).
 - AI-authored HTML/SVG renders only inside the sandboxed `RichFrame` (blocks) or `HtmlPage` (HTML papers), never with `allow-same-origin`. Never inject block content as HTML elsewhere.
 
 ### Screen changes and screenshots (MANDATORY)

@@ -16,6 +16,7 @@ import { ActorMention, PeopleChooser, PersonValuePicker, useUserNames } from '..
 import { MOD_LABEL, isEnter } from '../utils/keyboard'
 import { paperIcon } from '../utils/icon'
 import { IconPicker } from '../components/IconPicker'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 // A database: its items as a table, one column per property. Definitions
 // and the order of items are written through the database's batch, an
@@ -469,7 +470,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
                     ? <button type="button" ref={iconRef} className="page-icon" aria-label={t('changeIcon')} title={t('changeIcon')} onClick={(e) => setIconPick(e.currentTarget)}>{db.icon}</button>
                     : <span className="page-icon" role="img" aria-label={t('iconLabel')}>{db.icon}</span>)
                   : canEdit && <button type="button" ref={iconRef} className="add-icon" onClick={(e) => setIconPick(e.currentTarget)}><span aria-hidden>☺</span>{t('addIcon')}</button>}
-                <textarea className="title-input" rows={1} value={title} placeholder={t('untitledDatabase')} aria-label={t('paperTitle')} readOnly={!canEdit}
+                <textarea {...NO_AUTOFILL} className="title-input" rows={1} value={title} placeholder={t('untitledDatabase')} aria-label={t('paperTitle')} readOnly={!canEdit}
                   onChange={(e) => setTitle(e.target.value.replace(/\n/g, ''))}
                   onBlur={(e) => saveTitle(e.target.value)}
                   onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); e.currentTarget.blur() } }} />
@@ -513,7 +514,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
                           <td className="tt">
                             <div className="tcell">
                               {titleEdit?.item === row.item.id ? (
-                                <input autoFocus={focusItem === row.item.id || undefined} value={titleEdit.draft} placeholder={t('untitled')} aria-label={t('colName')}
+                                <input {...NO_AUTOFILL} autoFocus={focusItem === row.item.id || undefined} value={titleEdit.draft} placeholder={t('untitled')} aria-label={t('colName')}
                                   onChange={(e) => setTitleEdit({ item: row.item.id, draft: e.target.value })}
                                   onBlur={() => { void renameItem(row.item.id, titleEdit.draft); setTitleEdit(null); setFocusItem(null) }}
                                   onKeyDown={(e) => {
@@ -535,7 +536,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
                             return (
                               <td key={p.id} className={cell?.item === row.item.id && cell.prop === p.id ? 'sel' : ''}>
                                 {editingText ? (
-                                  <input className="cell-edit" autoFocus value={textEdit.draft} aria-label={p.name}
+                                  <input {...NO_AUTOFILL} className="cell-edit" autoFocus value={textEdit.draft} aria-label={p.name}
                                     onChange={(e) => setTextEdit({ ...textEdit, draft: e.target.value.replace(/\n/g, '') })}
                                     onBlur={() => { setValue(row.item.id, p.id, textEdit.draft.trim() === '' ? null : textEdit.draft); setTextEdit(null) }}
                                     onKeyDown={(e) => {
@@ -687,7 +688,7 @@ function ConditionEditor({ ws, names, onPeople, prop, cond, anchor, onChange, on
         </label>
       ))}
       {needs && cond.op !== 'is' && cond.op !== 'contains' && (
-        <input className="inp" autoFocus value={text} placeholder={prop.type === 'date' ? 'YYYY-MM-DD' : prop.name} aria-label={prop.name}
+        <input {...NO_AUTOFILL} className="inp" autoFocus value={text} placeholder={prop.type === 'date' ? 'YYYY-MM-DD' : prop.name} aria-label={prop.name}
           onChange={(e) => setText(e.target.value)} onBlur={commitText}
           onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); commitText() } }} />
       )}

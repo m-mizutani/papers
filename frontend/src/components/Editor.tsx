@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type KeyboardEvent } from 'react'
 import { isEnter, isImeComposing } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 export interface EditorKeys {
   /** Enter without Shift: split / finish. Return true if handled. */
@@ -63,7 +64,7 @@ export function Editor({ value, onChange, onBlur, keys, placeholder, label }: {
   }
 
   return (
-    <textarea
+    <textarea {...NO_AUTOFILL}
       ref={ref}
       className="editor"
       rows={1}

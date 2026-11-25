@@ -6,6 +6,7 @@ import { Modal } from '../ui/Modal'
 import { useToast } from '../ui/Toast'
 import { MOD_LABEL } from '../utils/keyboard'
 import { setLang, setTheme, storedTheme, type Theme } from '../utils/prefs'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 /** The Claude Code command that adds papers; Claude Code signs in through OAuth, so no token goes in it. */
 export function mcpConfig(mcpBaseURL: string): string {
@@ -66,7 +67,7 @@ function NewToken({ onClose, onCreated }: { onClose: () => void; onCreated: (sec
         }
       },
     }]}>
-      <div className="field"><label htmlFor="tkname">{t('tokenName')}</label><input id="tkname" className="inp" value={name} onChange={(e) => setName(e.target.value)} /></div>
+      <div className="field"><label htmlFor="tkname">{t('tokenName')}</label><input {...NO_AUTOFILL} id="tkname" className="inp" value={name} onChange={(e) => setName(e.target.value)} /></div>
       <div className="field">
         <span className="flabel">{t('tokenKind')}</span>
         {([['agent', t('tokenAgent'), t('tokenAgentDesc')], ['personal', t('tokenPersonal'), t('tokenPersonalDesc')]] as const).map(([k, l, d]) => (

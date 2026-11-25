@@ -13,6 +13,16 @@ async function open(search: (q: string) => Promise<Person[]>, value = 'me') {
 }
 
 describe('PersonPicker', () => {
+  it('T1 the search field tells password managers to stay away', async () => {
+    await open(async () => [])
+    const field = screen.getByLabelText(t('searchByName'))
+    expect(field.getAttribute('autocomplete')).toBe('off')
+    expect(field.getAttribute('data-1p-ignore')).toBe('true')
+    expect(field.getAttribute('data-lpignore')).toBe('true')
+    expect(field.getAttribute('data-bwignore')).toBe('true')
+    expect(field.getAttribute('data-form-type')).toBe('other')
+  })
+
   it('T8 puts me and everyone first, then the people found without me', async () => {
     await open(async () => [ME, { id: 'u2', name: 'Aiko Tanaka' }])
     const names = screen.getAllByRole('option').map((o) => o.querySelector('.mt')?.textContent)
