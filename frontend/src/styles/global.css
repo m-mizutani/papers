@@ -76,6 +76,7 @@
   --col-w: 720px;
   --tail-space: 40vh; /* room below the last block of a paper */
   --col-wide: 960px;
+  --consent-w: 380px;
   --gutter: 28px;
   --bar-h: 48px;
   --person-card-w: 240px;
@@ -609,6 +610,17 @@ table.dbt { width: 100%; border-collapse: collapse; font-size: 14px; }
 .gate-lang { display: flex; gap: var(--sp-2); font-size: var(--text-sm); }
 .gate-lang button { padding: 3px var(--sp-4); border-radius: 5px; color: var(--fg-3); }
 .gate-lang button.on { color: var(--fg); background: var(--surface-2); }
+.gate.consent { display: flex; align-items: center; justify-content: center; padding-block: var(--sp-10); padding-left: max(var(--sp-7), env(safe-area-inset-left, 0px)); padding-right: max(var(--sp-7), env(safe-area-inset-right, 0px)); }
+.consent-form { width: min(var(--consent-w), 100%); display: flex; flex-direction: column; gap: var(--sp-6); }
+.consent-form h1 { margin: 0; font-size: var(--text-h3); line-height: 1.35; overflow-wrap: anywhere; }
+.consent-form .gate-msg { margin: 0; }
+.consent-label { font-size: var(--text-sm); color: var(--fg-3); margin-bottom: var(--sp-2); }
+.consent-back { color: var(--accent); font-size: var(--text-ui); }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3) var(--sp-7); margin: 0; font-size: var(--text-code); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-5) var(--sp-6); }
+.kv dt { color: var(--fg-3); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.consent-btns { display: flex; gap: var(--sp-4); justify-content: flex-end; }
+.consent-btns .btn { padding: 0 var(--sp-7); font-size: var(--text-ui); }
 .gate-top { height: 56px; display: flex; align-items: center; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--line); background: var(--surface); }
 .gate-body { max-width: var(--col-wide); margin: 0 auto; padding-block: 36px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .wgroup { margin-top: 26px; }

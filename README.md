@@ -75,8 +75,25 @@ In no-authn mode the MCP endpoint needs no token:
 claude mcp add --transport http papers http://localhost:8080/mcp
 ```
 
-With sign-in enabled, create an **AI agent** token under *API tokens* in the
-UI and pass it as a bearer token (the UI shows the exact command).
+With sign-in enabled, add the same command without a header (Settings shows
+it with the right URL) and start authenticating papers in Claude Code
+(`/mcp`). papers is an OAuth 2.1 authorization server: the browser opens a
+consent screen, and Claude Code receives an **AI agent** token (valid 90 days,
+listed and revocable under *API tokens*). No token passes through the shell,
+so none is left in its history. MCP clients without OAuth can still send a
+token created under *API tokens* as `Authorization: Bearer pap_…`.
+
+When MCP clients reach the server under another URL than browsers do, set
+`--mcp-base-url`. For example, with IAP in front of
+`https://papers.example.com` (`--base-url`) and a VPN route to the same
+server at `https://papers-direct.example.com`, set
+`--mcp-base-url https://papers-direct.example.com`: Settings then shows that
+URL, the consent screen still opens on `--base-url` (where the browser has
+its session), and a code made there is exchanged on either host. OAuth
+metadata is answered only for the hosts of these two URLs. A client that goes
+through IAP itself (another service connecting to `papers.example.com`) sends
+its IAP token in `Proxy-Authorization` and the papers token in
+`Authorization`.
 
 ## Configuration
 
@@ -95,7 +112,8 @@ Every flag can also be set through the environment variable next to it.
 | `--anonymous` / `PAPERS_ANONYMOUS` | `false` | Anyone may use papers without signing in: a browser without a session becomes a new anonymous user. Cannot be combined with Google sign-in or `--no-authn` |
 | `--no-authn` / `PAPERS_NO_AUTHN` | `false` | Development only: every request is the dev user |
 | `--dev-user-email` / `PAPERS_DEV_USER_EMAIL`, `--dev-user-name` / `PAPERS_DEV_USER_NAME` | `dev@localhost`, `Developer` | The dev user of `--no-authn` |
-| `--enable-mcp` / `PAPERS_ENABLE_MCP` | `true` | Serve `/mcp` |
+| `--enable-mcp` / `PAPERS_ENABLE_MCP` | `true` | Serve `/mcp` and the OAuth endpoints for MCP clients |
+| `--mcp-base-url` / `PAPERS_MCP_BASE_URL` | `--base-url` | Public URL where MCP clients reach this server, when it differs from `--base-url` |
 | `--ws-origin` / `PAPERS_WS_ORIGINS` | | Extra Origin hosts allowed for WebSocket (Vite dev server) |
 | `--repository-backend` / `PAPERS_REPOSITORY_BACKEND` | `memory` | `firestore` or `memory` (development only) |
 | `--firestore-project-id` / `PAPERS_FIRESTORE_PROJECT_ID`, `--firestore-database-id` / `PAPERS_FIRESTORE_DATABASE_ID` | `(default)` | Firestore **Enterprise edition** database in Native mode. Run `papers firestore migrate` to create its indexes and TTL policies (see below) |

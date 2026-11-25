@@ -45,6 +45,42 @@ func TestAPIToken(t *testing.T) {
 	gt.Error(t, tok.Validate())
 }
 
+func TestAPITokenOAuth(t *testing.T) {
+	exp := time.Now().Add(5 * time.Minute)
+	base := func() *model.APIToken {
+		return &model.APIToken{ID: "t", UserID: "u", Name: "n", Kind: model.TokenAgent, Scope: model.ScopeWrite,
+			OAuth: &model.OAuthGrant{ClientID: "pcl_x", ClientName: "n", RedirectURI: "http://localhost:1/cb", CodeHash: "c", CodeChallenge: "x", CodeExpiresAt: &exp}}
+	}
+
+	pending := base()
+	gt.True(t, pending.Pending())
+	gt.NoError(t, pending.Validate())
+
+	noChallenge := base()
+	noChallenge.OAuth.CodeChallenge = ""
+	gt.Error(t, noChallenge.Validate())
+
+	noExpiry := base()
+	noExpiry.OAuth.CodeExpiresAt = nil
+	gt.Error(t, noExpiry.Validate())
+
+	// Once exchanged the token needs its secret like any other.
+	active := base()
+	active.OAuth.CodeHash, active.OAuth.CodeChallenge, active.OAuth.CodeExpiresAt = "", "", nil
+	gt.False(t, active.Pending())
+	gt.Error(t, active.Validate())
+	active.SecretHash = "h"
+	gt.NoError(t, active.Validate())
+
+	noClient := base()
+	noClient.OAuth.ClientID = ""
+	gt.Error(t, noClient.Validate())
+
+	plain := &model.APIToken{ID: "t", UserID: "u", Name: "n", Kind: model.TokenAgent, Scope: model.ScopeWrite}
+	gt.False(t, plain.Pending())
+	gt.Error(t, plain.Validate())
+}
+
 func TestSessionExpired(t *testing.T) {
 	now := time.Now()
 	s := &model.Session{ExpiresAt: now}

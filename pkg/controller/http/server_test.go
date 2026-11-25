@@ -80,6 +80,13 @@ func newTestServerWith(t *testing.T, devMode bool, tune func(*usecase.Config)) *
 
 func newTestServerMode(t *testing.T, mode authMode, tune func(*usecase.Config)) *testServer {
 	t.Helper()
+	return newTestServerOpts(t, mode, tune, nil)
+}
+
+// newTestServerOpts lets a test add server options that depend on the
+// server's own URL (http://127.0.0.1:port), such as the public URLs.
+func newTestServerOpts(t *testing.T, mode authMode, tune func(*usecase.Config), opts func(srvURL string) []httpctrl.Option) *testServer {
+	t.Helper()
 	repo := memory.New(memory.WithEventBuffer(64))
 	wss := workspace.Static(&model.Workspace{ID: "team", Name: "Team", Description: "Write runbooks as numbered lists.", Sandbox: model.Sandbox{ExternalResources: true}}, &model.Workspace{ID: "other", Name: "Other"})
 	cfg := usecase.Config{MaxOpsPerBatch: 300, PaperTouchInterval: time.Minute, TrashRetention: 30 * 24 * time.Hour, JobLease: time.Minute, JobStep: 200}
@@ -100,8 +107,13 @@ func newTestServerMode(t *testing.T, mode authMode, tune func(*usecase.Config)) 
 	default:
 		auth = gt.R1(usecase.NewAuth(repo, idp, usecase.AuthConfig{SessionTTL: time.Hour, AllowedDomains: []string{"example.com"}})).NoError(t)
 	}
-	h := gt.R1(httpctrl.New(uc, auth, httpctrl.WithMCP(true), httpctrl.WithStaticFS(testUI))).NoError(t)
-	srv := httptest.NewServer(h)
+	srv := httptest.NewUnstartedServer(nil)
+	srvOpts := []httpctrl.Option{httpctrl.WithMCP(true), httpctrl.WithStaticFS(testUI)}
+	if opts != nil {
+		srvOpts = append(srvOpts, opts("http://"+srv.Listener.Addr().String())...)
+	}
+	srv.Config.Handler = gt.R1(httpctrl.New(uc, auth, srvOpts...)).NoError(t)
+	srv.Start()
 	t.Cleanup(srv.Close)
 	return &testServer{t: t, srv: srv, repo: repo, uc: uc, auth: auth, idp: idp}
 }

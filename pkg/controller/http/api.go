@@ -26,6 +26,14 @@ func (s *Server) routeAPI(r chi.Router) {
 		r.Delete("/{token}", s.handleRevokeToken)
 	})
 
+	if s.enableMCP {
+		r.Route("/oauth/authorize", func(r chi.Router) {
+			r.Use(sessionOnly)
+			r.Get("/", s.handleCheckAuthorize)
+			r.Post("/", s.handleDecideAuthorize)
+		})
+	}
+
 	r.Get("/workspaces", s.handleListWorkspaces)
 	r.Route("/workspaces/{ws}", func(r chi.Router) {
 		r.Get("/", s.handleGetWorkspace)
@@ -126,10 +134,22 @@ type tokenJSON struct {
 	CreatedAt  time.Time           `json:"created_at"`
 	ExpiresAt  *time.Time          `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time          `json:"last_used_at,omitempty"`
+	// OAuth is set for tokens issued to an MCP client through OAuth. The
+	// code hash and the PKCE challenge are never returned.
+	OAuth *tokenOAuthJSON `json:"oauth,omitempty"`
+}
+
+type tokenOAuthJSON struct {
+	ClientName  string `json:"client_name"`
+	RedirectURI string `json:"redirect_uri"`
 }
 
 func toTokenJSON(t *model.APIToken) tokenJSON {
-	return tokenJSON{ID: t.ID, Name: t.Name, Kind: t.Kind, AgentName: t.AgentName, Scope: t.Scope, Workspaces: t.Workspaces, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, LastUsedAt: t.LastUsedAt}
+	out := tokenJSON{ID: t.ID, Name: t.Name, Kind: t.Kind, AgentName: t.AgentName, Scope: t.Scope, Workspaces: t.Workspaces, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, LastUsedAt: t.LastUsedAt}
+	if t.OAuth != nil {
+		out.OAuth = &tokenOAuthJSON{ClientName: t.OAuth.ClientName, RedirectURI: t.OAuth.RedirectURI}
+	}
+	return out
 }
 
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {

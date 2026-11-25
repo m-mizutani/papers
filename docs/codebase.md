@@ -14,6 +14,7 @@ There are three ways in and one destination: the browser and the AI both end up 
 | REST `/api/v1`    | People (through the UI) and AI | `controller/http/api.go`          | Workspaces (read only), papers, batches, versions, tree, search, attachments, tokens |
 | WebSocket `/live` | Pages with a paper open        | `controller/http/live.go`         | Receives others' changes only (server to client)                                     |
 | MCP `/mcp`        | AI agents                      | `controller/http/mcp.go`          | Nine tools such as `papers_read`, `papers_write` and `papers_save_version`           |
+| OAuth `/oauth/*`, `/.well-known/*` | MCP clients                    | `controller/http/oauth.go`        | Metadata, client registration and the token exchange that give an MCP client a token |
 
 Roughly 14,000 lines of Go (about 5,500 of them tests) and 6,000 of frontend. Configuration is the `--config` directory (TOML and Rego per workspace, read with its subdirectories); examples are in `examples/`.
 
@@ -31,6 +32,7 @@ flowchart TB
     live["live.go: WebSocket (receive only)"]
     mcp["mcp.go: MCP tools"]
     auth["auth.go: sessions, tokens"]
+    oauth["oauth.go: OAuth for MCP clients"]
   end
   http -- "all call usecase" --> uc["pkg/usecase: access, ops and conflicts, versions, tree, jobs, search, auth"]
   uc --> md["usecase/markdown: Markdown ⇄ blocks"]
@@ -137,7 +139,7 @@ Overview
 
 ### Signing in
 
-`/api/auth/login` redirects to Google, and `/callback` verifies the ID token (nonce and JWKS). The allowed domains and emails limit who gets in; each workspace's Rego decides who may use it. An AI sends a `pap_…` token, issued in Settings, as a Bearer token; MCP accepts nothing else. In anonymous mode `/login` just redirects back: `authenticate` in `auth.go` calls `Auth.OpenAnonymousSession` when a browser has no valid session cookie and sets the new cookie, and the account menu (`accountNote`, `canSignOut` in `frontend/src/components/account.ts`) explains the mode instead of offering "Sign out".
+`/api/auth/login` redirects to Google, and `/callback` verifies the ID token (nonce and JWKS). The allowed domains and emails limit who gets in; each workspace's Rego decides who may use it. An AI sends a `pap_…` token as a Bearer token; MCP accepts nothing else. The token is issued in Settings, or to an MCP client through OAuth: `usecase/oauth.go` (`RegisterClient`, `CheckAuthorize`, `Decide`, `Exchange` on `TokenRepository.UpdateToken`), `controller/http/oauth.go` (endpoints, and `publicURL`, which matches the Host against `--base-url` and `--mcp-base-url`) and the consent screen `frontend/src/pages/OAuthAuthorizePage.tsx`. In anonymous mode `/login` just redirects back: `authenticate` in `auth.go` calls `Auth.OpenAnonymousSession` when a browser has no valid session cookie and sets the new cookie, and the account menu (`accountNote`, `canSignOut` in `frontend/src/components/account.ts`) explains the mode instead of offering "Sign out".
 
 ### Search
 
@@ -155,7 +157,7 @@ There is no state management library. The state of the open paper is updated by 
 |-------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `src/api/`              | The REST client (`client.ts`: 409 conflicts, `moved` and `ambiguous` become an `ApiError`; a 401 sends the page to sign-in), the WebSocket (`live.ts`), the paper state (`paperState.ts`: Rev, table rows and columns, presence), the database state (`databaseState.ts`: items, values, events), the kinds of papers seen (`kinds.ts`), types (`types.ts`)                                              |
 | `src/markup/`           | The TypeScript markup (`markup.ts`, passing the same `cases.json` as Go) and the conversion to and from Tiptap documents (`tiptap.ts`)                                                                                                                                                             |
-| `src/pages/`            | The database page (`DatabasePage`: the table, column menus, sort and filter in the URL, infinite scroll, the database's feed), the paper page (`PaperPage`: temporary keys, the Rev an edit started from, conflicts, undo, one-click save, the history drawer, versions and restore, printing), the papers list (`PapersPage`: place tabs, filter buttons and `PersonPicker`, filters in the URL), trash, settings (tokens, MCP example, theme, language, shortcuts), sign-in and the workspace chooser |
+| `src/pages/`            | The database page (`DatabasePage`: the table, column menus, sort and filter in the URL, infinite scroll, the database's feed), the paper page (`PaperPage`: temporary keys, the Rev an edit started from, conflicts, undo, one-click save, the history drawer, versions and restore, printing), the papers list (`PapersPage`: place tabs, filter buttons and `PersonPicker`, filters in the URL), trash, settings (tokens with their issue time, the MCP command, theme, language, shortcuts), sign-in, the OAuth consent screen (`OAuthAuthorizePage`) and the workspace chooser |
 | `src/components/`       | Blocks (`BlockView`, `RichEditor` with its floating format bar, `TableBlock`, `SlashMenu`, `blockTypes`, `spacing` for the gaps between blocks), `ConflictPanel`, `HistoryDrawer`, property editors (`PropertyEditors`: element picker, date, adding a property, column menu) and an item's `PropertyPanel`, people as mentions (`UserMention`: "@name" with its card, writers, the `@` menu of the editor, `PersonValuePicker` for a person value), `MoveDialog`, the sidebar (papers list, search, new, home tree, favorites, recent, trash), the `Palette` (Mod+K), `RichFrame`, `HtmlPage` (an HTML paper's document), `Mermaid` |
 | `src/editing/`          | The undo history: what each send changed, and the inverse ops                                                                                                                                                                                                                                      |
 | `src/ui/`               | Popovers, menus, modals and toasts                                                                                                                                                                                                                                                                 |

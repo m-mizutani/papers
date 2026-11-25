@@ -90,6 +90,12 @@ func writeError(ctx context.Context, w http.ResponseWriter, err error) {
 	if f, ok := usecase.IsMoved(err); ok {
 		detail.Code, detail.MovedTo = "moved", f
 	}
+	// An OAuth error keeps its code as the message, so the consent screen
+	// can tell the person what is wrong with the request.
+	var oe *model.OAuthError
+	if errors.As(err, &oe) {
+		detail.Message = oe.Code
+	}
 	var amb *usecase.AmbiguousError
 	if errors.As(err, &amb) {
 		detail.Code, detail.Candidates = "ambiguous", amb.Candidates

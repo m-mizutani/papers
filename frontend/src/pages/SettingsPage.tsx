@@ -1,14 +1,35 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { ApiToken } from '../api/types'
-import { ago, useTranslation } from '../i18n'
+import type { ApiToken, Me } from '../api/types'
+import { ago, useTranslation, type Lang, type MsgKey } from '../i18n'
 import { Modal } from '../ui/Modal'
 import { useToast } from '../ui/Toast'
 import { MOD_LABEL } from '../utils/keyboard'
 import { setLang, setTheme, storedTheme, type Theme } from '../utils/prefs'
 
-export function mcpConfig(secret: string, origin: string): string {
-  return `claude mcp add --transport http papers ${origin}/mcp --header "Authorization: Bearer ${secret}"`
+/** The Claude Code command that adds papers; Claude Code signs in through OAuth, so no token goes in it. */
+export function mcpConfig(mcpBaseURL: string): string {
+  return `claude mcp add --transport http papers ${mcpBaseURL.replace(/\/+$/, '')}/mcp`
+}
+
+/** When a token was issued, as a date and a time in the browser's time zone; '' when unknown. */
+export function formatIssued(iso: string | undefined, lang: Lang, timeZone?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(d)
+}
+
+/** The second line of a token row: kind, access, OAuth, issue time and last use. */
+export function tokenSummary(tk: ApiToken, t: (key: MsgKey, params?: Record<string, string | number>) => string, lang: Lang, timeZone?: string, now?: number): string {
+  const issued = formatIssued(tk.created_at, lang, timeZone)
+  return [
+    tk.kind === 'agent' ? t('tokenAgent') : t('tokenPersonal'),
+    tk.scope === 'read' ? t('readOnly') : t('readWrite'),
+    tk.oauth ? t('tokenOAuth') : '',
+    issued ? t('issuedAt', { when: issued }) : '',
+    tk.last_used_at ? t('lastUsed', { when: ago(tk.last_used_at, now) }) : t('neverUsed'),
+  ].filter(Boolean).join(' · ')
 }
 
 export function ShortcutList() {
@@ -68,7 +89,7 @@ function NewToken({ onClose, onCreated }: { onClose: () => void; onCreated: (sec
 }
 
 /** API tokens, MCP setup, theme, language and the keyboard shortcuts (spec: R15). */
-export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
+export function SettingsPage({ me, layoutTop }: { me: Me; layoutTop: React.ReactNode }) {
   const { t, lang } = useTranslation()
   const toast = useToast()
   const [tab, setTab] = useState<'tokens' | 'appearance'>('tokens')
@@ -78,6 +99,7 @@ export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(storedTheme)
   const reload = () => void api.listTokens().then(setTokens).catch(() => setTokens([]))
   useEffect(reload, [])
+  const command = mcpConfig(me.mcp_base_url || window.location.origin)
   const copy = (s: string) => void navigator.clipboard?.writeText(s).then(() => toast(t('copied')), () => undefined)
   return (
     <section className="main">
@@ -98,14 +120,16 @@ export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
                   <span className={`face solo${tk.kind === 'agent' ? ' ai' : ''}`} style={{ background: tk.kind === 'agent' ? 'var(--ai)' : 'var(--accent)' }}>{tk.kind === 'agent' ? '✦' : '⌘'}</span>
                   <div className="lm">
                     <div className="lt">{tk.name}</div>
-                    <div className="ls">{[tk.kind === 'agent' ? t('tokenAgent') : t('tokenPersonal'), tk.scope === 'read' ? t('readOnly') : t('readWrite'), tk.last_used_at ? t('lastUsed', { when: ago(tk.last_used_at) }) : t('neverUsed')].join(' · ')}</div>
+                    <div className="ls">{tokenSummary(tk, t, lang)}</div>
                   </div>
                   <button type="button" className="btn sm danger" onClick={() => void api.revokeToken(tk.id).then(reload)}>{t('revoke')}</button>
                 </div>
               ))}
             </div>
             <h3 style={{ margin: 'var(--sp-9) 0 var(--sp-3)', fontSize: 'var(--text-h3)' }}>{t('mcpSetup')}</h3>
-            <pre className="out">{mcpConfig('pap_…', window.location.origin)}</pre>
+            <pre className="out">{command}</pre>
+            <p className="muted" style={{ margin: 'var(--sp-4) 0', fontSize: 'var(--text-sm)' }}>{t('mcpHint')}</p>
+            <button type="button" className="btn sm" onClick={() => copy(command)}>{t('copyCommand')}</button>
           </>
         )}
         {tab === 'appearance' && (
@@ -134,8 +158,6 @@ export function SettingsPage({ layoutTop }: { layoutTop: React.ReactNode }) {
         <Modal title={t('createToken')} onClose={() => setSecret(undefined)} actions={[{ label: t('done') }, { label: t('copy'), kind: 'primary', onClick: () => { copy(secret); return false } }]}>
           <p className="banner warn" style={{ margin: '0 0 var(--sp-5)' }}>{t('tokenOnce')}</p>
           <pre className="out">{secret}</pre>
-          <p style={{ marginBottom: 'var(--sp-2)' }}>{t('mcpSetup')}</p>
-          <pre className="out">{mcpConfig(secret, window.location.origin)}</pre>
         </Modal>
       )}
     </section>

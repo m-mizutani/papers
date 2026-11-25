@@ -155,11 +155,43 @@ type APIToken struct {
 	CreatedAt  time.Time     `json:"created_at"`
 	ExpiresAt  *time.Time    `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time    `json:"last_used_at,omitempty"`
+	// OAuth is set on tokens issued through the OAuth authorization flow.
+	OAuth *OAuthGrant `json:"oauth,omitempty"`
+}
+
+// OAuthGrant records how an OAuth client obtained a token. Until the client
+// exchanges its authorization code the token is pending: it has no secret
+// (so no bearer token matches it), and the code's hash and PKCE challenge
+// are kept here. The exchange sets the secret and clears the code fields.
+type OAuthGrant struct {
+	ClientID      string     `json:"client_id"`
+	ClientName    string     `json:"client_name"`
+	RedirectURI   string     `json:"redirect_uri"`
+	CodeHash      string     `json:"code_hash,omitempty"`
+	CodeChallenge string     `json:"code_challenge,omitempty"`
+	CodeExpiresAt *time.Time `json:"code_expires_at,omitempty"`
+}
+
+// Pending reports whether the token still waits for its authorization code
+// to be exchanged.
+func (t *APIToken) Pending() bool {
+	return t.OAuth != nil && t.OAuth.CodeHash != ""
 }
 
 func (t *APIToken) Validate() error {
-	if t.ID == "" || t.SecretHash == "" || t.UserID == "" {
-		return goerr.Wrap(ErrInvalidArgument, "token id, secret hash and user id are required")
+	if t.ID == "" || t.UserID == "" {
+		return goerr.Wrap(ErrInvalidArgument, "token id and user id are required")
+	}
+	if t.SecretHash == "" && !t.Pending() {
+		return goerr.Wrap(ErrInvalidArgument, "token secret hash is required")
+	}
+	if t.OAuth != nil {
+		if t.OAuth.ClientID == "" || t.OAuth.RedirectURI == "" {
+			return goerr.Wrap(ErrInvalidArgument, "oauth client id and redirect uri are required")
+		}
+		if t.Pending() && (t.OAuth.CodeChallenge == "" || t.OAuth.CodeExpiresAt == nil) {
+			return goerr.Wrap(ErrInvalidArgument, "a pending oauth token needs its code challenge and expiry")
+		}
 	}
 	if t.Name == "" {
 		return goerr.Wrap(ErrInvalidArgument, "token name is required")

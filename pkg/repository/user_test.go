@@ -3,6 +3,7 @@ package repository_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -126,5 +127,97 @@ func TestTokenRepository(t *testing.T) {
 		gt.NoError(t, repo.DeleteToken(ctx, tok.ID))
 		_, err := repo.GetToken(ctx, tok.ID)
 		gt.True(t, errors.Is(err, model.ErrNotFound))
+	})
+
+	runRepositoryTest(t, "oauth grant round trip", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		now := time.Now().UTC()
+		codeExp := now.Add(5 * time.Minute)
+		tok := &model.APIToken{
+			ID: model.NewTokenID(), UserID: model.NewUserID(), Name: "Claude Code", Kind: model.TokenAgent,
+			AgentName: "Claude Code", Scope: model.ScopeRead, CreatedAt: now, ExpiresAt: &codeExp,
+			OAuth: &model.OAuthGrant{
+				ClientID: "pcl_abc", ClientName: "Claude Code", RedirectURI: "http://localhost:3333/callback",
+				CodeHash: "code-hash", CodeChallenge: "challenge", CodeExpiresAt: &codeExp,
+			},
+		}
+		gt.NoError(t, repo.PutToken(ctx, tok))
+		got := gt.R1(repo.GetToken(ctx, tok.ID)).NoError(t)
+		gt.Equal(t, got.SecretHash, "")
+		gt.NotNil(t, got.OAuth)
+		gt.Equal(t, got.OAuth.ClientID, tok.OAuth.ClientID)
+		gt.Equal(t, got.OAuth.ClientName, tok.OAuth.ClientName)
+		gt.Equal(t, got.OAuth.RedirectURI, tok.OAuth.RedirectURI)
+		gt.Equal(t, got.OAuth.CodeHash, tok.OAuth.CodeHash)
+		gt.Equal(t, got.OAuth.CodeChallenge, tok.OAuth.CodeChallenge)
+		gt.True(t, timeEq(*got.OAuth.CodeExpiresAt, codeExp))
+		gt.True(t, got.Pending())
+	})
+
+	runRepositoryTest(t, "update", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		now := time.Now().UTC()
+		tok := &model.APIToken{ID: model.NewTokenID(), SecretHash: "h", UserID: model.NewUserID(), Name: "n", Kind: model.TokenAgent, Scope: model.ScopeWrite, CreatedAt: now}
+		gt.NoError(t, repo.PutToken(ctx, tok))
+
+		updated := gt.R1(repo.UpdateToken(ctx, tok.ID, func(t *model.APIToken) error {
+			t.Name = "renamed"
+			return nil
+		})).NoError(t)
+		gt.Equal(t, updated.Name, "renamed")
+		gt.Equal(t, gt.R1(repo.GetToken(ctx, tok.ID)).NoError(t).Name, "renamed")
+
+		// An error from fn writes nothing.
+		boom := errors.New("boom")
+		_, err := repo.UpdateToken(ctx, tok.ID, func(t *model.APIToken) error {
+			t.Name = "lost"
+			return boom
+		})
+		gt.True(t, errors.Is(err, boom))
+		gt.Equal(t, gt.R1(repo.GetToken(ctx, tok.ID)).NoError(t).Name, "renamed")
+
+		// An invalid result is rejected and not written.
+		_, err = repo.UpdateToken(ctx, tok.ID, func(t *model.APIToken) error {
+			t.SecretHash = ""
+			return nil
+		})
+		gt.Error(t, err)
+		gt.Equal(t, gt.R1(repo.GetToken(ctx, tok.ID)).NoError(t).SecretHash, "h")
+
+		_, err = repo.UpdateToken(ctx, model.NewTokenID(), func(*model.APIToken) error { return nil })
+		gt.True(t, errors.Is(err, model.ErrNotFound))
+	})
+
+	runRepositoryTest(t, "concurrent updates apply once", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		tok := &model.APIToken{ID: model.NewTokenID(), SecretHash: "h", UserID: model.NewUserID(), Name: "n", Kind: model.TokenAgent, Scope: model.ScopeWrite, CreatedAt: time.Now().UTC()}
+		gt.NoError(t, repo.PutToken(ctx, tok))
+
+		// Each update claims the token only if nobody claimed it before,
+		// as consuming an authorization code does.
+		errClaimed := errors.New("claimed")
+		const n = 5
+		results := make(chan error, n)
+		for i := range n {
+			go func() {
+				_, err := repo.UpdateToken(ctx, tok.ID, func(t *model.APIToken) error {
+					if t.AgentName != "" {
+						return errClaimed
+					}
+					t.AgentName = fmt.Sprintf("winner-%d", i)
+					return nil
+				})
+				results <- err
+			}()
+		}
+		ok := 0
+		for range n {
+			if err := <-results; err == nil {
+				ok++
+			} else {
+				gt.True(t, errors.Is(err, errClaimed))
+			}
+		}
+		gt.Equal(t, ok, 1)
 	})
 }

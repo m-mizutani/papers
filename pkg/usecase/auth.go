@@ -340,12 +340,19 @@ func (a *Auth) AuthenticateToken(ctx context.Context, raw string) (*model.Princi
 	p.Token = tok
 
 	// Last-used is informative only; record it at most once a minute to
-	// keep a busy agent from turning every read into a write.
+	// keep a busy agent from turning every read into a write. It is an
+	// update, not a put, so a token revoked meanwhile is not written back.
 	if tok.LastUsedAt == nil || now.Sub(*tok.LastUsedAt) > time.Minute {
-		tok.LastUsedAt = &now
-		if err := a.repo.PutToken(ctx, tok); err != nil {
+		if _, err := a.repo.UpdateToken(ctx, tok.ID, func(t *model.APIToken) error {
+			t.LastUsedAt = &now
+			return nil
+		}); err != nil {
+			if errors.Is(err, model.ErrNotFound) {
+				return nil, goerr.Wrap(model.ErrUnauthenticated, "the token was revoked")
+			}
 			return nil, goerr.Wrap(err, "failed to record token use")
 		}
+		tok.LastUsedAt = &now
 	}
 	return p, nil
 }
@@ -403,7 +410,9 @@ func (a *Auth) ListTokens(ctx context.Context, p *model.Principal) ([]*model.API
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to list tokens")
 	}
-	return toks, nil
+	// A token whose OAuth code was never exchanged cannot be used; it is not
+	// the person's token yet.
+	return slices.DeleteFunc(toks, (*model.APIToken).Pending), nil
 }
 
 func (a *Auth) RevokeToken(ctx context.Context, p *model.Principal, id model.TokenID) error {

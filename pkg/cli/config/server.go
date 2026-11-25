@@ -38,6 +38,7 @@ func DefaultUseCaseConfig() usecase.Config {
 type Server struct {
 	addr           string
 	baseURL        string
+	mcpBaseURL     string
 	enableMCP      bool
 	wsOrigins      []string
 	maxOpsPerBatch int
@@ -58,6 +59,11 @@ func (x *Server) Flags() []cli.Flag {
 			Name: "base-url", Category: "server",
 			Usage: "Public URL of the service (e.g. https://papers.example.com). Used for the OAuth redirect and Secure cookies",
 			Value: "http://localhost:8080", Sources: cli.EnvVars("PAPERS_BASE_URL"), Destination: &x.baseURL,
+		},
+		&cli.StringFlag{
+			Name: "mcp-base-url", Category: "server",
+			Usage:   "Public URL where MCP clients reach this server, when it differs from --base-url (e.g. https://papers-direct.example.com). Defaults to --base-url",
+			Sources: cli.EnvVars("PAPERS_MCP_BASE_URL"), Destination: &x.mcpBaseURL,
 		},
 		&cli.BoolFlag{
 			Name: "enable-mcp", Category: "server", Usage: "Serve the MCP endpoint at /mcp",
@@ -100,6 +106,7 @@ func (x Server) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("addr", x.addr),
 		slog.String("base_url", x.baseURL),
+		slog.String("mcp_base_url", x.mcpBaseURL),
 		slog.Bool("enable_mcp", x.enableMCP),
 		slog.Duration("trash_retention", x.trashRetention),
 		slog.Duration("job_lease", x.jobLease),
@@ -107,8 +114,17 @@ func (x Server) LogValue() slog.Value {
 	)
 }
 
-func (x *Server) Addr() string               { return x.addr }
-func (x *Server) BaseURL() string            { return strings.TrimRight(x.baseURL, "/") }
+func (x *Server) Addr() string    { return x.addr }
+func (x *Server) BaseURL() string { return strings.TrimRight(x.baseURL, "/") }
+
+// MCPBaseURL is the public URL of the MCP endpoint's host; --base-url when
+// not set.
+func (x *Server) MCPBaseURL() string {
+	if x.mcpBaseURL == "" {
+		return x.BaseURL()
+	}
+	return strings.TrimRight(x.mcpBaseURL, "/")
+}
 func (x *Server) EnableMCP() bool            { return x.enableMCP }
 func (x *Server) SecureCookie() bool         { return strings.HasPrefix(x.baseURL, "https://") }
 func (x *Server) WebSocketOrigins() []string { return x.wsOrigins }
@@ -129,6 +145,12 @@ func (x *Server) Validate() error {
 	u, err := url.Parse(x.baseURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return goerr.New("base-url must be an absolute http(s) URL", goerr.V("base_url", x.baseURL))
+	}
+	if x.mcpBaseURL != "" {
+		u, err := url.Parse(x.mcpBaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return goerr.New("mcp-base-url must be an absolute http(s) URL", goerr.V("mcp_base_url", x.mcpBaseURL))
+		}
 	}
 	return nil
 }

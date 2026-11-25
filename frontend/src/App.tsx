@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar'
 import { useTranslation } from './i18n'
 import { DatabasePage } from './pages/DatabasePage'
 import { LoginPage } from './pages/LoginPage'
+import { OAuthAuthorizePage } from './pages/OAuthAuthorizePage'
 import { PaperPage } from './pages/PaperPage'
 import { PapersPage } from './pages/PapersPage'
 import { SettingsPage, ShortcutList } from './pages/SettingsPage'
@@ -16,6 +17,7 @@ import { WorkspacesPage } from './pages/WorkspacesPage'
 import { Modal } from './ui/Modal'
 import { ToastProvider, useToast } from './ui/Toast'
 import { MOD_LABEL, modKey } from './utils/keyboard'
+import { loginPath } from './utils/login'
 import { readPref, setLang, writePref } from './utils/prefs'
 
 /** What a page may change in the shell around it. */
@@ -147,7 +149,7 @@ function Shell({ me, workspaces, loaded, onSignOut }: { me: Me; workspaces: Work
         <Route path="/ws/:ws/trash" element={<TrashPage ws={ws} onChanged={onChanged} layoutTop={<Top title={t('trash')} layout={layout} />} />} />
         <Route path="/ws/:ws/search" element={<Navigate to={`/ws/${ws}`} replace />} />
         <Route path="/tokens" element={<Navigate to="/settings" replace />} />
-        <Route path="/settings" element={<SettingsPage layoutTop={<Top title={t('settings')} layout={layout} />} />} />
+        <Route path="/settings" element={<SettingsPage me={me} layoutTop={<Top title={t('settings')} layout={layout} />} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {palette && ws && (
@@ -218,6 +220,7 @@ function Authed({ me }: { me: Me }) {
   if (location.pathname === '/') return <Root workspaces={workspaces} loaded={loaded} />
   if (location.pathname === '/workspaces') return loaded ? <WorkspacesPage me={me} workspaces={workspaces} groups={groups} onSignOut={signOut} /> : null
   if (location.pathname === '/settings/tokens') return <Navigate to="/settings" replace />
+  if (location.pathname === '/oauth/authorize') return <OAuthAuthorizePage me={me} />
   return <Shell me={me} workspaces={workspaces} loaded={loaded} onSignOut={signOut} />
 }
 
@@ -237,7 +240,7 @@ export function App() {
   useEffect(() => {
     const onGone = () => {
       if (window.location.pathname === '/login') return
-      navigate(`/login?return_to=${encodeURIComponent(window.location.pathname)}&error=expired`, { replace: true })
+      navigate(loginPath(window.location.pathname, window.location.search, 'expired'), { replace: true })
       setMe(null)
     }
     window.addEventListener(UNAUTHORIZED, onGone)
@@ -246,6 +249,6 @@ export function App() {
 
   if (location.pathname === '/login') return <ToastProvider><LoginPage /></ToastProvider>
   if (me === undefined) return null
-  if (me === null) return <Navigate to={`/login?return_to=${encodeURIComponent(location.pathname)}`} replace />
+  if (me === null) return <Navigate to={loginPath(location.pathname, location.search)} replace />
   return <ToastProvider><Authed me={me} /></ToastProvider>
 }

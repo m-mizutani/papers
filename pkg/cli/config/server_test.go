@@ -23,6 +23,20 @@ func TestServer(t *testing.T) {
 	gt.Error(t, config.NewServerForTest("ftp://x").Validate())
 }
 
+func TestServerMCPBaseURL(t *testing.T) {
+	s := config.NewServerForTest("https://papers.example.com/")
+	gt.Equal(t, s.MCPBaseURL(), "https://papers.example.com")
+
+	s.SetMCPBaseURLForTest("https://papers-direct.example.com/")
+	gt.NoError(t, s.Validate())
+	gt.Equal(t, s.MCPBaseURL(), "https://papers-direct.example.com")
+
+	for _, bad := range []string{"papers-direct.example.com", "ftp://x", "/mcp"} {
+		s.SetMCPBaseURLForTest(bad)
+		gt.Error(t, s.Validate())
+	}
+}
+
 func parseServer(t *testing.T, args ...string) *config.Server {
 	t.Helper()
 	var x config.Server

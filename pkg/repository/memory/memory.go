@@ -267,6 +267,24 @@ func (r *Repository) PutToken(_ context.Context, token *model.APIToken) error {
 	return nil
 }
 
+func (r *Repository) UpdateToken(_ context.Context, id model.TokenID, fn func(*model.APIToken) error) (*model.APIToken, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tokens[id]
+	if !ok {
+		return nil, notFound("token", id)
+	}
+	next := clone(t)
+	if err := fn(next); err != nil {
+		return nil, err
+	}
+	if err := next.Validate(); err != nil {
+		return nil, err
+	}
+	r.tokens[id] = clone(next)
+	return next, nil
+}
+
 func (r *Repository) DeleteToken(_ context.Context, id model.TokenID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

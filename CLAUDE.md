@@ -20,7 +20,7 @@ Read `docs/model.md` (the source of truth) before changing the model, and
 
 - `task dev:server` / `task dev:frontend` – local development (no sign-in)
 - `task build` – build the UI and the binary
-- `go vet ./...`, `go test ./...` – backend checks (do not use `go build` to check compilation)
+- `go vet ./...`, `go test ./...` – backend checks (do not use `go build` to check compilation). Add `-tags mcp_go_client_oauth` to include the OAuth flow test with the MCP SDK's client (`pkg/controller/http/oauth_sdk_test.go`); CI and `task test` do
 - `cd frontend && pnpm lint && pnpm test` – MANDATORY whenever `frontend/` changes
 - `cd frontend && pnpm build` – type check + bundle into `frontend/dist`
 - `task test:e2e` – Playwright end-to-end tests (`frontend/e2e/`) against a freshly built server; add a test there for every new user-facing flow
