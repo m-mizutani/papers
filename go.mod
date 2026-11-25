@@ -18,6 +18,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/open-policy-agent/opa v1.22.4
+	github.com/rivo/uniseg v0.4.7
 	github.com/urfave/cli/v3 v3.3.8
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0

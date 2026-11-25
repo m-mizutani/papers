@@ -17,6 +17,7 @@ type PaperRef struct {
 	ID            model.PaperID     `json:"id"`
 	WorkspaceID   model.WorkspaceID `json:"workspace_id"`
 	Title         string            `json:"title"`
+	Icon          string            `json:"icon,omitempty"`
 	Kind          model.PaperKind   `json:"kind"`
 	ParentID      model.PaperID     `json:"parent_id,omitempty"`
 	Visibility    model.Visibility  `json:"visibility"`
@@ -27,7 +28,7 @@ type PaperRef struct {
 
 func refOf(p *model.Paper) *PaperRef {
 	return &PaperRef{
-		ID: p.ID, WorkspaceID: p.WorkspaceID, Title: p.Title, Kind: p.Kind.Or(), ParentID: p.ParentID, Visibility: p.Visibility,
+		ID: p.ID, WorkspaceID: p.WorkspaceID, Title: p.Title, Icon: p.Icon, Kind: p.Kind.Or(), ParentID: p.ParentID, Visibility: p.Visibility,
 		Status: p.Status(), VersionNumber: p.VersionNumber, CreatedBy: p.CreatedBy,
 	}
 }
@@ -514,8 +515,10 @@ func (in *ListPapersInput) normalize() error {
 
 // ParentRef is the parent shown next to a paper in a list.
 type ParentRef struct {
-	ID    model.PaperID `json:"id"`
-	Title string        `json:"title"`
+	ID    model.PaperID   `json:"id"`
+	Title string          `json:"title"`
+	Icon  string          `json:"icon,omitempty"`
+	Kind  model.PaperKind `json:"kind"`
 }
 
 // ListedPaper is one row of the papers list.
@@ -622,7 +625,7 @@ func (u *UseCases) ListPapers(ctx context.Context, p *model.Principal, ws model.
 	for _, x := range picked {
 		row := &ListedPaper{PaperRef: refOf(x), CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}
 		if par, ok := parents[x.Above()]; ok && p.SeesPaper(par) {
-			row.Parent = &ParentRef{ID: par.ID, Title: par.Title}
+			row.Parent = &ParentRef{ID: par.ID, Title: par.Title, Icon: par.Icon, Kind: par.Kind.Or()}
 		}
 		page.Papers = append(page.Papers, row)
 	}

@@ -528,8 +528,12 @@ func (a *dbApplier) insertItem(op Op) error {
 	if err := model.ValidateTitle(title); err != nil {
 		return err
 	}
+	icon, err := opIcon(op)
+	if err != nil {
+		return err
+	}
 	q := &model.Paper{
-		ID: model.NewPaperID(), WorkspaceID: a.db.WorkspaceID, Kind: model.PaperKindBlocks, Title: title, DatabaseID: a.db.ID,
+		ID: model.NewPaperID(), WorkspaceID: a.db.WorkspaceID, Kind: model.PaperKindBlocks, Title: title, Icon: icon, DatabaseID: a.db.ID,
 		Visibility: model.VisibilityPublic,
 		CreatedBy:  a.actor, CreatedAt: a.now, UpdatedBy: a.actor, UpdatedAt: a.now,
 	}
@@ -671,6 +675,15 @@ func (a *dbApplier) apply(op Op) error {
 		}
 		if title != a.db.Title {
 			a.db.Title, a.dbChanged = title, true
+		}
+		return nil
+	case OpSetIcon:
+		icon, err := opIcon(op)
+		if err != nil {
+			return err
+		}
+		if icon != a.db.Icon {
+			a.db.Icon, a.dbChanged = icon, true
 		}
 		return nil
 	}

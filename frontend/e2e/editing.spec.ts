@@ -209,7 +209,7 @@ test('the title is sent while typing, without leaving the field', async ({ page,
   await titleField(page).fill(title)
   await expect(titleField(page)).toBeFocused()
   // the breadcrumb follows at once; the server and the sidebar after a pause
-  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(title)
+  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(`📄 ${title}`)
   await expect.poll(async () => (await paperOf(request, paper.id)).title).toBe(title)
   await expect(page.locator('.sb').getByText(title)).not.toHaveCount(0)
   await expect(titleField(page)).toBeFocused()

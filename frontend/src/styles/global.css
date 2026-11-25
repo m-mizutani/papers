@@ -79,9 +79,13 @@
   --gutter: 28px;
   --bar-h: 48px;
   --person-card-w: 240px;
+  --page-icon: 56px;
+  --icon-w: 20px;
+  --icon-picker-w: 300px;
   --face-lg: 36px;
   --face-sm: 22px;
   --control-h: 30px;
+  --control-sm-h: 26px;
   --tree-indent: 14px;
   --hist-indent: 54px;
   --html-min-h: 480px;
@@ -173,7 +177,7 @@ a { color: inherit; }
 .btn.ghost { border-color: transparent; background: none; }
 .btn.ghost:hover { background: var(--surface-2); }
 .btn[disabled] { opacity: 0.45; cursor: default; filter: none; }
-.btn.sm { height: 26px; padding: 0 var(--sp-5); font-size: var(--text-sm); }
+.btn.sm { height: var(--control-sm-h); padding: 0 var(--sp-5); font-size: var(--text-sm); }
 .btn.saved { border-color: transparent; background: none; color: var(--fg-3); cursor: default; gap: 5px; }
 .btn.saved:hover { background: none; }
 .btn .si { display: inline-flex; }
@@ -230,7 +234,7 @@ textarea.inp { height: auto; padding: var(--sp-4) var(--sp-5); resize: vertical;
 .tree-item .tw:hover { background: var(--line); }
 .tree-item .tw.leaf { visibility: hidden; }
 .tree-item .tl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--sp-2) var(--sp-1); text-align: left; text-decoration: none; }
-.tree-item .ticon { width: 16px; text-align: center; color: var(--fg-3); }
+.tree-item .ticon { width: var(--icon-w); flex: none; text-align: center; line-height: 1; }
 .tree-item .ta { opacity: 0; display: flex; gap: var(--sp-1); }
 .tree-item:hover .ta, .tree-item:focus-within .ta { opacity: 1; }
 .tree-item .ta button { width: 22px; height: 22px; border-radius: 4px; color: var(--fg-3); }
@@ -330,7 +334,6 @@ a.vmark:hover { background: var(--surface-2); }
 .child .go { color: var(--fg-3); padding-right: var(--sp-3); opacity: 0; transition: opacity 0.12s; }
 .child:hover .go, .child:focus-visible .go { opacity: 1; }
 .child.arch { opacity: 0.55; }
-.child .pi.code { font-family: var(--font-code); font-size: var(--text-xs); }
 
 /* HTML papers: the document fills the width under the title, down to the bottom of the view, and scrolls inside. */
 .col.html { padding-bottom: var(--sp-4); }
@@ -439,6 +442,24 @@ body.selecting, body.selecting * { user-select: none; cursor: default; }
 .fmt button { min-width: 30px; height: 30px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; color: var(--fg-2); padding: 0 var(--sp-3); }
 .fmt button:hover, .fmt button.on { background: var(--surface-2); color: var(--fg); }
 .fmt .vs { width: 1px; height: 20px; background: var(--line); margin: 0 3px; }
+/* Paper icons: the emoji before a title, the large one above a paper's title, and the picker. */
+.pic-i { display: inline-block; width: var(--icon-w); flex: none; text-align: center; font-weight: 400; line-height: 1; }
+.lock-i { flex: none; font-size: var(--text-xs); color: var(--fg-3); margin-left: var(--sp-2); }
+.page-icon { display: block; margin: 0 0 var(--sp-2) calc(var(--gutter) + var(--sp-1)); padding: var(--sp-2); border-radius: var(--r-md); font-size: var(--page-icon); line-height: 1; }
+button.page-icon:hover, button.page-icon:focus-visible { background: var(--surface-2); }
+.add-icon { display: inline-flex; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-3) calc(var(--gutter) + var(--sp-1)); padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--text-sm); color: var(--fg-3); opacity: 0; }
+.add-icon:hover { background: var(--surface-2); color: var(--fg-2); }
+.col:hover .add-icon, .add-icon:focus-visible { opacity: 1; }
+@media (hover: none) { .add-icon { opacity: 1; } }
+.iconpick { padding: var(--sp-5); width: var(--icon-picker-w); max-width: calc(100vw - 2 * var(--sp-7)); }
+.ip-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: var(--sp-1); }
+.ip-grid button { height: var(--control-h); border-radius: var(--r-sm); font-size: var(--text-h3); line-height: 1; display: grid; place-items: center; }
+.ip-grid button:hover { background: var(--surface-2); }
+.ip-grid button.on { background: var(--accent-weak); box-shadow: inset 0 0 0 var(--hair) var(--accent); }
+.ip-row { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-4); }
+.ip-in { flex: 1; min-width: 0; height: var(--control-sm-h); border: var(--hair) solid var(--line-2); border-radius: var(--r-sm); padding: 0 var(--sp-4); background: var(--surface); color: var(--fg); font-size: var(--text-ui); }
+.ip-in.bad { border-color: var(--danger); }
+.ip-err { margin-top: var(--sp-2); font-size: var(--text-sm); color: var(--danger); }
 .swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--sp-2); padding: var(--sp-2) var(--sp-3) var(--sp-4); }
 .sw { height: 28px; border-radius: 5px; display: grid; place-items: center; font-weight: 600; border: 1px solid var(--line); }
 .sw:hover { box-shadow: 0 0 0 2px var(--accent); }
@@ -541,7 +562,7 @@ table.plist { width: 100%; border-collapse: collapse; font-size: var(--text-ui);
 .plist .pwhen { text-align: right; white-space: nowrap; color: var(--fg-2); }
 .plist .ptt { display: flex; align-items: center; gap: var(--sp-4); font-weight: var(--w-bold); min-width: 180px; }
 .plist .ptt a { color: inherit; text-decoration: none; }
-.plist .pic { color: var(--fg-3); width: var(--sp-7); text-align: center; flex: none; font-weight: 400; }
+.plist .pic { color: var(--fg-3); width: var(--icon-w); text-align: center; flex: none; font-weight: 400; }
 .plist .tag { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3); border-radius: var(--r-sm); font-size: var(--text-sm); font-weight: 400; line-height: var(--chip-h); white-space: nowrap; background: var(--mk-gray-bg); color: var(--mk-gray); }
 .plist .ploc { color: var(--fg-2); white-space: nowrap; display: inline-flex; align-items: center; gap: var(--sp-1); }
 .plist .pwho { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--fg-2); white-space: nowrap; }
@@ -764,9 +785,7 @@ img.face { object-fit: cover; padding: 0; }
 .props .addp { grid-column: 1 / -1; color: var(--fg-3); padding: var(--sp-2) 0; text-align: left; }
 .props .addp:hover { color: var(--fg); }
 
-.child .pi.db { color: var(--accent); }
 .child .kbadge { flex: none; font-size: var(--text-xs); color: var(--accent); background: var(--accent-weak); border-radius: 4px; padding: 0 var(--sp-3); }
-.tree-item .ticon.db { color: var(--accent); }
 
 @media (max-width: 560px) {
   .dbwrap { margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); }

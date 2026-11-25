@@ -367,3 +367,37 @@ func TestMCPHTMLPaper(t *testing.T) { // T20, T24, T54 (guide)
 	gt.True(t, ok)
 	gt.Equal(t, r.HTML, "<p>nine</p>")
 }
+
+func TestMCPIcon(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice, _, ws, paper := setupPaper(t, ts)
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	session := connectMCP(t, ts, agent.bearer)
+
+	type ref struct {
+		ID   model.PaperID `json:"id"`
+		Icon string        `json:"icon"`
+	}
+	cp, ok := callTool[ref](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Lab", "icon": "🧪"})
+	gt.True(t, ok)
+	gt.Equal(t, cp.Icon, "🧪")
+
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(paper), "ops": []map[string]any{{"op": "set_icon", "icon": "🚀"}}})
+	gt.True(t, ok)
+	var view paperView
+	alice.expect("GET", "/api/v1/workspaces/team/papers/"+string(paper), nil, http.StatusOK, &view)
+	gt.Equal(t, view.Paper.Icon, "🚀")
+	_, ok = callTool[struct{}](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(paper), "ops": []map[string]any{{"op": "set_icon", "icon": "🚀🚀"}}})
+	gt.False(t, ok)
+
+	read, ok := callTool[ref](t, session, "papers_read", map[string]any{"workspace_id": ws, "paper": string(paper)})
+	gt.True(t, ok)
+	gt.Equal(t, read.Icon, "🚀")
+
+	type guide struct {
+		Guide string `json:"guide"`
+	}
+	g, ok := callTool[guide](t, session, "papers_guide", map[string]any{})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(g.Guide, "set_icon"))
+}

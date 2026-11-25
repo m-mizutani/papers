@@ -660,3 +660,27 @@ func TestUsersAPI(t *testing.T) {
 	gt.A(t, page.Papers).Length(0)
 	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers?creator=bob", nil, http.StatusBadRequest, nil)
 }
+
+func TestPaperIconAPI(t *testing.T) {
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	var p model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Shelf", "icon": "📚"}, http.StatusCreated, &p)
+	gt.Equal(t, p.Icon, "📚")
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Bad", "icon": "📚📚"}, http.StatusBadRequest, nil)
+
+	// a paper without an icon has no icon field at all (no default is filled in)
+	var plain model.Paper
+	alice.expect("POST", "/api/v1/workspaces/team/papers", map[string]any{"title": "Plain"}, http.StatusCreated, &plain)
+	var raw struct {
+		Paper map[string]any `json:"paper"`
+	}
+	alice.expect("GET", "/api/v1/workspaces/team/papers/"+string(plain.ID), nil, http.StatusOK, &raw)
+	_, has := raw.Paper["icon"]
+	gt.False(t, has)
+
+	alice.expect("POST", "/api/v1/workspaces/team/papers/"+string(plain.ID)+"/ops", map[string]any{"ops": []map[string]any{{"op": "set_icon", "icon": "🧪"}}}, http.StatusOK, nil)
+	alice.expect("GET", "/api/v1/workspaces/team/papers/"+string(plain.ID), nil, http.StatusOK, &raw)
+	gt.Equal(t, raw.Paper["icon"], any("🧪"))
+	alice.expect("POST", "/api/v1/workspaces/team/papers/"+string(plain.ID)+"/ops", map[string]any{"ops": []map[string]any{{"op": "set_icon", "icon": "a b"}}}, http.StatusBadRequest, nil)
+}

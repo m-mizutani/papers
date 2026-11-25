@@ -392,6 +392,13 @@ export const keys = {
   noOneMatches: 'noOneMatches',
   youTag: 'youTag',
   papersLoadFailed: 'papersLoadFailed',
+  addIcon: 'addIcon',
+  changeIcon: 'changeIcon',
+  iconLabel: 'iconLabel',
+  iconInput: 'iconInput',
+  iconSet: 'iconSet',
+  iconRemove: 'iconRemove',
+  iconOne: 'iconOne',
 } as const
 
 export type MsgKey = keyof typeof keys

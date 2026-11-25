@@ -11,6 +11,7 @@ import type { Actor, BatchResult, Block, BlockProps, BlockType, ChildOutcome, Di
 import { BlockView, type BlockContext, type EditingState, type Mark } from '../components/BlockView'
 import { CONTINUING, TEXT_TYPES, TURN_INTO, matchChoices, type TypeChoice } from '../components/blockTypes'
 import type { ConflictChoice, ConflictState } from '../components/ConflictPanel'
+import { IconPicker } from '../components/IconPicker'
 import { PropertyPanel } from '../components/PropertyPanel'
 import { applyItemValueEvent, type ItemValues } from '../api/databaseState'
 import { rememberKind } from '../api/kinds'
@@ -31,6 +32,7 @@ import { Popover } from '../ui/Popover'
 import { useToast } from '../ui/Toast'
 import { actorColor, actorName, initials } from '../utils/actors'
 import { isDemo } from '../utils/demo'
+import { paperIcon } from '../utils/icon'
 import { isEnter, isNativeEnter, MOD_LABEL, modKey } from '../utils/keyboard'
 import { keyBetween } from '../utils/order'
 import type { Layout } from '../App'
@@ -210,6 +212,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const [blockMenu, setBlockMenu] = useState<{ block: Block; anchor: HTMLElement } | null>(null)
   const [pageMenu, setPageMenu] = useState<HTMLElement | null>(null)
   const [emoji, setEmoji] = useState<{ block: Block; anchor: HTMLElement } | null>(null)
+  const [iconPick, setIconPick] = useState<HTMLElement | null>(null)
   const [dialog, setDialog] = useState<Dialog | null>(null)
   const [versions, setVersions] = useState<VersionSummary[]>([])
   const [counts, setCounts] = useState<ChangeCounts | null>(null)
@@ -246,6 +249,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const saveTimer = useRef<number | undefined>(undefined)
   const editorRef = useRef<TiptapEditor | null>(null)
   const titleRef = useRef<HTMLTextAreaElement>(null)
+  const iconRef = useRef<HTMLButtonElement>(null)
   const titleTimer = useRef<number | undefined>(undefined)
   const titleSession = useRef(sessionId())
   const pendingTitle = useRef<(() => void) | null>(null)
@@ -436,8 +440,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             break
           case 'paper_updated':
             if (ev.paper && ev.paper.id === paperId) {
-              // Another writer's title change shows in the sidebar too.
-              if (ev.paper.title !== cur.paper.title) onChanged()
+              // Another writer's title or icon change shows in the sidebar too.
+              if (ev.paper.title !== cur.paper.title || ev.paper.icon !== cur.paper.icon) onChanged()
               receive([], [], ev.paper, false)
               if (ev.paper.deleted_at) void load()
             }
@@ -1534,6 +1538,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     if (!paper) return []
     const items: MenuItem[] = [
       { label: t('copyLink'), icon: '🔗', onSelect: () => void navigator.clipboard?.writeText(`${window.location.origin}${base}`).then(() => toast(t('copied')), () => undefined) },
+      ...(canEdit ? [{ label: t('changeIcon'), icon: paperIcon(paper, workspace?.home_paper_id), onSelect: () => setIconPick(iconRef.current ?? document.body) }] : []),
       isHTML
         ? { label: t('openHtml'), icon: '↗', disabled: !htmlPage?.props.attachment_id, onSelect: () => { if (htmlPage?.props.attachment_id) window.open(api.htmlURL(ws, paperId, htmlPage.props.attachment_id), '_blank', 'noopener,noreferrer') } }
         : { label: t('exportMarkdown'), icon: '⇩', onSelect: () => { window.location.href = api.markdownURL(ws, paperId) } },
@@ -1659,9 +1664,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
               <Link className={`crumb${isHome ? ' cur' : ''}`} to={`/ws/${ws}`}>{workspace?.emoji ? `${workspace.emoji} ` : ''}{workspace?.name ?? ws}</Link>
             )}
             {view && filed && (view.path ?? []).slice(1).map((p) => (
-              <span key={p.id} style={{ display: 'contents' }}><span className="crumb-sep">/</span><Link className="crumb" to={`/ws/${ws}/p/${p.id}`}>{p.title || t('untitled')}</Link></span>
+              <span key={p.id} style={{ display: 'contents' }}><span className="crumb-sep">/</span><Link className="crumb" to={`/ws/${ws}/p/${p.id}`}><span className="pic-i" aria-hidden>{paperIcon(p)}</span> {p.title || t('untitled')}</Link></span>
             ))}
-            {view && !isHome && <>{filed && <span className="crumb-sep">/</span>}<span className="crumb cur">{title.trim() || t('untitled')}</span></>}
+            {view && !isHome && <>{filed && <span className="crumb-sep">/</span>}<span className="crumb cur"><span className="pic-i" aria-hidden>{paper ? paperIcon(paper) : ''}</span> {title.trim() || t('untitled')}</span></>}
           </nav>
           {paper && (
             <div className="top-r">
@@ -1762,6 +1767,11 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                 {paper.deleted_at && (
                   <div className="banner info"><span className="sp">{t('inTrash')}</span>{owner && <button type="button" className="btn sm" onClick={() => void doPaper(() => api.restorePaper(ws, paperId), t('restoredDone'))}>{t('restoreFromTrash')}</button>}</div>
                 )}
+                {paper.icon
+                  ? (canEdit
+                    ? <button type="button" ref={iconRef} className="page-icon" aria-label={t('changeIcon')} title={t('changeIcon')} onClick={(e) => setIconPick(e.currentTarget)}>{paper.icon}</button>
+                    : <span className="page-icon" role="img" aria-label={t('iconLabel')}>{paper.icon}</span>)
+                  : canEdit && <button type="button" ref={iconRef} className="add-icon" onClick={(e) => setIconPick(e.currentTarget)}><span aria-hidden>☺</span>{t('addIcon')}</button>}
                 <textarea ref={titleRef} className="title-input" rows={1} value={title} placeholder={t('untitled')} aria-label={t('paperTitle')} readOnly={!canEdit}
                   onChange={(e) => {
                     const next = e.target.value.replace(/\n/g, '')
@@ -1835,6 +1845,12 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       )}
       {blockMenu && <Menu anchor={blockMenu.anchor} items={blockItems(blockMenu.block)} onClose={() => setBlockMenu(null)} />}
       {pageMenu && <Menu anchor={pageMenu} items={pageItems()} onClose={() => setPageMenu(null)} label={t('more')} />}
+      {iconPick && paper && (
+        <IconPicker anchor={iconPick} value={paper.icon ?? ''} onClose={() => setIconPick(null)} onPick={(icon) => {
+          setIconPick(null)
+          void run([{ op: 'set_icon', icon }]).then((res) => { if (res) onChanged() })
+        }} />
+      )}
       {emoji && (
         <Popover anchor={emoji.anchor} onClose={() => setEmoji(null)}>
           <div className="swatches">
@@ -1862,7 +1878,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         </Modal>
       )}
       {dialog?.kind === 'move' && paper && (
-        <MoveDialog paper={paper} ws={ws} workspaces={workspaces} exclude={new Set([paperId])} onClose={() => setDialog(null)}
+        <MoveDialog paper={paper} ws={ws} workspaces={workspaces} exclude={new Set([paperId])} homeIcon={sidebar?.home?.icon} onClose={() => setDialog(null)}
           onMove={async (parent, target) => {
             try {
               await api.move(ws, paperId, { parent, workspace: target === ws ? '' : target })

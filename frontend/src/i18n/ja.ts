@@ -393,4 +393,11 @@ export const ja: Record<MsgKey, string> = {
   noOneMatches: '該当する人はいません',
   youTag: '自分',
   papersLoadFailed: 'ペーパーを読み込めませんでした',
+  addIcon: 'アイコンを追加',
+  changeIcon: 'アイコンを変更',
+  iconLabel: 'アイコン',
+  iconInput: '絵文字を入力',
+  iconSet: '設定',
+  iconRemove: '削除',
+  iconOne: '絵文字を1つだけ入力してください',
 }

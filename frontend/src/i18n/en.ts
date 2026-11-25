@@ -393,4 +393,11 @@ export const en: Record<MsgKey, string> = {
   noOneMatches: 'No one matches',
   youTag: 'You',
   papersLoadFailed: "Couldn't load papers",
+  addIcon: 'Add icon',
+  changeIcon: 'Change icon',
+  iconLabel: 'Icon',
+  iconInput: 'Type an emoji',
+  iconSet: 'Set',
+  iconRemove: 'Remove',
+  iconOne: 'Enter a single emoji',
 }

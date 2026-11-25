@@ -224,3 +224,28 @@ func TestPaperKind(t *testing.T) { // T1
 	data = gt.R1(json.Marshal(p)).NoError(t)
 	gt.S(t, string(data)).Contains(`"kind":"html"`)
 }
+
+func TestValidateIcon(t *testing.T) {
+	// one grapheme cluster of at most 32 bytes is accepted, whatever it combines
+	for _, ok := range []string{"", "🚀", "👩‍💻", "🇯🇵", "1️⃣", "★", "👨‍👩‍👧‍👦"} {
+		gt.NoError(t, model.ValidateIcon(ok))
+	}
+	gt.NoError(t, model.ValidateIcon(model.NormalizeIcon(" 🚀 ")))
+	gt.Equal(t, model.NormalizeIcon(" 🚀 "), "🚀")
+
+	// 32 bytes is the limit: a family of seven people with skin tones goes over
+	long := "👩🏻‍👩🏻‍👧🏻‍👦🏻"
+	gt.True(t, len(long) > model.MaxIconLength)
+	for _, bad := range []string{"🚀🔥", "ab", " ", "\n", "\t", "🚀 ", long, "\u200b", "\u200d", "\u0301", "\ufe0f"} {
+		err := model.ValidateIcon(bad)
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	}
+}
+
+func TestPaperValidateIcon(t *testing.T) {
+	p := validPaper()
+	p.Icon = "🚀"
+	gt.NoError(t, p.Validate())
+	p.Icon = "🚀🔥"
+	gt.True(t, errors.Is(p.Validate(), model.ErrInvalidArgument))
+}
