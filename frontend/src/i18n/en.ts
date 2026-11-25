@@ -417,8 +417,11 @@ export const en: Record<MsgKey, string> = {
   addIcon: 'Add icon',
   changeIcon: 'Change icon',
   iconLabel: 'Icon',
-  iconInput: 'Type an emoji',
+  iconInput: 'Name or emoji',
   iconSet: 'Set',
   iconRemove: 'Remove',
   iconOne: 'Enter a single emoji',
+  iconNoMatch: 'No matching emoji',
+  iconLoading: 'Loading…',
+  iconNamesFailed: "Couldn't load emoji names",
 }
