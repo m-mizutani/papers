@@ -360,7 +360,8 @@ export interface PaperListItem extends PaperRef {
 
 export interface PaperListQuery {
   place?: 'unfiled' | 'filed' | 'all'
-  creator?: 'me' | 'all'
+  /** me, all, or the ID of one user. */
+  creator?: string
   visibility?: 'all' | 'public' | 'private'
   archived?: boolean
   sort?: 'updated' | 'created'

@@ -3,10 +3,15 @@ import { call, createPaper, homeOf, menu, msg, openPaper, paperOf, titleField, u
 import type { Sidebar } from '../src/api/types'
 
 const sidebarOf = (request: Parameters<typeof createPaper>[0]) => call<Sidebar>(request, 'GET', `/workspaces/${WS}/sidebar`)
-const rows = (page: Page) => page.locator('.dbt tbody tr')
-const filter = (page: Page, group: string, option: string) => page.getByRole('group', { name: group }).getByRole('button', { name: option, exact: true }).click()
+const rows = (page: Page) => page.locator('.plist tbody tr')
+const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true }).click()
+const pill = (page: Page, name: string | RegExp) => page.locator('.pfilters').getByRole('button', { name })
+const choose = async (page: Page, button: RegExp, item: string) => {
+  await pill(page, button).click()
+  await page.getByRole('menuitem', { name: item, exact: true }).click()
+}
 
-test('T32 the papers list filters by place, author, visibility and archived', async ({ page, request }) => {
+test('T32 T12 T13 the papers list filters by place tabs, visibility, archived and author', async ({ page, request }) => {
   const tag = unique('Listed')
   const loose = await createPaper(request, { title: `${tag} loose`, unfiled: true })
   const filed = await createPaper(request, { title: `${tag} filed` })
@@ -20,43 +25,70 @@ test('T32 the papers list filters by place, author, visibility and archived', as
   await expect(mine).toHaveCount(2)
   await expect(mine.filter({ hasText: loose.title })).toContainText(msg('unfiled'))
   await expect(mine.filter({ hasText: secret.title })).toContainText(msg('private'))
+  await expect(pill(page, msg('authorIs', { name: msg('meMention') }))).toBeVisible()
 
-  await filter(page, msg('place'), msg('filed'))
+  await tab(page, msg('filed'))
   await expect(mine).toHaveCount(1)
   await expect(mine).toContainText(filed.title)
+  await expect(page).toHaveURL(/place=filed/)
 
-  await filter(page, msg('place'), msg('all'))
+  await tab(page, msg('all'))
   await expect(mine).toHaveCount(3)
 
-  await filter(page, msg('visibilityLabel'), msg('private'))
+  await choose(page, /^Visibility:/, msg('private'))
   await expect(mine).toHaveCount(1)
   await expect(mine).toContainText(secret.title)
-  await filter(page, msg('visibilityLabel'), msg('publicLabel'))
+  await expect(pill(page, msg('visibilityIs', { value: msg('private') }))).toHaveClass(/set/)
+  await choose(page, /^Visibility:/, msg('publicLabel'))
   await expect(mine).toHaveCount(2)
 
-  await page.getByLabel(msg('includeArchived')).check()
+  await pill(page, msg('includeArchived')).click()
   await expect(mine).toHaveCount(3)
   await expect(mine.filter({ hasText: old.title })).toContainText(msg('archived'))
-  await page.getByLabel(msg('includeArchived')).uncheck()
+  await pill(page, msg('includeArchived')).click()
   await expect(mine).toHaveCount(2)
 
-  // Sign-in is off, so every writer is the same person: "Everyone" keeps
+  // T14 Sign-in is off, so every writer is the same person: "Everyone" keeps
   // what "Me" shows (and asks the server for every creator).
   const asked = page.waitForRequest((r) => r.url().includes('/papers?') && r.url().includes('creator=all'))
-  await filter(page, msg('author'), msg('everyone'))
+  await pill(page, /^Author:/).click()
+  await page.getByRole('option', { name: msg('everyone') }).click()
   await asked
   await expect(mine).toHaveCount(2)
-  await expect(page.getByRole('group', { name: msg('author') }).getByRole('button', { name: msg('everyone') })).toHaveAttribute('aria-pressed', 'true')
+  await expect(pill(page, msg('authorIs', { name: msg('everyone') }))).toHaveClass(/set/)
 
   // a filter that matches nothing shows the empty state
-  await filter(page, msg('place'), msg('filed'))
-  await filter(page, msg('visibilityLabel'), msg('private'))
+  await tab(page, msg('filed'))
+  await choose(page, /^Visibility:/, msg('private'))
   await expect(page.getByText(msg('noneMatch'))).toBeVisible()
   await expect(rows(page)).toHaveCount(0)
 
-  // the choice is kept for the next visit
+  // the choice is kept in the URL and for the next visit without one
   await page.reload()
-  await expect(page.getByRole('group', { name: msg('visibilityLabel') }).getByRole('button', { name: msg('private') })).toHaveAttribute('aria-pressed', 'true')
+  await expect(pill(page, msg('visibilityIs', { value: msg('private') }))).toBeVisible()
+  await page.goto(`/ws/${WS}/papers`)
+  await expect(pill(page, msg('visibilityIs', { value: msg('private') }))).toBeVisible()
+  await expect(page.getByRole('tab', { name: msg('filed'), exact: true })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('T15 a link with my user ID as the creator opens my papers', async ({ page, request }) => {
+  const tag = unique('Linked')
+  await createPaper(request, { title: `${tag} loose`, unfiled: true })
+  const me = await (await request.get('/api/auth/me')).json() as { user: { id: string } }
+  await page.goto(`/ws/${WS}/papers?creator=${me.user.id}`)
+  await expect(rows(page).filter({ hasText: tag })).toHaveCount(1)
+  await expect(pill(page, msg('authorIs', { name: msg('meMention') }))).toBeVisible()
+})
+
+test('T18 at phone width the place and author show under the title', async ({ page, request }) => {
+  const tag = unique('Narrow')
+  await createPaper(request, { title: `${tag} loose`, unfiled: true })
+  await page.setViewportSize({ width: 400, height: 800 })
+  await page.goto(`/ws/${WS}/papers?place=unfiled&creator=all`)
+  const row = rows(page).filter({ hasText: tag })
+  await expect(row.locator('.psub')).toBeVisible()
+  await expect(row.locator('td.pwide').first()).toBeHidden()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
 test('T38 a new paper starts unfiled; moving it files it and the unfiled count goes down', async ({ page, request }) => {
@@ -89,7 +121,7 @@ test('T38 a new paper starts unfiled; moving it files it and the unfiled count g
   expect((await paperOf(request, id)).parent_id).toBe(target.id)
 
   await page.locator('.sb').getByRole('link', { name: msg('papers') }).click()
-  await expect(page.locator('.dbt, .list .empty').first()).toBeVisible()
+  await expect(page.locator('.plist, .list .empty').first()).toBeVisible()
   await expect(rows(page).filter({ hasText: title })).toHaveCount(0)
 })
 
@@ -177,7 +209,7 @@ test.describe('T51 at phone width', () => {
     await expect(page.locator('.blk').first().locator('.g')).toHaveCSS('opacity', '1')
 
     await page.goto(`/ws/${WS}/papers`)
-    await page.getByRole('group', { name: msg('place') }).getByRole('button', { name: msg('all'), exact: true }).click()
+    await page.getByRole('tab', { name: msg('all'), exact: true }).click()
     await expect(rows(page).first()).toBeVisible()
     expect(await noSideScroll(page)).toEqual({ page: true, body: true, main: true })
   })

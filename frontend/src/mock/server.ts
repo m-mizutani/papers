@@ -342,7 +342,7 @@ function listPapers(ws: string, home: string, q: URLSearchParams) {
   const offset = Number(q.get('cursor') ?? 0) || 0
   const rows = [...papers.values()].map((x) => x.paper).filter((x) => x.workspace_id === ws && x.id !== home && sees(x) && !x.deleted_at
     && (place === 'all' || (place === 'unfiled') === !filed(x, home))
-    && (creator === 'all' || x.created_by.user_id === ME.id)
+    && (creator === 'all' || x.created_by.user_id === (creator === 'me' ? ME.id : creator))
     && (vis === 'all' || x.visibility === vis)
     && (archived || !x.archived_at))
     .sort((a, b) => (a[sort] < b[sort] ? 1 : a[sort] > b[sort] ? -1 : 0))

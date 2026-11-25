@@ -265,7 +265,7 @@ The whole tree is not shown. The sidebar shows the home, the user's favorites (`
 
 ### Papers list
 
-The papers list shows papers outside the tree and lets people find their own. It filters by place (unfiled — which includes the user's private papers —, filed, or all), creator (the user or everyone), visibility (all, public, private) and whether archived papers are included, and sorts by update or creation time, newest first. The default is "my unfiled papers". It never shows the home, papers in the trash, papers a move is working on, or papers the caller may not see. For each paper it shows the parent's title only (not the whole path), read in one batch. It is read a page at a time (at most 100 papers).
+The papers list shows papers outside the tree and lets people find their own. It filters by place (unfiled — which includes the user's private papers —, filed, or all), creator (the user, one other person, or everyone), visibility (all, public, private) and whether archived papers are included, and sorts by update or creation time, newest first. The default is "my unfiled papers". It never shows the home, papers in the trash, papers a move is working on, or papers the caller may not see. For each paper it shows the parent's title only (not the whole path), read in one batch. It is read a page at a time (at most 100 papers). The filters are part of the page's URL, so a link can open the list of one person's papers.
 
 ## Databases
 
