@@ -54,7 +54,7 @@ func ValidUserID(id string) bool {
 	}
 	for i := 0; i < len(id); i++ {
 		c := id[i]
-		if !('0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z') {
+		if (c < '0' || c > '9') && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
 			return false
 		}
 	}

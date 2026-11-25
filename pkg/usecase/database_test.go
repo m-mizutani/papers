@@ -803,7 +803,9 @@ func TestPersonProperty(t *testing.T) {
 		a, b = b, a
 	}
 	owner := model.PropertyID(e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpAddProperty, Name: ptr("Owner"), PropertyType: model.PropertyPerson, Ref: "o"}).Refs["o"])
-	person := func(id model.UserID, name string) map[string]any { return map[string]any{"user_id": string(id), "name": name} }
+	person := func(id model.UserID, name string) map[string]any {
+		return map[string]any{"user_id": string(id), "name": name}
+	}
 
 	// T13: stored by user ID without repeats; an empty list clears it
 	e.apply(t, alice, wsA, ex.db.ID,
