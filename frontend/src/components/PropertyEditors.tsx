@@ -5,6 +5,7 @@ import { useTranslation, type MsgKey } from '../i18n'
 import { Popover, type Anchor } from '../ui/Popover'
 import { isEnter } from '../utils/keyboard'
 import { PeopleView } from './UserMention'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 // Editors of property values and definitions, shared by the database table
 // and the property panel of an item. Values are written as element ids;
@@ -95,7 +96,7 @@ export function ElementPicker({ prop, value, anchor, onChange, actions, onClose 
     <Popover anchor={anchor} onClose={() => { if (!edit) onClose() }} className="dbpop" label={t('chooseOrCreate')}>
       <div className="tagin">
         {chosen.map((e) => <Chip key={e.id} el={e} onRemove={() => unchoose(e)} />)}
-        <input autoFocus value={q} aria-label={t('chooseOrCreate')}
+        <input {...NO_AUTOFILL} autoFocus value={q} aria-label={t('chooseOrCreate')}
           onChange={(e) => { setQ(e.target.value); setHi(0) }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, count - 1)) }
@@ -168,7 +169,7 @@ function ElementEditor({ el, anchor, taken, onChange, onDelete, onClose }: {
   }
   return (
     <Popover anchor={anchor} onClose={() => { commit(); onClose() }} className="dbpop" label={el.value}>
-      <input className="inp" autoFocus value={value} aria-label={t('colName')}
+      <input {...NO_AUTOFILL} className="inp" autoFocus value={value} aria-label={t('colName')}
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); commit() } }} />
@@ -214,7 +215,7 @@ export function DateEditor({ value, anchor, onChange, onClose }: {
   }
   return (
     <Popover anchor={anchor} onClose={onClose} className="dbpop" label={t('propDate')}>
-      <input className="inp" autoFocus value={text} placeholder="YYYY-MM-DD" aria-label={t('propDate')}
+      <input {...NO_AUTOFILL} className="inp" autoFocus value={text} placeholder="YYYY-MM-DD" aria-label={t('propDate')}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); submitText(); onClose() } }} />
       <div className="calhead">
@@ -253,7 +254,7 @@ export function AddPropertyPopover({ anchor, names, onAdd, onClose }: {
   }
   return (
     <Popover anchor={anchor} onClose={onClose} className="dbpop" label={t('addProperty')}>
-      <input className="inp" autoFocus value={name} placeholder={t('propertyName')} aria-label={t('propertyName')}
+      <input {...NO_AUTOFILL} className="inp" autoFocus value={name} placeholder={t('propertyName')} aria-label={t('propertyName')}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); add() } }} />
       {dup && <p className="err">{t('duplicatePropertyName')}</p>}
@@ -294,7 +295,7 @@ export function ColumnMenu({ prop, anchor, names, canLeft, canRight, onRename, o
   }
   return (
     <Popover anchor={anchor} onClose={() => { commit(); onClose() }} className="dbpop" label={prop.name}>
-      <input className="inp" autoFocus value={name} aria-label={t('propertyName')}
+      <input {...NO_AUTOFILL} className="inp" autoFocus value={name} aria-label={t('propertyName')}
         onChange={(e) => setName(e.target.value)} onBlur={commit}
         onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); commit(); onClose() } }} />
       {dup && <p className="err">{t('duplicatePropertyName')}</p>}

@@ -21,6 +21,7 @@ import { PALETTE } from '../markup/markup'
 import { fromDoc, toDoc, type PMDoc } from '../markup/tiptap'
 import { Popover } from '../ui/Popover'
 import { isNativeEnter } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 // The rich text editor of one block (D11): formatting inside the block is
 // the editor's; splitting, joining and ordering blocks stay papers ops. The
@@ -191,7 +192,7 @@ function FormatBar({ editor, anchor }: { editor: TiptapEditor; anchor: DOMRect }
       )}
       {sub === 'link' && barRef.current && (
         <Popover anchor={barRef.current} onClose={() => setSub(null)} label={t('link')}>
-          <input className="inp" style={{ minWidth: 'var(--input-min)' }} autoFocus value={href} placeholder={t('linkPlaceholder')} aria-label={t('link')}
+          <input {...NO_AUTOFILL} className="inp" style={{ minWidth: 'var(--input-min)' }} autoFocus value={href} placeholder={t('linkPlaceholder')} aria-label={t('link')}
             onChange={(e) => setHref(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') setSub(null)

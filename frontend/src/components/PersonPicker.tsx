@@ -3,6 +3,7 @@ import { useTranslation } from '../i18n'
 import { Popover, type Anchor } from '../ui/Popover'
 import { actorColor, initials } from '../utils/actors'
 import { isEnter } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 /** A person to pick: a user ID and the name to show. */
 export interface Person {
@@ -57,7 +58,7 @@ export function PersonPicker({ anchor, value, me, search, onPick, onClose }: {
   return (
     <Popover anchor={anchor} onClose={onClose} label={t('author')} className="ppick">
       <div onKeyDown={onKey}>
-        <input ref={input} className="inp" value={q} placeholder={t('searchByName')} aria-label={t('searchByName')}
+        <input {...NO_AUTOFILL} ref={input} className="inp" value={q} placeholder={t('searchByName')} aria-label={t('searchByName')}
           onChange={(e) => { setQ(e.target.value); setHi(0) }} />
         <div role="listbox" aria-label={t('author')}>
           {options.map((o, i) => (

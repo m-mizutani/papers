@@ -3,6 +3,7 @@ import { useTranslation } from '../i18n'
 import { Popover, type Anchor } from '../ui/Popover'
 import { isIcon, PICKER_ICONS } from '../utils/icon'
 import { isEnter } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 /**
  * Chooses a paper's icon: one of the offered emoji, or any emoji typed in
@@ -31,7 +32,7 @@ export function IconPicker({ anchor, value, onPick, onClose }: {
         ))}
       </div>
       <div className="ip-row">
-        <input className={`ip-in${bad ? ' bad' : ''}`} value={typed} placeholder={t('iconInput')} aria-label={t('iconInput')} aria-invalid={bad}
+        <input {...NO_AUTOFILL} className={`ip-in${bad ? ' bad' : ''}`} value={typed} placeholder={t('iconInput')} aria-label={t('iconInput')} aria-invalid={bad}
           onChange={(e) => setTyped(e.target.value)}
           onKeyDown={(e) => { if (isEnter(e)) { e.preventDefault(); submit() } }} />
         <button type="button" className="btn sm" disabled={typed.trim() === '' || bad} onClick={submit}>{t('iconSet')}</button>

@@ -3,6 +3,7 @@ import { useTranslation } from '../i18n'
 import { Popover, type Anchor } from '../ui/Popover'
 import { isEnter } from '../utils/keyboard'
 import type { TypeChoice } from './blockTypes'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 /** The block kinds offered after "/" (or from "Insert below"), grouped. */
 export function SlashMenu({ anchor, items, active, onPick, onHover, onClose, filter }: {
@@ -24,7 +25,7 @@ export function SlashMenu({ anchor, items, active, onPick, onHover, onClose, fil
   return (
     <Popover anchor={anchor} onClose={onClose} className="slashpop" label={t('turnInto')}>
       {filter && (
-        <input className="inp" style={{ height: 'var(--control-h)', margin: 'var(--sp-1) 0 var(--sp-2)' }} autoFocus value={filter.value} placeholder={t('filterTypes')} aria-label={t('filterTypes')}
+        <input {...NO_AUTOFILL} className="inp" style={{ height: 'var(--control-h)', margin: 'var(--sp-1) 0 var(--sp-2)' }} autoFocus value={filter.value} placeholder={t('filterTypes')} aria-label={t('filterTypes')}
           onChange={(e) => filter.onChange(e.target.value)}
           onKeyDown={(e) => {
             if (['ArrowUp', 'ArrowDown', 'Escape'].includes(e.key) || isEnter(e)) {
