@@ -14,7 +14,7 @@ import { TextSelection } from '@tiptap/pm/state'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import type { UserSummary } from '../api/types'
-import { MentionMenu } from './UserMention'
+import { MentionMenu, personName } from './UserMention'
 import { useTranslation } from '../i18n'
 import { leaveToBrowser, NO_PRESS, type Press } from './clicks'
 import { PALETTE } from '../markup/markup'
@@ -234,6 +234,21 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
   const mentionKey = useRef<((key: string) => boolean) | null>(null)
   const mentionOpen = useRef(false)
   mentionOpen.current = !!mention
+  // The "@" whose menu was closed with Escape stays closed while it is typed on.
+  const mentionDismissed = useRef<number | null>(null)
+  // "@" opens the people to mention, at the caret, after a document or caret change.
+  const findMention = (ed: TiptapEditor) => {
+    const { from, empty } = ed.state.selection
+    const q = empty && ws ? mentionQuery(ed.state.doc.textBetween(Math.max(0, from - 48), from, '\n', '\n')) : null
+    const at = q === null ? null : from - q.length - 1
+    if (q === null || at === null || at === mentionDismissed.current) {
+      if (q === null) mentionDismissed.current = null
+      setMention(null)
+      return
+    }
+    const c = ed.view.coordsAtPos(from)
+    setMention({ query: q, from: at, to: from, rect: new DOMRect(c.left, c.top, 1, c.bottom - c.top) })
+  }
   // The last press this editor received, and whether it was left to the browser.
   const clicks = useRef<Press>(NO_PRESS)
 
@@ -254,16 +269,7 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
     onUpdate: ({ editor: ed }) => {
       const doc = docJSON(ed)
       onChange(fromDoc(doc), JSON.stringify(doc) !== initial.current)
-      // "@" opens the people to mention.
-      {
-        const { from, empty } = ed.state.selection
-        const q = empty && ws ? mentionQuery(ed.state.doc.textBetween(Math.max(0, from - 48), from, '\n', '\n')) : null
-        if (q === null) setMention(null)
-        else {
-          const c = ed.view.coordsAtPos(from)
-          setMention({ query: q, from: from - q.length - 1, to: from, rect: new DOMRect(c.left, c.top, 1, c.bottom - c.top) })
-        }
-      }
+      findMention(ed)
       // "/" at the start or after a space opens the block menu.
       const report = pasteRef.current.onSlash
       if (!report) return
@@ -279,6 +285,7 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
       report({ query: m[1] ?? '', from: start, to: from, rect: new DOMRect(c.left, c.top, 1, c.bottom - c.top) })
     },
     onSelectionUpdate: ({ editor: ed }) => {
+      findMention(ed)
       const { from, to, empty } = ed.state.selection
       if (empty) {
         setSelRect(null)
@@ -431,10 +438,10 @@ export function RichEditor({ value, onChange, onBlur, keys, placeholder, onPaste
       {editor && selRect && <FormatBar editor={editor} anchor={selRect} />}
       {editor && mention && (
         <MentionMenu ws={ws} query={mention.query} anchor={mention.rect} keyRef={mentionKey}
-          onClose={() => setMention(null)}
+          onClose={() => { mentionDismissed.current = mention.from; setMention(null) }}
           onPick={(u: UserSummary) => {
             editor.chain().focus().insertContentAt({ from: mention.from, to: mention.to }, [
-              { type: 'mention', attrs: { userId: u.id, name: u.name } },
+              { type: 'mention', attrs: { userId: u.id, name: personName(u.name) } },
               { type: 'text', text: ' ' },
             ]).run()
             setMention(null)

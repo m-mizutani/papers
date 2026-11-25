@@ -161,6 +161,12 @@ func validateCondition(props []model.Property, c FilterCondition) error {
 	bad := func() error {
 		return goerr.Wrap(model.ErrInvalidArgument, "the operator does not fit the property type", goerr.V("op", c.Op), goerr.V("type", prop.Type))
 	}
+	if len(c.Users) > 0 && prop.Type != model.PropertyPerson {
+		return goerr.Wrap(model.ErrInvalidArgument, "only a person condition names users", goerr.V("type", prop.Type))
+	}
+	if len(c.Elements) > 0 && prop.Type == model.PropertyPerson {
+		return goerr.Wrap(model.ErrInvalidArgument, "a person condition names users, not elements", goerr.V("type", prop.Type))
+	}
 	switch c.Op {
 	case FilterIsEmpty, FilterIsNotEmpty:
 		return nil

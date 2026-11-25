@@ -34,7 +34,7 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
     ...(urlCreator ? { creator: urlCreator } : {}),
   }), [saved, urlPlace, urlCreator])
   const person = f.creator !== 'me' && f.creator !== 'all' ? f.creator : ''
-  const personName = useUserNames(ws, person ? [person] : []).get(person)
+  const personName = useUserNames(ws, person ? [person] : []).names.get(person)
   const [rows, setRows] = useState<PaperListItem[]>()
   const [next, setNext] = useState('')
 

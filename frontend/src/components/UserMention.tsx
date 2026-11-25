@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../api/client'
 import type { Actor, PersonRef, UserSummary } from '../api/types'
@@ -10,6 +10,14 @@ import { isEnter } from '../utils/keyboard'
 // People, shown the same way everywhere: "@name" that opens a card with
 // the papers the person created. A mention holds the user's ID and the
 // name written with it; the name is never looked up again.
+
+/** A user's name as a mention or a person value keeps it: one line, trimmed, at most 100 bytes. */
+export function personName(name: string): string {
+  let s = name.split(/\s+/).filter(Boolean).join(' ')
+  const enc = new TextEncoder()
+  while (enc.encode(s).length > 100) s = [...s].slice(0, -1).join('').trimEnd()
+  return s
+}
 
 /** Where the papers list opens for one person's papers. */
 export const papersByPath = (ws: string, user: string) => `/ws/${ws}/papers?place=all&creator=${encodeURIComponent(user)}`
@@ -36,8 +44,11 @@ export function UserMention({ id, name, ws, onRemove }: { id: string; name: stri
       </span>
       {card && (
         <Popover anchor={card} onClose={() => setCard(null)} className="personcard" label={name}>
-          <div className="pc-head"><Face id={id} name={name} large /><span className="pc-name">{name}</span></div>
-          {space && <Link className="pc-link" to={papersByPath(space, id)} onClick={() => setCard(null)}>{t('papersByPerson')}</Link>}
+          {/* The card is a portal: React would pass its events on to what holds the mention (a row, a block, a picker). */}
+          <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+            <div className="pc-head"><Face id={id} name={name} large /><span className="pc-name">{name}</span></div>
+            {space && <Link className="pc-link" to={papersByPath(space, id)} onClick={() => setCard(null)}>{t('papersByPerson')}</Link>}
+          </div>
         </Popover>
       )}
     </>
@@ -65,7 +76,8 @@ export function useUserSearch(ws: string, q: string, enabled = true): { users: U
     setRes((r) => ({ users: r.users, state: 'loading' }))
     const timer = window.setTimeout(() => {
       api.users(ws, { q }).then(
-        (users) => { if (n === seq.current) setRes({ users, state: 'ok' }) },
+        // A user without a name cannot be written as a mention or a person value.
+        (users) => { if (n === seq.current) setRes({ users: users.filter((u) => personName(u.name) !== ''), state: 'ok' }) },
         () => { if (n === seq.current) setRes({ users: [], state: 'error' }) },
       )
     }, 150)
@@ -74,20 +86,29 @@ export function useUserSearch(ws: string, q: string, enabled = true): { users: U
   return res
 }
 
-/** The names of users known only by ID (a filter in the URL), read once. */
-export function useUserNames(ws: string, ids: string[]): Map<string, string> {
+/**
+ * The names of users known only by ID (a filter in the URL), read once, 20
+ * at a time; remember adds names already known (people just chosen).
+ */
+export function useUserNames(ws: string, ids: string[]): { names: Map<string, string>; remember: (people: PersonRef[]) => void } {
   const [names, setNames] = useState<Map<string, string>>(new Map())
   const asked = useRef(new Set<string>())
   const key = ids.join(',')
   useEffect(() => {
     const missing = key ? key.split(',').filter((id) => !asked.current.has(id)) : []
     if (!ws || missing.length === 0) return
-    missing.forEach((id) => asked.current.add(id))
-    api.users(ws, { ids: missing.slice(0, 20) }).then((users) => {
-      setNames((m) => new Map([...m, ...users.map((u) => [u.id, u.name] as [string, string])]))
-    }, () => undefined)
+    for (let i = 0; i < missing.length; i += 20) {
+      const part = missing.slice(i, i + 20)
+      part.forEach((id) => asked.current.add(id))
+      api.users(ws, { ids: part }).then((users) => {
+        setNames((m) => new Map([...m, ...users.map((u) => [u.id, u.name] as [string, string])]))
+      }, () => part.forEach((id) => asked.current.delete(id)))
+    }
   }, [ws, key])
-  return names
+  const remember = useCallback((people: PersonRef[]) => {
+    setNames((m) => new Map([...m, ...people.map((p) => [p.user_id, p.name] as [string, string])]))
+  }, [])
+  return { names, remember }
 }
 
 /** The list of candidates, with its loading, empty and failed states. */
@@ -132,6 +153,7 @@ export function MentionMenu({ ws, query, anchor, onPick, onClose, keyRef }: {
   useEffect(() => setActive(0), [query])
   keyRef.current = (key) => {
     if (key === 'Escape') { onClose(); return true }
+    if ((key === 'ArrowDown' || key === 'ArrowUp') && users.length === 0) return false
     if (key === 'ArrowDown') { setActive((a) => Math.min(a + 1, Math.max(users.length - 1, 0))); return true }
     if (key === 'ArrowUp') { setActive((a) => Math.max(a - 1, 0)); return true }
     if (key === 'Enter') {
@@ -163,7 +185,7 @@ export function PeopleChooser({ ws, chosen, onChange, max = 100 }: {
   const shown = users.filter((u) => !chosen.some((c) => c.user_id === u.id))
   const pick = (u: UserSummary) => {
     if (chosen.length >= max) return
-    onChange([...chosen, { user_id: u.id, name: u.name }])
+    onChange([...chosen, { user_id: u.id, name: personName(u.name) }])
     setQ('')
     setActive(0)
   }

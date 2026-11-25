@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ApiError, api } from '../api/client'
 import { appendRows, applyDatabaseEvent, asPeople, clearValue, initDatabase, moveAfter, nextColor, placeItems, putValue, shownValue, visibleRows, type DatabaseState, type DbRow } from '../api/databaseState'
 import { LiveConnection } from '../api/live'
-import type { BatchResult, Element, FilterCondition, Me, Op, PaperEvent, PaperView, Property, Sidebar, Value, Workspace } from '../api/types'
+import type { BatchResult, Element, FilterCondition, Me, Op, PaperEvent, PaperView, PersonRef, Property, Sidebar, Value, Workspace } from '../api/types'
 import type { Layout } from '../App'
 import { AddPropertyPopover, Chip, ColumnMenu, DateEditor, ElementPicker, TYPE_ICON, ValueView, type ElementActions } from '../components/PropertyEditors'
 import { ago, tParts, useTranslation, type MsgKey } from '../i18n'
@@ -310,7 +310,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
   const props = state?.db.properties ?? []
   const propOf = (id: string) => props.find((p) => p.id === id)
   const filterUsers = useMemo(() => [...new Set(filter.flatMap((c) => c.users ?? []))], [filter])
-  const userNames = useUserNames(ws, filterUsers)
+  const { names: userNames, remember: rememberNames } = useUserNames(ws, filterUsers)
 
   const sortLabel = (): string => {
     const [key, dir] = sort.split(':')
@@ -611,7 +611,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
           onChange={(v) => setValue(cellRow.item.id, cellProp.id, v)} onClose={() => setCell(null)} />
       )}
       {cond && condOpen && condProp && (
-        <ConditionEditor ws={ws} names={userNames} prop={condProp} cond={condOpen} anchor={cond.anchor}
+        <ConditionEditor ws={ws} names={userNames} onPeople={rememberNames} prop={condProp} cond={condOpen} anchor={cond.anchor}
           onChange={(c) => setQuery(sort, filter.map((x, j) => (j === cond.index ? c : x)))}
           onRemove={() => { setQuery(sort, filter.filter((_, j) => j !== cond.index)); setCond(null) }}
           onClose={() => setCond(null)} />
@@ -621,9 +621,10 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
 }
 
 /** Edits one filter condition: its operator and what it compares with. */
-function ConditionEditor({ ws, names, prop, cond, anchor, onChange, onRemove, onClose }: {
+function ConditionEditor({ ws, names, onPeople, prop, cond, anchor, onChange, onRemove, onClose }: {
   ws: string
   names: Map<string, string>
+  onPeople: (people: PersonRef[]) => void
   prop: Property
   cond: FilterCondition
   anchor: Anchor
@@ -661,7 +662,7 @@ function ConditionEditor({ ws, names, prop, cond, anchor, onChange, onRemove, on
       </select>
       {needs && prop.type === 'person' && (
         <PeopleChooser ws={ws} max={10} chosen={(cond.users ?? []).map((id) => ({ user_id: id, name: names.get(id) ?? '…' }))}
-          onChange={(next) => { next.forEach((p) => names.set(p.user_id, p.name)); onChange({ ...cond, users: next.map((p) => p.user_id) }) }} />
+          onChange={(next) => { onPeople(next); onChange({ ...cond, users: next.map((p) => p.user_id) }) }} />
       )}
       {needs && prop.type !== 'person' && (cond.op === 'is' || cond.op === 'contains') && (prop.elements ?? []).map((el) => (
         <label key={el.id} className="opt">

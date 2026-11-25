@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { Actor } from '../api/types'
 import { renderMarkup } from '../utils/inline'
 import { mentionQuery } from './RichEditor'
-import { ActorMention, papersByPath } from './UserMention'
+import { ActorMention, papersByPath, personName } from './UserMention'
 
 const ID = '1csQdaLtbzOEz6NzfMfH6Z'
 
@@ -55,5 +55,24 @@ describe('mentionQuery (T6)', () => {
     expect(mentionQuery('a@b')).toBeNull()
     expect(mentionQuery('Ask @mi  ')).toBeNull()
     expect(mentionQuery('Ask @ mi')).toBeNull()
+  })
+})
+
+describe('personName', () => {
+  it('keeps a name on one line, trimmed, within 100 bytes', () => {
+    expect(personName('  Masa\n Mizutani ')).toBe('Masa Mizutani')
+    const long = personName('水'.repeat(40))
+    expect(new TextEncoder().encode(long).length).toBeLessThanOrEqual(100)
+    expect(long).toBe('水'.repeat(33))
+  })
+})
+
+describe('the person card', () => {
+  it('keeps its clicks from what holds the mention', () => {
+    let rowClicks = 0
+    inWorkspace(<div onClick={() => { rowClicks++ }}><ActorMention actor={{ kind: 'human', user_id: ID, name: 'Masa' }} /></div>)
+    fireEvent.click(screen.getByRole('button', { name: '@Masa' }))
+    fireEvent.click(screen.getByText('Masa', { selector: '.pc-name' }))
+    expect(rowClicks).toBe(0)
   })
 })

@@ -2,14 +2,13 @@ package usecase
 
 import (
 	"context"
-	"log/slog"
 	"slices"
 	"strings"
 
 	"github.com/m-mizutani/goerr/v2"
 
 	"github.com/m-mizutani/papers/pkg/domain/model"
-	"github.com/m-mizutani/papers/pkg/utils/logging"
+	"github.com/m-mizutani/papers/pkg/utils/errutil"
 )
 
 // MaxUserResults bounds one answer of FindUsers, and the IDs one call may
@@ -59,7 +58,7 @@ func (u *UseCases) FindUsers(ctx context.Context, p *model.Principal, ws model.W
 		}
 		allow, err := u.workspaces.Allow(ctx, x, ws)
 		if err != nil {
-			logging.From(ctx).Warn("failed to evaluate workspace rule for a user", slog.String("workspace", string(ws)), slog.String("user", string(x.ID)), logging.ErrAttr(err))
+			errutil.Handle(ctx, goerr.Wrap(err, "failed to evaluate workspace rule for a user", goerr.V("workspace_id", ws), goerr.V("user_id", x.ID)), "failed to evaluate workspace rule for a user")
 			continue
 		}
 		if allow {

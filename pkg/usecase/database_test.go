@@ -815,6 +815,20 @@ func TestPersonProperty(t *testing.T) {
 	gt.True(t, ok)
 	gt.Equal(t, got, []model.PersonRef{{UserID: a, Name: "Ann"}, {UserID: b, Name: "Bob"}})
 	e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.search), Set: map[string]any{string(owner): []any{}}})
+	// the same people again is no write
+	stamp := func() time.Time {
+		row := gt.R1(e.uc.ListItems(ctx, alice, wsA, ex.db.ID, usecase.ItemsInput{})).NoError(t).Items[0]
+		for _, v := range row.Values {
+			if v.PropertyID == owner {
+				return v.UpdatedAt
+			}
+		}
+		return time.Time{}
+	}
+	before := stamp()
+	e.clock.Advance(time.Second)
+	e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.invite), Set: map[string]any{string(owner): []any{person(a, "Ann"), person(b, "Bob")}}})
+	gt.Equal(t, stamp(), before)
 
 	// T17: contains any of the users; empty and not empty
 	list := func(c usecase.FilterCondition) []model.PaperID {
@@ -854,6 +868,8 @@ func TestPersonProperty(t *testing.T) {
 		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains}}},
 		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains, Users: []model.UserID{"short"}}}},
 		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains, Users: make([]model.UserID, 11)}}},
+		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains, Users: []model.UserID{a}, Elements: []model.ElementID{ex.todo}}}},
+		{Filter: []usecase.FilterCondition{{Property: ex.status, Op: usecase.FilterIs, Elements: []model.ElementID{ex.todo}, Users: []model.UserID{a}}}},
 	} {
 		_, err := e.uc.ListItems(ctx, alice, wsA, ex.db.ID, in)
 		isInvalid(t, err)

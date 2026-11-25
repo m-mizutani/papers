@@ -73,6 +73,10 @@ func sameValue(a, b any) bool {
 		bs, ok := b.(string)
 		return ok && as == bs
 	}
+	if ap, ok := (&model.PropertyValue{Value: a}).People(); ok {
+		bp, ok := (&model.PropertyValue{Value: b}).People()
+		return ok && slices.Equal(ap, bp)
+	}
 	al, aok := (&model.PropertyValue{Value: a}).Strings()
 	bl, bok := (&model.PropertyValue{Value: b}).Strings()
 	return aok && bok && slices.Equal(al, bl)
