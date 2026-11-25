@@ -377,4 +377,13 @@ export const ja: Record<MsgKey, string> = {
   dbWriteFailed: '書き込めませんでした: {message}。表を読み直しました。',
   unchoose: '外す',
   properties: 'プロパティ',
+  colCreated: '作成',
+  authorIs: '作成者: {name}',
+  visibilityIs: '公開範囲: {value}',
+  meMention: '@自分',
+  unknownUser: '不明なユーザー',
+  searchByName: '名前で探す',
+  noOneMatches: '該当する人はいません',
+  youTag: '自分',
+  papersLoadFailed: 'ペーパーを読み込めませんでした',
 }

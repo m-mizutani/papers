@@ -377,4 +377,13 @@ export const en: Record<MsgKey, string> = {
   dbWriteFailed: 'Could not write: {message}. The table was read again.',
   unchoose: 'Remove',
   properties: 'Properties',
+  colCreated: 'Created',
+  authorIs: 'Author: {name}',
+  visibilityIs: 'Visibility: {value}',
+  meMention: '@Me',
+  unknownUser: 'Unknown user',
+  searchByName: 'Search by name',
+  noOneMatches: 'No one matches',
+  youTag: 'You',
+  papersLoadFailed: "Couldn't load papers",
 }
