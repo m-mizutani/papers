@@ -26,7 +26,10 @@ const (
 	csrfHeader = "X-Requested-With"
 	csrfValue  = "papers"
 
-	maxReturnToLength = 2048
+	// maxReturnToLength fits an OAuth authorization request (the consent
+	// screen's URL, with a client ID of up to 1024 bytes) and stays below
+	// the 4096 bytes a browser keeps in one cookie.
+	maxReturnToLength = 3584
 	oauthCookieTTL    = 10 * time.Minute
 )
 
@@ -160,11 +163,14 @@ type meResponse struct {
 	User      *model.User `json:"user"`
 	NoAuthn   bool        `json:"no_authn"`
 	Anonymous bool        `json:"anonymous"`
+	// MCPBaseURL is --mcp-base-url (--base-url when not set): the settings
+	// page shows {mcp_base_url}/mcp as the URL to add to an MCP client.
+	MCPBaseURL string `json:"mcp_base_url"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
-	writeJSON(r.Context(), w, http.StatusOK, meResponse{User: p.User, NoAuthn: s.auth.IsNoAuthn(), Anonymous: s.auth.IsAnonymous()})
+	writeJSON(r.Context(), w, http.StatusOK, meResponse{User: p.User, NoAuthn: s.auth.IsNoAuthn(), Anonymous: s.auth.IsAnonymous(), MCPBaseURL: s.mcpBaseURL})
 }
 
 func isSafeMethod(m string) bool {
@@ -265,7 +271,9 @@ func (s *Server) mcpAuthMiddleware(next http.Handler) http.Handler {
 			err = goerr.Wrap(model.ErrUnauthenticated, "MCP requires a bearer token")
 		}
 		if err != nil {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="papers"`)
+			// resource_metadata starts OAuth in MCP clients (RFC 9728
+			// section 5.1). It differs by Host, so it must not be cached.
+			w.Header().Set("WWW-Authenticate", s.mcpChallenge(r))
 			writeError(r.Context(), w, err)
 			return
 		}

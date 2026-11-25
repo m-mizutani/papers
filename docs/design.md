@@ -123,6 +123,30 @@ The change feed is `papers/{id}/events`, short-lived records that a TTL on `Expi
 
 Google OIDC (limited to the allowed domains and emails) with session cookies, and API tokens (`pap_{ID}.{secret}`, stored as a hash of the secret). `--no-authn` is for development.
 
+MCP clients may also get a token through OAuth (`pkg/usecase/oauth.go`, `pkg/controller/http/oauth.go`; the model is in [model.md](model.md#api-tokens-and-oauth)). papers is its own authorization server; the flow is:
+
+```mermaid
+sequenceDiagram
+  participant C as MCP client
+  participant B as Browser
+  participant P as papers
+  C->>P: /mcp without a token
+  P-->>C: 401, WWW-Authenticate resource_metadata={mcp}/.well-known/oauth-protected-resource/mcp
+  C->>P: GET the protected resource and authorization server metadata
+  C->>P: POST /oauth/register (name, redirect URIs)
+  P-->>C: client_id pcl_… (nothing stored)
+  C->>B: open {base}/oauth/authorize?…
+  B->>P: GET /api/v1/oauth/authorize (session; sign-in first when there is none)
+  B->>P: POST /api/v1/oauth/authorize decision=allow
+  P-->>B: redirect_to {redirect_uri}?code=pac_…&state=…
+  B->>C: the redirect
+  C->>P: POST /oauth/token (code, code_verifier)
+  P-->>C: access_token pap_…, expires_in 90 days
+  C->>P: /mcp with Authorization: Bearer pap_…
+```
+
+`{base}` is `--base-url`: the browser opens the consent screen there, where its session cookie is. `{mcp}` is the public URL the request came in on, but only when its Host is that of `--base-url` or `--mcp-base-url`; for any other host the metadata endpoints answer 404 and the 401 carries no `resource_metadata`. With IAP, for example, browsers and services that pass IAP use `https://papers.example.com` (`--base-url`) and Claude Code reaches `https://papers-direct.example.com` over a VPN (`--mcp-base-url`); both hit the same server and Firestore, so a code made on the consent screen is exchanged on either host. A client that passes IAP sends the IAP token in `Proxy-Authorization` and the papers token in `Authorization`. Presenting an exchanged code again answers `invalid_grant` and deletes the token it gave. The metadata, the token answer and the 401 are `Cache-Control: no-store`. These endpoints exist only with `--enable-mcp`.
+
 `--anonymous` replaces sign-in for servers anyone may use. `authMiddleware` (`/api/auth/me`, `/api/v1/*`) checks, in order, a bearer token, the CSRF header of a cookie request, and the session cookie; when the cookie is missing, malformed, unknown or expired, it creates an anonymous user and a session (on Firestore three writes: the user, its email index and the session; no `Identity`) and sets the session cookie on the response. Because the CSRF check comes first, a forged request never creates a user. Static files, `/healthz` and `/mcp` (bearer tokens only) never create one. The UI waits for `/api/auth/me` before any other call, so a page load makes one user. Nothing is kept in memory: the cookie and the stored session decide who the browser is.
 
 ### Authorization
@@ -151,7 +175,16 @@ A writer (Actor) is a person, an AI (a token of kind agent) or the system (creat
 
 `POST /papers` takes `kind: "database"` (beside `html`); an insert of a paper block takes `paper_kind: "database"`. A paper's view carries `kind` and, for an item, `database_id`, its `values` and its `database` (ID, title, definitions).
 
-MCP (`/mcp`, token required): `papers_guide` (the workspace's rules and the home's text), `papers_list_workspaces`, `papers_find_users` (people to mention or set as a person value), `papers_search` (limited by path), `papers_read` (`at` for a version, ranges, the outline only; an HTML paper's `html`), `papers_create_paper` (`kind` and `html` for an HTML paper), `papers_write` (`set_html` too), `papers_save_version`, `papers_versions`, `papers_diff`. Results carry the workspace's rules too, and a write says that it is not in a version yet.
+| OAuth (without `/api/v1`)                                                                 | What it is for |
+|---|---|
+| `GET /.well-known/oauth-protected-resource[/mcp]`, `GET /.well-known/oauth-authorization-server` | Metadata (RFC 9728, RFC 8414) naming `{mcp}`; the authorization endpoint is always `{base}/oauth/authorize` |
+| `POST /oauth/register`                                                                    | Dynamic client registration (RFC 7591): `client_name`, `redirect_uris` (1–5, https or http on localhost, no fragment); answers the client ID that carries them |
+| `POST /oauth/token`                                                                       | Form `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`, `resource`; errors are `{"error": …}` (RFC 6749) |
+| `GET|POST /api/v1/oauth/authorize`                                                        | The consent screen's API (session only): checking a request (the error's message is the OAuth error code) and allowing or denying it (`redirect_to`) |
+
+`GET /api/auth/me` also answers `mcp_base_url`, from which Settings shows `claude mcp add --transport http papers {mcp_base_url}/mcp`. Token lists carry `oauth` (client name, redirect URI) for tokens issued through OAuth.
+
+MCP (`/mcp`, token required; a 401 starts OAuth): `papers_guide` (the workspace's rules and the home's text), `papers_list_workspaces`, `papers_find_users` (people to mention or set as a person value), `papers_search` (limited by path), `papers_read` (`at` for a version, ranges, the outline only; an HTML paper's `html`), `papers_create_paper` (`kind` and `html` for an HTML paper), `papers_write` (`set_html` too), `papers_save_version`, `papers_versions`, `papers_diff`. Results carry the workspace's rules too, and a write says that it is not in a version yet.
 
 ## Firestore
 

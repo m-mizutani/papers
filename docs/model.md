@@ -118,6 +118,8 @@ papers issues its own IDs and never uses an external service's ID (a Google subj
 | Block revision (`Rev`)                                                 | An internal number per block, +1 whenever its contents change                                                                               | Server                             | never shown on screen      |
 | Search entry                                                           | `{paper ID}_{block ID}`, or `{paper ID}_title` for the title                                                                                | Server (derived)                   |                            |
 | Session and token secrets                                              | The 22-character ID above plus a separate random secret (only a hash of the secret is stored). A token is handed out as `pap_{ID}.{secret}` | Server                             |                            |
+| OAuth client ID                                                        | `pcl_` + the registration (client name and redirect URIs as JSON) in base64url, at most 1024 bytes. Not stored                              | Server (on registration)           |                            |
+| OAuth authorization code                                               | `pac_{token ID}.{secret}`: the ID of the pending token it becomes and a random secret (only a hash is stored)                              | Server (on consent)                |                            |
 
 - **One format**: every ID is a shortened UUID v4. Whatever needs an order uses a creation time or a number (versions).
 - **Why a shortened v4**: IDs appear again and again in URLs, API answers and text given to AI, so 36 characters shrink to 22. No symbols, so a double click selects the whole ID and it never clashes with separators. Case-sensitive. Random, so not guessable and leaking no time.
@@ -612,6 +614,24 @@ No one inside papers can do anything beyond the rules and visibility. Everything
 
 Callers who may not use something get "does not exist" (404), so no paper or workspace leaks its existence. Only when one may read but not write (a read-only token) is it 403.
 
+### API tokens and OAuth
+
+An API token (`APIToken`, `tokens/{id}`) lets a script or an AI act for its user, narrowed to read or write and optionally to some workspaces. It is either a personal token or an AI agent token ([People and AI](#people-and-ai)). There are two ways to get one, and both make the same kind of token:
+
+- **Created in Settings**: the person creates it and copies its value (`pap_{ID}.{secret}`, shown once).
+- **Issued to an MCP client through OAuth** (OAuth 2.1 authorization code flow with PKCE S256): the MCP client registers (the client ID carries the registration and nothing is stored), opens the consent screen in the person's browser, the person allows it, and the client exchanges the authorization code for the token. Such a token is an AI agent token named after the client, valid for 90 days, and carries `OAuth` (client name, client ID, redirect URI). There is no refresh token; when it expires, the client authorizes again.
+
+A token issued through OAuth has two states:
+
+| State   | `SecretHash` | `OAuth.CodeHash`, `CodeChallenge`, `CodeExpiresAt` | `ExpiresAt`              | Listed in Settings | Authenticates |
+|---------|--------------|----------------------------------------------------|--------------------------|--------------------|---------------|
+| Pending | empty        | set                                                | the code's expiry (5 minutes after consent) | no      | no            |
+| Valid   | set          | empty                                              | 90 days after the exchange | yes              | yes           |
+
+Consenting makes a pending token; exchanging the code makes it valid in one transaction, so a code works once; revoking deletes it as any token. The valid token keeps the hash of its code (`OAuth.UsedCodeHash`): when that code is presented again, the token is revoked, since whoever holds it may not be the client (RFC 6749 section 4.1.2). A pending token that is never exchanged stays unusable, as an expired token does. Only a browser session may consent (a token cannot obtain tokens), and consent always takes the person's click.
+
+A server may be reached under two public URLs: `--base-url`, where people use the web UI and the consent screen is, and `--mcp-base-url` (defaults to `--base-url`), the URL MCP clients are told to use. The OAuth metadata names the one of the two the request came in on, and nothing for any other host; an authorization or exchange is refused unless its resource is `{base-url}/mcp` or `{mcp-base-url}/mcp`. A relaying proxy on another host therefore cannot make a client send it the token.
+
 ## Storage layout
 
 Where Firestore documents live. The shape mirrors the model's "has" relations. The paper tree (parent and child) is not part of paths but held in the `ParentID` value (so moves never change paths).
@@ -632,7 +652,7 @@ users/{user}                            User
 ├── identities/{provider}_{subject}     ties to external IDs
 ├── favorites/{ws}_{paper}              favorites (order key)
 └── recent/{ws}                         recently opened paper (one per workspace)
-tokens/{token}                          API tokens (secret hash, limits)
+tokens/{token}                          API tokens (secret hash, limits; OAuth grant and, while pending, the code hash)
 sessions/{session}                      sign-in sessions (secret hash)
 ```
 
@@ -690,6 +710,7 @@ What stored data always satisfies, however it is written. Kept by the repository
 27. A database's `Items` holds each of its items that is not purged exactly once, and no other ID. An item is removed from `Items` just before it is purged; restoring an item missing from `Items` adds it at the end.
 28. Property value documents exist only under items. `DatabaseID` equals the item's `DatabaseID` and `PropertyID` equals the document ID.
 29. A property value document may point to a property or an element the definitions no longer have; reads treat it as empty.
+30. A token has either a secret hash or, only while pending, an OAuth code hash, PKCE challenge and code expiry, never neither. An authorization code is exchanged at most once; presenting it again deletes the token it gave.
 
 ## Decisions
 

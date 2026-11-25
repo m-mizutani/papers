@@ -252,3 +252,18 @@ func TestGoogleModeStillRequiresSession(t *testing.T) {
 	gt.Nil(t, sessionSetCookie(resp))
 	gt.Equal(t, userCount(t, ts), 0)
 }
+
+// The consent screen's URL survives sign-in as return_to, even with a long
+// OAuth request in its query.
+func TestLoginKeepsLongReturnTo(t *testing.T) {
+	ts := newTestServer(t, false)
+	c := ts.anonymous()
+	c.hc.Jar = &jar{cookies: map[string]*http.Cookie{}}
+	ts.idp.claims["long"] = claimsFor("carol@example.com")
+	returnTo := "/oauth/authorize?client_id=pcl_" + strings.Repeat("a", 1024) + "&redirect_uri=" + url.QueryEscape("http://localhost:1/"+strings.Repeat("b", 480)) + "&state=" + strings.Repeat("s", 600)
+	gt.True(t, len(returnTo) > 2048)
+	resp := c.do("GET", "/api/auth/login?return_to="+url.QueryEscape(returnTo), nil)
+	loc := gt.R1(url.Parse(resp.Header.Get("Location"))).NoError(t)
+	resp = c.do("GET", "/api/auth/callback?state="+loc.Query().Get("state")+"&code=long", nil)
+	gt.Equal(t, resp.Header.Get("Location"), returnTo)
+}

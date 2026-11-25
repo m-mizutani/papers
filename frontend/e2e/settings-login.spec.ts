@@ -15,7 +15,9 @@ test('T48 an agent token is created, its secret shown once, and listed with its 
   await expect(shown.getByText(msg('tokenOnce'))).toBeVisible()
   const secret = (await shown.locator('pre.out').first().textContent())?.trim() ?? ''
   expect(secret).toMatch(/^pap_/)
-  await expect(shown.locator('pre.out').nth(1)).toContainText(`Authorization: Bearer ${secret}`)
+  // the dialog shows the token only, no command with it in
+  await expect(shown.locator('pre.out')).toHaveCount(1)
+  await expect(shown).not.toContainText('Bearer')
   await shown.getByRole('button', { name: msg('done') }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 
@@ -23,6 +25,7 @@ test('T48 an agent token is created, its secret shown once, and listed with its 
   await expect(row).toContainText(msg('tokenAgent'))
   await expect(row).toContainText(msg('readWrite'))
   await expect(row).toContainText(msg('neverUsed'))
+  await expect(row).toContainText(msg('issuedAt', { when: '' }).trim())
   // the secret is not shown again
   await page.reload()
   await expect(page.locator('.lr', { hasText: name })).toBeVisible()

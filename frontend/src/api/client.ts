@@ -1,5 +1,5 @@
 import type {
-  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, FilterCondition, Forward, ItemsPage, Me, Op, Paper, PaperListItem, PaperListQuery, PaperRef,
+  ApiToken, Attachment, BatchResult, BlocksPage, Conflict, Diff, FilterCondition, Forward, ItemsPage, Me, OAuthRequest, OAuthRequestInfo, Op, Paper, PaperListItem, PaperListQuery, PaperRef,
   PaperStatusInfo, PaperView, SearchHit, Sidebar, TrashItem, UserSummary, VersionSummary, VersionView, Visibility, Workspace, WorkspaceGroup,
 } from './types'
 
@@ -140,6 +140,16 @@ export const api = {
   createToken: (input: { name: string; kind: ApiToken['kind']; scope: ApiToken['scope']; ttl_hours: number }) =>
     request<{ token: ApiToken; secret: string }>('POST', '/api/v1/tokens', { ...input, agent_name: input.kind === 'agent' ? input.name : '', workspaces: [] }),
   revokeToken: (id: string) => request<void>('DELETE', `/api/v1/tokens/${enc(id)}`),
+  /** Validates an OAuth authorization request for the consent screen; errors carry the OAuth error code as the message. */
+  checkAuthorize: (req: OAuthRequest) =>
+    request<OAuthRequestInfo>('GET', `/api/v1/oauth/authorize?${new URLSearchParams(req as unknown as Record<string, string>).toString()}`),
+  /** Answers the consent screen; the browser then goes to redirect_to. */
+  decideAuthorize: (req: OAuthRequest, scope: ApiToken['scope'], decision: 'allow' | 'deny') =>
+    request<{ redirect_to: string }>('POST', '/api/v1/oauth/authorize', {
+      client_id: req.client_id, redirect_uri: req.redirect_uri, response_type: req.response_type,
+      code_challenge: req.code_challenge, code_challenge_method: req.code_challenge_method,
+      state: req.state, resource: req.resource, scope, decision,
+    }),
 }
 
 /** Loads every block of a paper, a range at a time (printing, export). */

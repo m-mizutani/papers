@@ -27,6 +27,11 @@ type Server struct {
 	wsOrigins    []string
 	enableMCP    bool
 	staticFS     fs.FS
+	// baseURL is --base-url and mcpBaseURL --mcp-base-url (defaults to
+	// baseURL), both without a trailing slash.
+	baseURL    string
+	mcpBaseURL string
+	oauth      *usecase.OAuth
 }
 
 type Option func(*Server)
@@ -63,6 +68,10 @@ func New(uc *usecase.UseCases, auth *usecase.Auth, opts ...Option) (*Server, err
 		}
 		s.staticFS = sub
 	}
+	if s.mcpBaseURL == "" {
+		s.mcpBaseURL = s.baseURL
+	}
+	s.oauth = usecase.NewOAuth(auth, s.oauthResources())
 
 	r := s.router
 	r.Use(middleware.RequestID)
@@ -89,6 +98,7 @@ func New(uc *usecase.UseCases, auth *usecase.Auth, opts ...Option) (*Server, err
 
 	if s.enableMCP {
 		r.With(s.mcpAuthMiddleware).Handle("/mcp", s.mcpHandler())
+		s.routeOAuth(r)
 	}
 
 	r.Get("/*", s.spaHandler())

@@ -44,6 +44,9 @@ type TokenRepository interface {
 	GetToken(ctx context.Context, id model.TokenID) (*model.APIToken, error)
 	ListTokens(ctx context.Context, userID model.UserID) ([]*model.APIToken, error)
 	PutToken(ctx context.Context, token *model.APIToken) error
+	// UpdateToken reads the token, applies fn and writes the result in one
+	// transaction. When fn returns an error nothing is written.
+	UpdateToken(ctx context.Context, id model.TokenID, fn func(*model.APIToken) error) (*model.APIToken, error)
 	DeleteToken(ctx context.Context, id model.TokenID) error
 }
 

@@ -21,3 +21,33 @@ var (
 	// when it has finished.
 	ErrBusy = goerr.New("a background job is working on this paper")
 )
+
+// OAuthError is an error of the OAuth authorization flow with its error
+// code from RFC 6749 / RFC 7591 (invalid_grant, invalid_redirect_uri, ...).
+// It is an invalid argument, so errors.Is(err, ErrInvalidArgument) holds.
+type OAuthError struct {
+	Code        string
+	Description string
+}
+
+func (e *OAuthError) Error() string { return e.Code + ": " + e.Description }
+
+func (e *OAuthError) Unwrap() error { return ErrInvalidArgument }
+
+// OAuth error codes.
+const (
+	OAuthInvalidRequest          = "invalid_request"
+	OAuthInvalidClient           = "invalid_client"
+	OAuthInvalidGrant            = "invalid_grant"
+	OAuthUnsupportedGrantType    = "unsupported_grant_type"
+	OAuthUnsupportedResponseType = "unsupported_response_type"
+	OAuthInvalidTarget           = "invalid_target"
+	OAuthInvalidRedirectURI      = "invalid_redirect_uri"
+	OAuthInvalidClientMetadata   = "invalid_client_metadata"
+	OAuthInvalidCodeChallenge    = "invalid_code_challenge"
+	OAuthInvalidScope            = "invalid_scope"
+)
+
+func NewOAuthError(code, description string) *OAuthError {
+	return &OAuthError{Code: code, Description: description}
+}

@@ -85,6 +85,8 @@ func cmdServe() *cli.Command {
 				httpctrl.WithSecureCookie(server.SecureCookie()),
 				httpctrl.WithWebSocketOrigins(server.WebSocketOrigins()),
 				httpctrl.WithMCP(server.EnableMCP()),
+				httpctrl.WithBaseURL(server.BaseURL()),
+				httpctrl.WithMCPBaseURL(server.MCPBaseURL()),
 			)
 			if err != nil {
 				return goerr.Wrap(err, "failed to build HTTP server")

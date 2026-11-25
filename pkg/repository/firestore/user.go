@@ -160,6 +160,42 @@ func (r *Repository) PutToken(ctx context.Context, token *model.APIToken) error 
 	return nil
 }
 
+func (r *Repository) UpdateToken(ctx context.Context, id model.TokenID, fn func(*model.APIToken) error) (*model.APIToken, error) {
+	if err := validID(string(id)); err != nil {
+		return nil, goerr.Wrap(model.ErrNotFound, "token not found", goerr.V("token_id", id))
+	}
+	doc := r.client.Collection(colTokens).Doc(string(id))
+	var out *model.APIToken
+	err := r.client.RunTransaction(ctx, func(_ context.Context, tx *firestore.Transaction) error {
+		snap, err := tx.Get(doc)
+		if err != nil {
+			if isNotFound(err) {
+				return goerr.Wrap(model.ErrNotFound, "token not found", goerr.V("token_id", id))
+			}
+			return goerr.Wrap(err, "failed to get token")
+		}
+		var tok model.APIToken
+		if err := snap.DataTo(&tok); err != nil {
+			return goerr.Wrap(err, "failed to decode token")
+		}
+		if err := fn(&tok); err != nil {
+			return err
+		}
+		if err := tok.Validate(); err != nil {
+			return err
+		}
+		if err := tx.Set(doc, &tok); err != nil {
+			return goerr.Wrap(err, "failed to set token")
+		}
+		out = &tok
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (r *Repository) DeleteToken(ctx context.Context, id model.TokenID) error {
 	if validID(string(id)) != nil {
 		return nil

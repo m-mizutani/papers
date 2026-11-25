@@ -437,6 +437,8 @@ export interface Me {
   anonymous?: boolean
   /** Only the in-browser demo sets this. */
   demo?: boolean
+  /** The URL where MCP clients reach this server (--mcp-base-url, else --base-url); the MCP endpoint is {mcp_base_url}/mcp. */
+  mcp_base_url?: string
 }
 
 export interface ApiToken {
@@ -449,4 +451,25 @@ export interface ApiToken {
   created_at: string
   expires_at?: string
   last_used_at?: string
+  /** Set for a token an MCP client received through OAuth. */
+  oauth?: { client_name: string; redirect_uri: string }
+}
+
+/** An OAuth authorization request as the MCP client sent it (the query of /oauth/authorize). */
+export interface OAuthRequest {
+  client_id: string
+  redirect_uri: string
+  response_type: string
+  code_challenge: string
+  code_challenge_method: string
+  state: string
+  resource: string
+  scope: string
+}
+
+/** What the consent screen shows about a valid request. */
+export interface OAuthRequestInfo {
+  client_name: string
+  redirect_host: string
+  scope: ApiToken['scope']
 }
