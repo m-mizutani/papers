@@ -17,7 +17,7 @@ import (
 // Filter operators, by property type.
 const (
 	FilterIs         = "is"          // select: one of the elements
-	FilterContains   = "contains"    // multi_select: any of the elements
+	FilterContains   = "contains"    // multi_select: any of the elements; person: any of the users
 	FilterOn         = "on"          // date
 	FilterBefore     = "before"      // date, inclusive
 	FilterAfter      = "after"       // date, inclusive
@@ -42,6 +42,7 @@ type FilterCondition struct {
 	Property model.PropertyID  `json:"property"`
 	Op       string            `json:"op"`
 	Elements []model.ElementID `json:"elements,omitempty"`
+	Users    []model.UserID    `json:"users,omitempty"`
 	Date     string            `json:"date,omitempty"`
 	From     string            `json:"from,omitempty"`
 	To       string            `json:"to,omitempty"`
@@ -163,7 +164,20 @@ func validateCondition(props []model.Property, c FilterCondition) error {
 	switch c.Op {
 	case FilterIsEmpty, FilterIsNotEmpty:
 		return nil
-	case FilterIs, FilterContains:
+	case FilterContains:
+		if prop.Type == model.PropertyPerson {
+			if len(c.Users) == 0 || len(c.Users) > MaxFilterElements {
+				return goerr.Wrap(model.ErrInvalidArgument, "a condition names 1 to 10 users", goerr.V("count", len(c.Users)))
+			}
+			for _, id := range c.Users {
+				if !model.ValidID(string(id)) {
+					return goerr.Wrap(model.ErrInvalidArgument, "the condition names an invalid user id", goerr.V("user_id", id))
+				}
+			}
+			return nil
+		}
+		fallthrough
+	case FilterIs:
 		if (c.Op == FilterIs) != (prop.Type == model.PropertySelect) || !prop.Type.HasElements() {
 			return bad()
 		}
@@ -219,6 +233,10 @@ func (c FilterCondition) holds(v any) bool {
 	case FilterIs:
 		return slices.Contains(c.Elements, model.ElementID(s))
 	case FilterContains:
+		if len(c.Users) > 0 {
+			people, _ := (&model.PropertyValue{Value: v}).People()
+			return slices.ContainsFunc(people, func(x model.PersonRef) bool { return slices.Contains(c.Users, x.UserID) })
+		}
 		l, _ := (&model.PropertyValue{Value: v}).Strings()
 		return slices.ContainsFunc(c.Elements, func(e model.ElementID) bool { return slices.Contains(l, string(e)) })
 	case FilterOn:
@@ -409,8 +427,8 @@ func (u *UseCases) ListItems(ctx context.Context, p *model.Principal, ws model.W
 		if sortProp = model.FindProperty(db.Properties, in.Sort.Property); sortProp == nil {
 			return nil, goerr.Wrap(model.ErrInvalidArgument, "sort names an unknown property "+string(in.Sort.Property), goerr.V("property_id", in.Sort.Property))
 		}
-		if sortProp.Type == model.PropertyMultiSelect {
-			return nil, goerr.Wrap(model.ErrInvalidArgument, "items cannot be sorted by a multi_select property")
+		if sortProp.Type == model.PropertyMultiSelect || sortProp.Type == model.PropertyPerson {
+			return nil, goerr.Wrap(model.ErrInvalidArgument, "items cannot be sorted by a multi_select or person property", goerr.V("type", sortProp.Type))
 		}
 	case in.Sort.Field != "":
 		if in.Sort.Field != model.ItemSortTitle && !in.Sort.Desc {

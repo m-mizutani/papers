@@ -1,6 +1,7 @@
 // Package markup reads and writes the inline text of papers' blocks:
-// Markdown emphasis, code and links, plus Pandoc-style spans for colour
-// ([text]{.red}, [text]{.bg-yellow}).
+// Markdown emphasis, code and links, Pandoc-style spans for colour
+// ([text]{.red}, [text]{.bg-yellow}) and mentions of users
+// ([@name]{user=ID}).
 //
 // The grammar is closed: only the constructs below are recognised and
 // anything else is plain text. Normalize writes the text back in one
@@ -28,6 +29,9 @@ const (
 	KindCode   Kind = "code"
 	KindLink   Kind = "link"
 	KindSpan   Kind = "span"
+	// KindMention is a mention of a user: [@name]{user=ID}. It has no
+	// children; Name is the name written with it (without the "@").
+	KindMention Kind = "mention"
 )
 
 // Node is one piece of inline text.
@@ -38,6 +42,48 @@ type Node struct {
 	URL      string  `json:"url,omitempty"`      // link
 	Color    string  `json:"color,omitempty"`    // span
 	Bg       string  `json:"bg,omitempty"`       // span
+	UserID   string  `json:"user_id,omitempty"`  // mention
+	Name     string  `json:"name,omitempty"`     // mention
+}
+
+// ValidUserID reports whether id looks like a papers ID: 22 characters of
+// base62. The markup does not check that the user exists.
+func ValidUserID(id string) bool {
+	if len(id) != 22 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if !('0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+// mentionNode reads the label and the attributes of [label]{attrs} as a
+// mention, or returns nil when they are not one.
+func mentionNode(label, attrs string) *Node {
+	fields := strings.Fields(attrs)
+	if len(fields) != 1 || !strings.HasPrefix(fields[0], "user=") {
+		return nil
+	}
+	id := strings.TrimPrefix(fields[0], "user=")
+	if !ValidUserID(id) {
+		return nil
+	}
+	var sb strings.Builder
+	for i := 0; i < len(label); i++ {
+		if label[i] == '\\' && i+1 < len(label) && isPunct(label[i+1]) {
+			i++
+		}
+		sb.WriteByte(label[i])
+	}
+	name := strings.TrimPrefix(sb.String(), "@")
+	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\n\r") {
+		return nil
+	}
+	return &Node{Kind: KindMention, UserID: id, Name: name}
 }
 
 // Palette is the set of named colours. Each theme maps a name to a colour
@@ -93,6 +139,8 @@ func plain(sb *strings.Builder, nodes []*Node) {
 		switch n.Kind {
 		case KindText, KindCode:
 			sb.WriteString(n.Text)
+		case KindMention:
+			sb.WriteString("@" + n.Name)
 		default:
 			plain(sb, n.Children)
 		}
@@ -302,6 +350,12 @@ func (p *parser) parse(s string) []*Node {
 				}
 				if j+1 < len(s) && s[j+1] == '{' {
 					if k := strings.IndexByte(s[j+2:], '}'); k >= 0 {
+						if n := mentionNode(label, s[j+2:j+2+k]); n != nil {
+							flush()
+							out = append(out, n)
+							i = j + 3 + k
+							continue
+						}
 						if n, ok := p.span(s[j+2 : j+2+k]); ok {
 							flush()
 							n.Children = p.parse(label)
@@ -352,6 +406,10 @@ func (p *parser) span(attrs string) (*Node, bool) {
 func merge(nodes []*Node) []*Node {
 	var out []*Node
 	for _, n := range nodes {
+		if n.Kind == KindMention {
+			out = append(out, n)
+			continue
+		}
 		if n.Kind != KindText && n.Kind != KindCode {
 			n.Children = merge(n.Children)
 			if len(n.Children) == 0 {
@@ -389,7 +447,7 @@ func appendNodes(out []*Node, nodes ...*Node) []*Node {
 	for _, n := range nodes {
 		if len(out) > 0 {
 			last := out[len(out)-1]
-			if last.Kind == n.Kind && sameFormat(last, n) {
+			if last.Kind == n.Kind && n.Kind != KindMention && sameFormat(last, n) {
 				switch n.Kind {
 				case KindText:
 					last.Text += n.Text
@@ -472,6 +530,15 @@ func render(sb *strings.Builder, nodes []*Node) {
 			}
 			sb.WriteString(strings.Join(cls, " "))
 			sb.WriteString("}")
+		case KindMention:
+			sb.WriteString("[@")
+			for j := 0; j < len(n.Name); j++ {
+				if strings.IndexByte("\\[]`", n.Name[j]) >= 0 {
+					sb.WriteByte('\\')
+				}
+				sb.WriteByte(n.Name[j])
+			}
+			sb.WriteString("]{user=" + n.UserID + "}")
 		}
 	}
 }

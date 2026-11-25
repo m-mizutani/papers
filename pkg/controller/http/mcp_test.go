@@ -63,7 +63,7 @@ func TestMCP(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_search", "papers_read", "papers_create_paper", "papers_write", "papers_save_version", "papers_versions", "papers_diff"} {
+	for _, n := range []string{"papers_guide", "papers_list_workspaces", "papers_search", "papers_read", "papers_create_paper", "papers_write", "papers_save_version", "papers_versions", "papers_diff", "papers_find_users"} {
 		gt.True(t, names[n]).Describef("tool %s", n)
 	}
 
@@ -75,6 +75,24 @@ func TestMCP(t *testing.T) {
 	gt.True(t, ok)
 	gt.Equal(t, g.WorkspaceRules, "Write runbooks as numbered lists.")
 	gt.True(t, strings.Contains(g.Home, "Runbook"))
+
+	// T22: people to mention, and how to write a mention
+	type guideText struct {
+		Guide string `json:"guide"`
+	}
+	gtx, ok := callTool[guideText](t, session, "papers_guide", map[string]any{})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(gtx.Guide, "[@name]{user=<user id>}"))
+	gt.True(t, strings.Contains(gtx.Guide, "person"))
+	type usersOut struct {
+		Users []struct {
+			ID   model.UserID `json:"id"`
+			Name string       `json:"name"`
+		} `json:"users"`
+	}
+	uo, ok := callTool[usersOut](t, session, "papers_find_users", map[string]any{"workspace_id": ws, "query": "bob"})
+	gt.True(t, ok)
+	gt.A(t, uo.Users).Length(1)
 
 	type readOut struct {
 		ID     model.PaperID `json:"id"`

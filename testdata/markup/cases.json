@@ -144,5 +144,45 @@
     "in": "ends with backslash \\",
     "normalized": "ends with backslash \\\\",
     "plain": "ends with backslash \\"
+  },
+  {
+    "in": "[@Masayoshi Mizutani]{user=1csQdaLtbzOEz6NzfMfH6Z} に確認",
+    "normalized": "[@Masayoshi Mizutani]{user=1csQdaLtbzOEz6NzfMfH6Z} に確認",
+    "plain": "@Masayoshi Mizutani に確認"
+  },
+  {
+    "in": "**[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z}** and [@Bob]{user=1csQdaLtbzOEz6NzfMfH6Z}[@Bob]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "normalized": "**[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z}** and [@Bob]{user=1csQdaLtbzOEz6NzfMfH6Z}[@Bob]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "plain": "@Alice and @Bob@Bob"
+  },
+  {
+    "in": "[Alice]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "normalized": "[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "plain": "@Alice"
+  },
+  {
+    "in": "[@A \\] *B* `c`]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "normalized": "[@A \\] *B* \\`c\\`]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "plain": "@A ] *B* `c`"
+  },
+  {
+    "in": "[@Alice]{user=short}",
+    "normalized": "\\[@Alice]{user=short}",
+    "plain": "[@Alice]{user=short}"
+  },
+  {
+    "in": "[@]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "normalized": "\\[@]{user=1csQdaLtbzOEz6NzfMfH6Z}",
+    "plain": "[@]{user=1csQdaLtbzOEz6NzfMfH6Z}"
+  },
+  {
+    "in": "[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z .red}",
+    "normalized": "\\[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z .red}",
+    "plain": "[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z .red}"
+  },
+  {
+    "in": "[[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z} here]{.red}",
+    "normalized": "[[@Alice]{user=1csQdaLtbzOEz6NzfMfH6Z} here]{.red}",
+    "plain": "@Alice here"
   }
 ]

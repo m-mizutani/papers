@@ -404,3 +404,18 @@ func TestFieldsAreSearchable(t *testing.T) {
 	})
 	gt.Nil(t, para.Blocks[0].Props.Fields)
 }
+
+func TestMentionsAreSearchable(t *testing.T) {
+	// T4: a mention is stored as written and found by the name
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	p := e.child(t, alice, wsA, "", "Weekly")
+	id := model.NewUserID()
+	res := e.apply(t, alice, wsA, p.ID, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockParagraph), Content: ptr("Ask [Masayoshi Mizutani]{user=" + string(id) + "} to review")})
+	gt.Equal(t, res.Blocks[0].Content, "Ask [@Masayoshi Mizutani]{user="+string(id)+"} to review")
+	hits := gt.R1(e.uc.Search(ctx, alice, wsA, usecase.SearchInput{Query: "Mizutani"})).NoError(t)
+	gt.A(t, hits).Length(1)
+	gt.Equal(t, hits[0].BlockID, res.Blocks[0].ID)
+	gt.Equal(t, hits[0].Text, "Ask @Masayoshi Mizutani to review")
+}

@@ -623,3 +623,33 @@ func TestHTMLPaperRequestLimit(t *testing.T) { // T61
 	big := strings.Repeat("a", 5<<20)
 	alice.expect("PUT", "/api/v1/workspaces/team/papers/"+string(p.ID)+"/visibility", map[string]any{"visibility": "public", "parent": big}, http.StatusBadRequest, nil)
 }
+
+func TestUsersAPI(t *testing.T) {
+	// T19, T21, T24 through REST
+	ts := newTestServer(t, false)
+	alice, bob, ws, _ := setupPaper(t, ts)
+	type usersResp struct {
+		Users []map[string]any `json:"users"`
+	}
+	var r usersResp
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?q=BOB", nil, http.StatusOK, &r)
+	gt.A(t, r.Users).Length(1)
+	_, hasEmail := r.Users[0]["email"]
+	gt.False(t, hasEmail)
+	bobID, _ := r.Users[0]["id"].(string)
+
+	var byID usersResp
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?ids="+bobID+","+string(model.NewUserID()), nil, http.StatusOK, &byID)
+	gt.A(t, byID.Users).Length(1)
+	gt.Equal(t, byID.Users[0]["id"], any(bobID))
+
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?ids=short", nil, http.StatusBadRequest, nil)
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?ids="+bobID+"&q=b", nil, http.StatusBadRequest, nil)
+	bob.expect("GET", "/api/v1/workspaces/nowhere/users", nil, http.StatusNotFound, nil)
+
+	// T10 through REST: the papers list by a user's ID
+	var page usecase.PapersPage
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers?place=all&creator="+bobID, nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(0)
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers?creator=bob", nil, http.StatusBadRequest, nil)
+}

@@ -560,6 +560,9 @@ func (a *dbApplier) value(prop *model.Property, raw any) (any, error) {
 			raw = id
 		}
 	case []any, []string:
+		if prop.Type == model.PropertyPerson {
+			break
+		}
 		l, ok := (&model.PropertyValue{Value: x}).Strings()
 		if !ok {
 			return nil, goerr.Wrap(model.ErrInvalidArgument, "a multi_select value is a list of element ids", goerr.V("property_id", prop.ID))
