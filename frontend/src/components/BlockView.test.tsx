@@ -27,9 +27,18 @@ describe('child papers', () => {
     const ctx = ctxWith({ c1: ref('c1', 'blocks', 'Failover'), c2: ref('c2', 'html', 'Weekly') }, blocks)
     const { container } = render(<MemoryRouter>{blocks.map((b) => <BlockView key={b.id} block={b} ctx={ctx} />)}</MemoryRouter>)
     const cards = container.querySelectorAll('.child')
-    expect(cards[0]?.querySelector('.pi')?.textContent).toBe('▤')
+    expect(cards[0]?.querySelector('.pi')?.textContent).toBe('📄')
     expect(cards[0]?.querySelector('.cs')?.textContent).toBe('v2')
-    expect(cards[1]?.querySelector('.pi')?.textContent).toBe('</>')
+    expect(cards[1]?.querySelector('.pi')?.textContent).toBe('🧩')
     expect(cards[1]?.querySelector('.cs')?.textContent).toBe('HTML · v2')
+  })
+
+  it('T14 shows the icon set for a child, else the default for its kind', () => {
+    const ref = (id: string, kind: PaperRef['kind'], icon?: string): PaperRef => ({ id, workspace_id: 'team', kind, title: id, icon, visibility: 'public', status: 'draft', version_number: 0, created_by: actor })
+    const blocks = [block('a', 'c1'), block('b', 'c2'), block('c', 'c3')]
+    const ctx = ctxWith({ c1: ref('c1', 'blocks', '🚀'), c2: ref('c2', 'database'), c3: ref('c3', 'blocks') }, blocks)
+    const { container } = render(<MemoryRouter>{blocks.map((b) => <BlockView key={b.id} block={b} ctx={ctx} />)}</MemoryRouter>)
+    const icons = [...container.querySelectorAll('.child .pi')].map((x) => x.textContent)
+    expect(icons).toEqual(['🚀', '🗃️', '📄'])
   })
 })

@@ -41,14 +41,14 @@ Block types (type: props)
 - paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them all, otherwise archives the child with everything under it.
 - table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
 - mermaid, svg (a complete <svg> with a viewBox), html (self-contained, rendered in a sandboxed iframe): only AI writes these; props.height sets the frame height.
-- HTML papers: a paper whose whole body is one HTML document you write; people only view it (in a sandboxed frame where its scripts run) and cannot edit it. Create one with papers_create_paper kind:"html" and its html (required; the paper and its HTML are written together or not at all), or with {"op":"insert","type":"paper","title":"...","paper_kind":"html","html":"..."} in its parent's batch. Replace the whole document with {"op":"set_html","html":"...","base_rev":N}: N is the rev of its one block (type html_page) from papers_read, which also returns the current html; it can go in the same batch as set_title. No other block op works on an HTML paper, and it cannot have child papers. Its title, place, visibility, versions, archive and trash work as for any paper. The document is at most 5 MiB of UTF-8; make it self-contained or use absolute URLs (relative URLs do not resolve). Its scripts cannot reach papers, its API or the viewer's cookies, and cannot open new windows. Whether it may load anything from other hosts (CDN scripts, images, fetch) is up to the workspace: see sandbox in papers_guide with workspace_id.
+- HTML papers: a paper whose whole body is one HTML document you write; people only view it (in a sandboxed frame where its scripts run) and cannot edit it. Create one with papers_create_paper kind:"html" and its html (required; the paper and its HTML are written together or not at all), or with {"op":"insert","type":"paper","title":"...","paper_kind":"html","html":"..."} in its parent's batch. Replace the whole document with {"op":"set_html","html":"...","base_rev":N}: N is the rev of its one block (type html_page) from papers_read, which also returns the current html; it can go in the same batch as set_title and set_icon. No other block op works on an HTML paper, and it cannot have child papers. Its title, place, visibility, versions, archive and trash work as for any paper. The document is at most 5 MiB of UTF-8; make it self-contained or use absolute URLs (relative URLs do not resolve). Its scripts cannot reach papers, its API or the viewer's cookies, and cannot open new windows. Whether it may load anything from other hosts (CDN scripts, images, fetch) is up to the workspace: see sandbox in papers_guide with workspace_id.
 - In svg and html, mark each value people may change with data-field="name" on its element and put the value in props.fields ({"rto":"15m"}); people then edit just those values in place. Names: lowercase letter first, then lowercase letters, digits or _ (at most 32 characters); at most 32 fields; each value one line, at most 200 bytes. Field values are searchable.
 
 Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 - {"op":"insert","type":"paragraph","content":"...","after":"<block id>|ref:n1|''","ref":"n2"}  after omitted = append, "" = top.
 - {"op":"update","block_id":"...","base_rev":3,"content":"...","props":{...}}  props replaces all props.
 - {"op":"delete","block_id":"...","base_rev":3}   {"op":"move","block_id":"...","after":"..."}
-- {"op":"set_title","title":"..."}
+- {"op":"set_title","title":"..."}   {"op":"set_icon","icon":"🚀"}  one emoji shown before the title ("" removes it; papers without one show a default by kind). Works on every kind of paper; papers_create_paper and an insert of a paper block also take icon.
 - {"op":"insert_markdown","markdown":"## Section\n\ntext\n\n- a\n- b","after":"..."}  the fastest way to write a lot; fenced mermaid/svg/html become rich blocks, GFM tables become tables.
 - Paper-level ops, each alone in its batch: move_paper {parent (required), after, workspace} or {unfiled:true} (out of the tree; only for a paper without child papers), set_visibility {visibility, parent} (parent is optional: making a paper public without one leaves it unfiled), save_version {note}, restore_version {version}, archive / unarchive {subtree}.
 - Work on everything under a paper (deleting a paper block, archive with subtree, moving to another workspace) runs in the background after the call returns; read the papers again to see the result. Deleting a child whose subtree has someone else's paper archives it instead. While a move runs, its papers cannot be written (error "busy"); afterwards the old paper id answers with where it moved.
@@ -60,7 +60,7 @@ Databases (tables of papers, like Notion databases)
 - Write a database with papers_write on the database. Ops:
   {"op":"add_property","name":"Status","property_type":"select","ref":"p1"}  update_property {property, name}  move_property {property, after}  delete_property {property}
   {"op":"add_element","property":"<id>|ref:p1","value":"Doing","color":"blue","ref":"e1"}  update_element {property, element, value?, color?}  move_element {property, element, after}  delete_element {property, element}
-  {"op":"insert_item","title":"...","set":{"<property id>":"<value>"},"ref":"i1"}  {"op":"set_values","item":"<id>","set":{"<property id>":"ref:e1","<multi id>":["<element id>"],"<date id>":"2026-12-10","<text id>":"...","<person id>":[{"user_id":"<user id>","name":"..."}],"<id>":null}}  move_item {item, after}  set_title {title}
+  {"op":"insert_item","title":"...","set":{"<property id>":"<value>"},"ref":"i1"}  {"op":"set_values","item":"<id>","set":{"<property id>":"ref:e1","<multi id>":["<element id>"],"<date id>":"2026-12-10","<text id>":"...","<person id>":[{"user_id":"<user id>","name":"..."}],"<id>":null}}  move_item {item, after}  set_title {title}  set_icon {icon}
   Create an element and use it in one batch through its ref. null or "" clears a value. Colors: gray brown orange yellow green blue purple pink red.
 - Item bodies, titles and versions are written as for any paper (papers_write / papers_save_version on the item). A version of an item includes its property values.`
 
@@ -176,13 +176,14 @@ type mcpSearchIn struct {
 type mcpPaperRef struct {
 	ID      model.PaperID     `json:"id"`
 	Title   string            `json:"title"`
+	Icon    string            `json:"icon,omitempty"`
 	Status  model.PaperStatus `json:"status"`
 	Version int               `json:"version"`
 	Private bool              `json:"private,omitempty"`
 }
 
 func toMCPRef(r *usecase.PaperRef) mcpPaperRef {
-	return mcpPaperRef{ID: r.ID, Title: r.Title, Status: r.Status, Version: r.VersionNumber, Private: r.Visibility == model.VisibilityPrivate}
+	return mcpPaperRef{ID: r.ID, Title: r.Title, Icon: r.Icon, Status: r.Status, Version: r.VersionNumber, Private: r.Visibility == model.VisibilityPrivate}
 }
 
 type mcpSearchHit struct {
@@ -219,6 +220,7 @@ type mcpValue struct {
 type mcpItem struct {
 	ID     model.PaperID `json:"id"`
 	Title  string        `json:"title"`
+	Icon   string        `json:"icon,omitempty"`
 	Values []mcpValue    `json:"values"`
 }
 
@@ -260,6 +262,7 @@ type mcpReadOut struct {
 	ID       model.PaperID     `json:"id"`
 	Kind     model.PaperKind   `json:"kind"`
 	Title    string            `json:"title"`
+	Icon     string            `json:"icon,omitempty"`
 	Path     []mcpPaperRef     `json:"path"`
 	Status   model.PaperStatus `json:"status"`
 	Version  int               `json:"version"`
@@ -283,6 +286,7 @@ type mcpReadOut struct {
 type mcpCreateIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
 	Title       string            `json:"title" jsonschema:"paper title (single line)"`
+	Icon        string            `json:"icon,omitempty" jsonschema:"optional icon: one emoji shown before the title"`
 	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit to create an unfiled paper"`
 	Private     bool              `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
 	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown (not for an HTML paper)"`
@@ -478,14 +482,14 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			if in.Private {
 				vis = model.VisibilityPrivate
 			}
-			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown, Kind: in.Kind, HTML: in.HTML})
+			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Icon: in.Icon, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown, Kind: in.Kind, HTML: in.HTML})
 			if err != nil {
 				return mcpPaperRef{}, err
 			}
-			return mcpPaperRef{ID: q.ID, Title: q.Title, Status: q.Status(), Private: q.IsPrivate()}, nil
+			return mcpPaperRef{ID: q.ID, Title: q.Title, Icon: q.Icon, Status: q.Status(), Private: q.IsPrivate()}, nil
 		})
 
-	addTool(server, "papers_write", "Apply ops to a paper atomically (see papers_guide; an HTML paper takes set_html and set_title). Fails with a conflict when a block changed since your base_rev. Does not save a version.",
+	addTool(server, "papers_write", "Apply ops to a paper atomically (see papers_guide; an HTML paper takes set_html, set_title and set_icon). Fails with a conflict when a block changed since your base_rev. Does not save a version.",
 		func(ctx context.Context, p *model.Principal, in mcpWriteIn) (mcpWriteOut, error) {
 			q, err := s.uc.ResolvePaper(ctx, p, in.WorkspaceID, in.Paper)
 			if err != nil {
@@ -584,7 +588,7 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 		return mcpReadOut{}, err
 	}
 	out := mcpReadOut{
-		ID: q.ID, Kind: view.Paper.Kind.Or(), Title: view.Paper.Title, Status: view.Paper.Status(), Version: view.Paper.VersionNumber,
+		ID: q.ID, Kind: view.Paper.Kind.Or(), Title: view.Paper.Title, Icon: view.Paper.Icon, Status: view.Paper.Status(), Version: view.Paper.VersionNumber,
 		Path: []mcpPaperRef{}, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
 	}
 	for _, a := range view.Path {
@@ -602,7 +606,7 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 		}
 		out.Properties, out.Items, out.Next = view.Paper.Properties, []mcpItem{}, page.NextCursor
 		for _, r := range page.Items {
-			out.Items = append(out.Items, mcpItem{ID: r.Item.ID, Title: r.Item.Title, Values: toMCPValues(view.Paper.Properties, r.Values)})
+			out.Items = append(out.Items, mcpItem{ID: r.Item.ID, Title: r.Item.Title, Icon: r.Item.Icon, Values: toMCPValues(view.Paper.Properties, r.Values)})
 		}
 		out.URL, out.Blocks = paperURL(in.WorkspaceID, q.ID, ""), []mcpBlock{}
 		return out, nil

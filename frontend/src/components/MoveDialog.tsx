@@ -3,18 +3,21 @@ import { api } from '../api/client'
 import type { Paper, PaperListItem, Workspace } from '../api/types'
 import { useTranslation } from '../i18n'
 import { Modal } from '../ui/Modal'
+import { DEFAULT_ICONS, paperIcon } from '../utils/icon'
 
 /**
  * Picks a new parent for a paper (spec: R12). Only filed papers can be
  * parents: unfiled and private papers have no children. Another workspace
  * moves the paper with everything under it as a background job.
  */
-export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: {
+export function MoveDialog({ paper, ws, workspaces, exclude, homeIcon, onMove, onClose }: {
   paper: Paper
   ws: string
   workspaces: Workspace[]
   /** The paper itself and everything under it. */
   exclude: Set<string>
+  /** The icon set on this workspace's home, if any; other workspaces show the default. */
+  homeIcon?: string
   onMove: (parent: string, workspace: string) => Promise<void>
   onClose: () => void
 }) {
@@ -23,7 +26,7 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
   const [q, setQ] = useState('')
   const [rows, setRows] = useState<PaperListItem[]>([])
   const [next, setNext] = useState('')
-  const [found, setFound] = useState<{ id: string; title: string }[]>([])
+  const [found, setFound] = useState<{ id: string; title: string; icon: string }[]>([])
   const [home, setHome] = useState<string>('')
   const [sel, setSel] = useState<string | null>(null)
 
@@ -61,7 +64,7 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
         if (!live) return
         const seen = new Set<string>()
         setFound(hits.map((h) => h.paper).filter((p) => p.visibility === 'public' && !!p.parent_id && !seen.has(p.id) && !!seen.add(p.id))
-          .map((p) => ({ id: p.id, title: p.title })))
+          .map((p) => ({ id: p.id, title: p.title, icon: paperIcon(p) })))
       }).catch(() => { if (live) setFound([]) })
     }, 150)
     return () => { live = false; window.clearTimeout(timer) }
@@ -74,13 +77,15 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
     const list = rows.filter((r) => r.visibility === 'public' && ok(r.id) && match(r.title))
     const listed = new Set(list.map((r) => r.id))
     const extra = found.filter((r) => ok(r.id) && !listed.has(r.id) && match(r.title))
-    const homeRow = w && (!q || w.name.toLowerCase().includes(q.toLowerCase())) ? [{ id: home, title: `⌂ ${w.name}`, sub: '' }] : []
+    const homeRow = w && home && (!q || w.name.toLowerCase().includes(q.toLowerCase()))
+      ? [{ id: home, icon: (target === ws && homeIcon) || DEFAULT_ICONS.home, title: w.name, sub: '' }]
+      : []
     return [
       ...homeRow,
-      ...list.map((r) => ({ id: r.id, title: r.title || t('untitled'), sub: r.parent?.title ?? '' })),
-      ...extra.map((r) => ({ id: r.id, title: r.title || t('untitled'), sub: '' })),
+      ...list.map((r) => ({ id: r.id, icon: paperIcon(r), title: r.title || t('untitled'), sub: r.parent?.title ?? '' })),
+      ...extra.map((r) => ({ id: r.id, icon: r.icon, title: r.title || t('untitled'), sub: '' })),
     ]
-  }, [rows, found, q, target, ws, exclude, home, workspaces, t])
+  }, [rows, found, q, target, ws, exclude, home, homeIcon, workspaces, t])
 
   return (
     <Modal wide title={t('moveTitle', { title: paper.title || t('untitled') })} onClose={onClose}
@@ -102,7 +107,7 @@ export function MoveDialog({ paper, ws, workspaces, exclude, onMove, onClose }: 
         <div className="picker" role="listbox" aria-label={t('moveTo')}>
           {options.map((o) => (
             <button key={o.id} type="button" role="option" aria-selected={sel === o.id} className={`prow${sel === o.id ? ' sel' : ''}`} onClick={() => setSel(o.id)}>
-              <span>{o.title}</span>
+              <span><span className="pic-i" aria-hidden>{o.icon}</span> {o.title}</span>
               {o.sub && <span className="pp">{o.sub}</span>}
             </button>
           ))}

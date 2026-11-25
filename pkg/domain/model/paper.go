@@ -6,8 +6,10 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/m-mizutani/goerr/v2"
+	"github.com/rivo/uniseg"
 )
 
 // Visibility decides who can see a paper.
@@ -93,6 +95,10 @@ type Paper struct {
 	// kinds existed, which are blocks (see IsHTML).
 	Kind  PaperKind `json:"kind"`
 	Title string    `json:"title"`
+	// Icon is the emoji people or AI set for the paper; empty means none
+	// is set and screens show a default chosen by kind. It is not part of
+	// versions.
+	Icon string `json:"icon,omitempty"`
 	// ParentID is the paper whose body holds this paper's paper block. It
 	// is empty for the home, for unfiled papers, for private papers and
 	// for items.
@@ -147,11 +153,55 @@ func ValidateTitle(title string) error {
 	return nil
 }
 
+// MaxIconLength is the longest icon in bytes.
+const MaxIconLength = 32
+
+// NormalizeIcon trims the spaces around an icon.
+func NormalizeIcon(icon string) string {
+	return strings.TrimSpace(icon)
+}
+
+// ValidateIcon accepts an empty icon (none set) or one grapheme cluster (one
+// character on screen, such as one emoji with its modifiers) of at most
+// MaxIconLength bytes, without spaces or control characters. Callers trim the
+// value first (NormalizeIcon).
+func ValidateIcon(icon string) error {
+	if icon == "" {
+		return nil
+	}
+	if len(icon) > MaxIconLength {
+		return goerr.Wrap(ErrInvalidArgument, "icon is too long", goerr.V("length", len(icon)))
+	}
+	if uniseg.GraphemeClusterCount(icon) != 1 {
+		return goerr.Wrap(ErrInvalidArgument, "icon must be a single emoji", goerr.V("icon", icon))
+	}
+	for _, r := range icon {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return goerr.Wrap(ErrInvalidArgument, "icon must not contain spaces or control characters", goerr.V("icon", icon))
+		}
+	}
+	// a cluster of only format characters and combining marks shows nothing
+	visible := false
+	for _, r := range icon {
+		if !unicode.In(r, unicode.Cf, unicode.Mn, unicode.Me) {
+			visible = true
+			break
+		}
+	}
+	if !visible {
+		return goerr.Wrap(ErrInvalidArgument, "icon must be visible", goerr.V("icon", icon))
+	}
+	return nil
+}
+
 func (p *Paper) Validate() error {
 	if !ValidID(string(p.ID)) || p.WorkspaceID == "" {
 		return goerr.Wrap(ErrInvalidArgument, "paper id and workspace id are required", goerr.V("id", p.ID))
 	}
 	if err := ValidateTitle(p.Title); err != nil {
+		return err
+	}
+	if err := ValidateIcon(p.Icon); err != nil {
 		return err
 	}
 	if err := p.Kind.Validate(); err != nil {

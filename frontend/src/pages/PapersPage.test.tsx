@@ -46,4 +46,17 @@ describe('PapersPage', () => {
     expect(list).toHaveBeenCalledTimes(2)
     expect(screen.getAllByText('Weekly').length).toBeGreaterThan(0)
   })
+
+  it('T14 a row shows its icon or the default, and the icon of its parent; a private row has no lock before the title', async () => {
+    const withIcon = { ...row('p1', 'Launch'), icon: '🚀', parent: { id: 'h', title: 'Home', icon: '📚' } } as PaperListItem
+    const plain = { ...row('p2', 'Plain'), visibility: 'private' } as PaperListItem
+    const item = { ...row('p3', 'Task'), parent: { id: 'd', title: 'Tasks', kind: 'database' } } as PaperListItem
+    vi.spyOn(api, 'listPapers').mockResolvedValue({ papers: [withIcon, plain, item], next_cursor: '' })
+    await show('/ws/w/papers?place=all')
+    const rows = screen.getAllByRole('row').slice(1)
+    expect(rows[0]?.querySelector('.ptt .pic')?.textContent).toBe('🚀')
+    expect(rows[0]?.querySelector('.pwide .ploc .pic')?.textContent).toBe('📚')
+    expect(rows[1]?.querySelector('.ptt .pic')?.textContent).toBe('📄')
+    expect(rows[2]?.querySelector('.pwide .ploc .pic')?.textContent).toBe('🗃️')
+  })
 })

@@ -20,11 +20,14 @@ import (
 type OpKind string
 
 const (
-	OpInsert         OpKind = "insert"
-	OpUpdate         OpKind = "update"
-	OpDelete         OpKind = "delete"
-	OpMove           OpKind = "move"
-	OpSetTitle       OpKind = "set_title"
+	OpInsert   OpKind = "insert"
+	OpUpdate   OpKind = "update"
+	OpDelete   OpKind = "delete"
+	OpMove     OpKind = "move"
+	OpSetTitle OpKind = "set_title"
+	// OpSetIcon sets or (with "") removes the paper's icon. Like a title
+	// it has no revision: the last write wins.
+	OpSetIcon        OpKind = "set_icon"
 	OpInsertMarkdown OpKind = "insert_markdown"
 	// OpSetHTML replaces the document of an HTML paper (its html_page
 	// block), based on BaseRev like an update.
@@ -74,8 +77,11 @@ type Op struct {
 	After   *string           `json:"after,omitempty"`
 	// BaseRev is the revision of the block the writer based the op on.
 	// Required for update and delete of an existing block.
-	BaseRev  int64   `json:"base_rev,omitempty"`
-	Title    *string `json:"title,omitempty"`
+	BaseRev int64   `json:"base_rev,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	// Icon is the icon of set_icon, and of the paper an insert of a paper
+	// block (or insert_item) creates: one emoji, or "" for none.
+	Icon     *string `json:"icon,omitempty"`
 	Markdown *string `json:"markdown,omitempty"`
 	// HTML is the document of set_html, and of the child an insert of a
 	// paper block creates with PaperKind html (required there).
@@ -487,12 +493,16 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 		if err := model.ValidateTitle(title); err != nil {
 			return "", err
 		}
+		icon, err := opIcon(op)
+		if err != nil {
+			return "", err
+		}
 		kind := model.PaperKindBlocks
 		if op.PaperKind != nil && *op.PaperKind == model.PaperKindDatabase {
 			kind = model.PaperKindDatabase
 		}
 		child = &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Kind: kind, Title: title, ParentID: a.paper.ID,
+			ID: model.NewPaperID(), WorkspaceID: a.paper.WorkspaceID, Kind: kind, Title: title, Icon: icon, ParentID: a.paper.ID,
 			Visibility: model.VisibilityPublic,
 			CreatedBy:  a.actor, CreatedAt: a.now, UpdatedBy: a.actor, UpdatedAt: a.now,
 		}
@@ -833,6 +843,41 @@ func (a *applier) setTitle(op Op) error {
 	return nil
 }
 
+func (a *applier) setIcon(op Op) error {
+	icon, err := opIcon(op)
+	if err != nil {
+		return err
+	}
+	if icon == a.paper.Icon {
+		return nil
+	}
+	a.paper.Icon = icon
+	a.paperChanged = true
+	return nil
+}
+
+// htmlPaperOp reports whether the op works on an HTML paper, whose body is
+// written only with set_html.
+func htmlPaperOp(k OpKind) bool {
+	return k == OpSetTitle || k == OpSetIcon || k == OpSetHTML
+}
+
+// opIcon is the icon set_icon carries (required) or a new paper's icon
+// (empty when absent), trimmed and checked.
+func opIcon(op Op) (string, error) {
+	if op.Icon == nil {
+		if op.Kind == OpSetIcon {
+			return "", goerr.Wrap(model.ErrInvalidArgument, "set_icon requires icon")
+		}
+		return "", nil
+	}
+	icon := model.NormalizeIcon(*op.Icon)
+	if err := model.ValidateIcon(icon); err != nil {
+		return "", err
+	}
+	return icon, nil
+}
+
 func (a *applier) insertMarkdown(op Op) error {
 	if op.Markdown == nil {
 		return goerr.Wrap(model.ErrInvalidArgument, "insert_markdown requires markdown")
@@ -1096,7 +1141,7 @@ func (a *applier) noteEditing(id model.BlockID) error {
 }
 
 func (a *applier) apply(op Op) error {
-	if a.paper.IsHTML() && op.Kind != OpSetTitle && op.Kind != OpSetHTML {
+	if a.paper.IsHTML() && !htmlPaperOp(op.Kind) {
 		return goerr.Wrap(model.ErrInvalidArgument, "an HTML paper's body is written only with set_html", goerr.V("op", op.Kind), goerr.V("paper_id", a.paper.ID))
 	}
 	switch op.Kind {
@@ -1113,6 +1158,8 @@ func (a *applier) apply(op Op) error {
 		return a.move(op)
 	case OpSetTitle:
 		return a.setTitle(op)
+	case OpSetIcon:
+		return a.setIcon(op)
 	case OpInsertMarkdown:
 		return a.insertMarkdown(op)
 	case OpInsertRow:
@@ -1305,7 +1352,7 @@ func (u *UseCases) stageBatchHTML(ctx context.Context, actor model.Actor, paper 
 		if op.PaperKind != nil && op.Kind != OpInsert {
 			return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "paper_kind is only for inserting a paper block", goerr.V("op", op.Kind))
 		}
-		if paper.IsHTML() && op.Kind != OpSetTitle && op.Kind != OpSetHTML {
+		if paper.IsHTML() && !htmlPaperOp(op.Kind) {
 			return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "an HTML paper's body is written only with set_html", goerr.V("op", op.Kind), goerr.V("paper_id", paper.ID))
 		}
 	}

@@ -75,7 +75,7 @@ test('T36 the parent shows an HTML child, and the menu opens the HTML instead of
   const child = await createPaper(request, { title: unique('Q3'), kind: 'html', html: '<p>numbers</p>', parent: parent.id })
   await openPaper(page, parent.id)
   const card = page.locator('.child', { hasText: child.title })
-  await expect(card.locator('.pi')).toHaveText('</>')
+  await expect(card.locator('.pi')).toHaveText('🧩')
   await expect(card.locator('.cs')).toContainText(msg('htmlBadge'))
 
   await card.click()

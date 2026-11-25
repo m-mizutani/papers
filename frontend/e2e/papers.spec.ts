@@ -116,7 +116,7 @@ test('T38 a new paper starts unfiled; moving it files it and the unfiled count g
 
   await expect(page.locator('.crumbs')).toContainText(target.title)
   await expect(page.locator('.crumbs .crumb').first()).not.toHaveText(msg('unfiled'))
-  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(title)
+  await expect(page.locator('.crumbs .crumb.cur')).toHaveText(`📄 ${title}`)
   await expect(badge).toHaveText(String(before))
   expect((await paperOf(request, id)).parent_id).toBe(target.id)
 

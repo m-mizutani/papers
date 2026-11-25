@@ -17,6 +17,7 @@ import { RichEditor, type Caret, type Slash } from './RichEditor'
 import { RichFrame, frameTitle } from './RichFrame'
 import { gapBetween } from './spacing'
 import { TableBlock } from './TableBlock'
+import { DEFAULT_ICONS, paperIcon } from '../utils/icon'
 
 export interface EditingState {
   id: string
@@ -99,13 +100,13 @@ function kindClass(type: BlockType, props: BlockProps): string {
 function ChildCard({ block, ctx }: { block: Block; ctx: BlockContext }) {
   const { t } = useTranslation()
   const ref = ctx.state.children.get(block.props.paper_id ?? '')
-  if (!ref) return <div className="child arch"><span className="pi" aria-hidden>▤</span><span className="ct"><span className="cn">{t('childHidden')}</span></span></div>
+  if (!ref) return <div className="child arch"><span className="pi" aria-hidden>{DEFAULT_ICONS.blocks}</span><span className="ct"><span className="cn">{t('childHidden')}</span></span></div>
   const db = ref.kind === 'database'
   const status = ref.version_number > 0 ? `v${ref.version_number}` : t('draft')
   const html = ref.kind === 'html'
   return (
     <Link className={`child${ref.status === 'archived' ? ' arch' : ''}`} to={`/ws/${ctx.ws}/p/${ref.id}`} onClick={(e) => { e.stopPropagation(); rememberKind(ref.id, ref.kind) }}>
-      <span className={`pi${html ? ' code' : db ? ' db' : ''}`} aria-hidden>{html ? '</>' : db ? '⊞' : '▤'}</span>
+      <span className="pi" aria-hidden>{paperIcon(ref)}</span>
       <span className="ct">
         <span className="cn">{ref.title || t(db ? 'untitledDatabase' : 'untitled')}</span>
         {db
