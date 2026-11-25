@@ -30,7 +30,9 @@ type Entry struct {
 	// Key names the entry so that other entries can be its children.
 	Key   string
 	Title string
-	Kind  model.PaperKind
+	// Icon is the paper's icon; empty leaves the default for its kind.
+	Icon string
+	Kind model.PaperKind
 	// File is the body: Markdown for a blocks paper, an HTML document for
 	// an HTML paper, and for a database a JSON Database (its batch).
 	File string
@@ -42,9 +44,9 @@ type Entry struct {
 // children appear in their parent's body in this order, after its Markdown.
 func Entries() []Entry {
 	return []Entry{
-		{Key: "welcome", Title: "Welcome to papers", Kind: model.PaperKindBlocks, File: "welcome.md"},
-		{Key: "agents", Title: "Working with AI agents", Kind: model.PaperKindBlocks, File: "agents.md", Parent: "welcome"},
-		{Key: "rich", Title: "Diagrams and rich blocks", Kind: model.PaperKindBlocks, File: "rich.md"},
+		{Key: "welcome", Title: "Welcome to papers", Icon: "👋", Kind: model.PaperKindBlocks, File: "welcome.md"},
+		{Key: "agents", Title: "Working with AI agents", Icon: "🤖", Kind: model.PaperKindBlocks, File: "agents.md", Parent: "welcome"},
+		{Key: "rich", Title: "Diagrams and rich blocks", Icon: "🎨", Kind: model.PaperKindBlocks, File: "rich.md"},
 		{Key: "dashboard", Title: "Release dashboard", Kind: model.PaperKindHTML, File: "dashboard.html"},
 		{Key: "roadmap", Title: "Product roadmap", Kind: model.PaperKindDatabase, File: "roadmap.json"},
 	}

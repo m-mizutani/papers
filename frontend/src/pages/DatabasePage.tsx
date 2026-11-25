@@ -14,6 +14,8 @@ import { useToast } from '../ui/Toast'
 import { actorName } from '../utils/actors'
 import { ActorMention, PeopleChooser, PersonValuePicker, useUserNames } from '../components/UserMention'
 import { MOD_LABEL, isEnter } from '../utils/keyboard'
+import { paperIcon } from '../utils/icon'
+import { IconPicker } from '../components/IconPicker'
 
 // A database: its items as a table, one column per property. Definitions
 // and the order of items are written through the database's batch, an
@@ -85,6 +87,8 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
   const [adding, setAdding] = useState<Anchor | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Property | null>(null)
   const [menu, setMenu] = useState<{ anchor: HTMLElement; items: MenuItem[]; label: string } | null>(null)
+  const [iconPick, setIconPick] = useState<HTMLElement | null>(null)
+  const iconRef = useRef<HTMLButtonElement>(null)
   const [cond, setCond] = useState<{ index: number; anchor: HTMLElement } | null>(null)
   const [focusItem, setFocusItem] = useState<string | null>(null)
   // A condition just added: its editor opens once its chip is drawn.
@@ -182,7 +186,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
         }
         if (ev.type === 'paper_updated' && unsorted && n.db !== s.db) n = placeItems(n, [], n.db.items ?? [])
         if (ev.type === 'paper_updated' && ev.paper?.id === paperId && n.db !== s.db) {
-          if (ev.paper.title !== s.db.title) onChanged()
+          if (ev.paper.title !== s.db.title || ev.paper.icon !== s.db.icon) onChanged()
           if (document.activeElement?.classList.contains('title-input') !== true) setTitle(ev.paper.title)
         }
         if (n !== s) put(n)
@@ -403,6 +407,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
     const owner = db.created_by.user_id === me.user.id
     return [
       { label: t('copyLink'), icon: '🔗', onSelect: () => void navigator.clipboard?.writeText(`${window.location.origin}/ws/${ws}/p/${paperId}`).then(() => toast(t('copied')), () => undefined) },
+      ...(canEdit ? [{ label: t('changeIcon'), icon: paperIcon(db), onSelect: () => setIconPick(iconRef.current ?? document.body) }] : []),
       { label: t('exportMarkdown'), icon: '⇩', onSelect: () => { window.location.href = api.markdownURL(ws, paperId) } },
       '-',
       db.archived_at
@@ -430,10 +435,10 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
           <button type="button" className="iconbtn" aria-label={t('toggleSidebar')} title={`${t('toggleSidebar')} (${MOD_LABEL}\\)`} onClick={layout.toggleSidebar}>☰</button>
           <nav className="crumbs" aria-label={t('location')}>
             {view && db?.parent_id && (view.path ?? []).map((p, i) => (
-              <span key={p.id} style={{ display: 'contents' }}>{i > 0 && <span className="crumb-sep">/</span>}<Link className="crumb" to={i === 0 ? `/ws/${ws}` : `/ws/${ws}/p/${p.id}`}>{p.title || t('untitled')}</Link></span>
+              <span key={p.id} style={{ display: 'contents' }}>{i > 0 && <span className="crumb-sep">/</span>}<Link className="crumb" to={i === 0 ? `/ws/${ws}` : `/ws/${ws}/p/${p.id}`}><span className="pic-i" aria-hidden>{paperIcon(p, i === 0 ? p.id : undefined)}</span> {p.title || t('untitled')}</Link></span>
             ))}
             {view && !db?.parent_id && <Link className="crumb" to={`/ws/${ws}/papers`}>{t('unfiled')}</Link>}
-            {view && <><span className="crumb-sep">/</span><span className="crumb cur">{title.trim() || t('untitledDatabase')}</span></>}
+            {view && <><span className="crumb-sep">/</span><span className="crumb cur"><span className="pic-i" aria-hidden>{db ? paperIcon(db) : ''}</span> {title.trim() || t('untitledDatabase')}</span></>}
           </nav>
           {db && (
             <div className="top-r">
@@ -459,6 +464,11 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
                 </div>
                 {db.deleted_at && <div className="banner info"><span className="sp">{t('inTrash')}</span></div>}
                 {db.archived_at && <div className="banner info"><span className="sp">{t('archivedBanner')}</span></div>}
+                {db.icon
+                  ? (canEdit
+                    ? <button type="button" ref={iconRef} className="page-icon" aria-label={t('changeIcon')} title={t('changeIcon')} onClick={(e) => setIconPick(e.currentTarget)}>{db.icon}</button>
+                    : <span className="page-icon" role="img" aria-label={t('iconLabel')}>{db.icon}</span>)
+                  : canEdit && <button type="button" ref={iconRef} className="add-icon" onClick={(e) => setIconPick(e.currentTarget)}><span aria-hidden>☺</span>{t('addIcon')}</button>}
                 <textarea className="title-input" rows={1} value={title} placeholder={t('untitledDatabase')} aria-label={t('paperTitle')} readOnly={!canEdit}
                   onChange={(e) => setTitle(e.target.value.replace(/\n/g, ''))}
                   onBlur={(e) => saveTitle(e.target.value)}
@@ -513,7 +523,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
                               ) : (
                                 <button type="button" className="cellbtn" style={{ padding: 0, minHeight: 0 }}
                                   onClick={() => (phone() || !canEdit ? navigate(`/ws/${ws}/p/${row.item.id}`) : setTitleEdit({ item: row.item.id, draft: row.item.title }))}>
-                                  <span className="vt">{row.item.title || <span className="nil">{t('untitled')}</span>}</span>
+                                  <span className="vt"><span className="pic-i" aria-hidden>{paperIcon(row.item)}</span> {row.item.title || <span className="nil">{t('untitled')}</span>}</span>
                                 </button>
                               )}
                               <Link className="open" to={`/ws/${ws}/p/${row.item.id}`}>{t('openItem')}</Link>
@@ -574,6 +584,12 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
       </section>
 
       {menu && <Menu anchor={menu.anchor} items={menu.items} label={menu.label} onClose={() => setMenu(null)} />}
+      {iconPick && db && (
+        <IconPicker anchor={iconPick} value={db.icon ?? ''} onClose={() => setIconPick(null)} onPick={(icon) => {
+          setIconPick(null)
+          void send([{ op: 'set_icon', icon }]).then((r) => { if (r) onChanged() })
+        }} />
+      )}
       {adding && (
         <AddPropertyPopover anchor={adding} names={names} onClose={() => setAdding(null)}
           onAdd={(name, type) => void send([{ op: 'add_property', name, property_type: type }])} />

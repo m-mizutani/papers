@@ -145,7 +145,7 @@ function Shell({ me, workspaces, loaded, onSignOut }: { me: Me; workspaces: Work
         <Route path="/ws/:ws/p/:paper" element={<PaperRoute me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} onView={setView} />} />
         <Route path="/ws/:ws/p/:paper/latest" element={<PaperRoute me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} onView={setView} version="latest" />} />
         <Route path="/ws/:ws/p/:paper/v/:n" element={<PaperRoute me={me} workspaces={workspaces} sidebar={sidebar} onChanged={onChanged} layout={layout} onView={setView} version="n" />} />
-        <Route path="/ws/:ws/papers" element={<PapersPage ws={ws} me={me} onNew={() => void create({})} onNewPrivate={() => void create({ visibility: 'private' })} layoutTop={<Top title={t('papers')} layout={layout} />} />} />
+        <Route path="/ws/:ws/papers" element={<PapersPage ws={ws} me={me} homeId={workspace?.home_paper_id} onNew={() => void create({})} onNewPrivate={() => void create({ visibility: 'private' })} layoutTop={<Top title={t('papers')} layout={layout} />} />} />
         <Route path="/ws/:ws/trash" element={<TrashPage ws={ws} onChanged={onChanged} layoutTop={<Top title={t('trash')} layout={layout} />} />} />
         <Route path="/ws/:ws/search" element={<Navigate to={`/ws/${ws}`} replace />} />
         <Route path="/tokens" element={<Navigate to="/settings" replace />} />
@@ -153,7 +153,7 @@ function Shell({ me, workspaces, loaded, onSignOut }: { me: Me; workspaces: Work
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {palette && ws && (
-        <Palette ws={ws} wsName={workspace?.name ?? ws} under={under} recent={sidebar?.recent ?? []} commands={commands} onClose={() => setPalette(false)} />
+        <Palette ws={ws} wsName={workspace?.name ?? ws} homeId={workspace?.home_paper_id} under={under} recent={sidebar?.recent ?? []} commands={commands} onClose={() => setPalette(false)} />
       )}
       {help && <Modal title={t('shortcuts')} onClose={() => setHelp(false)} actions={[{ label: t('done'), kind: 'primary' }]}><ShortcutList /></Modal>}
     </div>

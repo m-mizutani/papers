@@ -177,7 +177,7 @@ func (u *UseCases) seedPaper(ctx context.Context, paper *model.Paper, file strin
 
 	ops := []Op{{Kind: OpInsertMarkdown, Markdown: &md}}
 	for _, c := range children {
-		op := Op{Kind: OpInsert, Ref: c.Key, Type: ptr(model.BlockPaper), Title: ptr(c.Title)}
+		op := Op{Kind: OpInsert, Ref: c.Key, Type: ptr(model.BlockPaper), Title: ptr(c.Title), Icon: ptr(c.Icon)}
 		if c.Kind == model.PaperKindDatabase {
 			op.PaperKind = ptr(model.PaperKindDatabase)
 		}

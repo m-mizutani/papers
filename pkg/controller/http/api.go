@@ -291,6 +291,7 @@ func (s *Server) handleListPapers(w http.ResponseWriter, r *http.Request) {
 
 type createPaperRequest struct {
 	Title      string           `json:"title"`
+	Icon       string           `json:"icon"`
 	Visibility model.Visibility `json:"visibility"`
 	Parent     string           `json:"parent"`
 	After      *string          `json:"after"`
@@ -307,7 +308,7 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.uc.CreatePaper(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.CreateInput{
-		Title: req.Title, Visibility: req.Visibility, Parent: req.Parent, After: req.After, Markdown: req.Markdown,
+		Title: req.Title, Icon: req.Icon, Visibility: req.Visibility, Parent: req.Parent, After: req.After, Markdown: req.Markdown,
 		Kind: req.Kind, HTML: req.HTML,
 	})
 	respond(w, r, http.StatusCreated, p, err)

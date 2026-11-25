@@ -414,4 +414,11 @@ export const ja: Record<MsgKey, string> = {
   copyCommand: 'コマンドをコピー',
   tokenOAuth: 'OAuth',
   issuedAt: '発行 {when}',
+  addIcon: 'アイコンを追加',
+  changeIcon: 'アイコンを変更',
+  iconLabel: 'アイコン',
+  iconInput: '絵文字を入力',
+  iconSet: '設定',
+  iconRemove: '削除',
+  iconOne: '絵文字を1つだけ入力してください',
 }

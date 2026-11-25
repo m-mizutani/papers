@@ -414,4 +414,11 @@ export const en: Record<MsgKey, string> = {
   copyCommand: 'Copy command',
   tokenOAuth: 'OAuth',
   issuedAt: 'Issued {when}',
+  addIcon: 'Add icon',
+  changeIcon: 'Change icon',
+  iconLabel: 'Icon',
+  iconInput: 'Type an emoji',
+  iconSet: 'Set',
+  iconRemove: 'Remove',
+  iconOne: 'Enter a single emoji',
 }

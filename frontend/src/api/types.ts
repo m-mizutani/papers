@@ -50,6 +50,8 @@ export interface Paper {
   workspace_id: string
   kind?: PaperKind
   title: string
+  /** The emoji set for the paper; absent when none is set (screens show a default by kind). */
+  icon?: string
   parent_id?: string
   visibility: Visibility
   version_number: number
@@ -139,6 +141,7 @@ export interface PaperRef {
   workspace_id: string
   kind?: PaperKind
   title: string
+  icon?: string
   parent_id?: string
   visibility: Visibility
   status: PaperStatus
@@ -207,7 +210,7 @@ export interface Block {
 }
 
 export type OpKind =
-  | 'insert' | 'update' | 'delete' | 'move' | 'set_title' | 'insert_markdown'
+  | 'insert' | 'update' | 'delete' | 'move' | 'set_title' | 'set_icon' | 'insert_markdown'
   | 'insert_row' | 'delete_row' | 'move_row' | 'insert_col' | 'delete_col' | 'move_col'
   | 'move_paper' | 'set_visibility' | 'save_version' | 'restore_version' | 'archive' | 'unarchive'
   | 'add_property' | 'update_property' | 'move_property' | 'delete_property'
@@ -225,6 +228,8 @@ export interface Op {
   after?: string
   base_rev?: number
   title?: string
+  /** set_icon: one emoji, or '' to remove it. */
+  icon?: string
   markdown?: string
   cells?: string[][]
   rows?: number
@@ -370,7 +375,7 @@ export interface Sidebar {
 export interface PaperListItem extends PaperRef {
   created_at: string
   updated_at: string
-  parent: { id: string; title: string } | null
+  parent: { id: string; title: string; icon?: string; kind?: PaperKind } | null
 }
 
 export interface PaperListQuery {

@@ -413,6 +413,13 @@ export const keys = {
   copyCommand: 'copyCommand',
   tokenOAuth: 'tokenOAuth',
   issuedAt: 'issuedAt',
+  addIcon: 'addIcon',
+  changeIcon: 'changeIcon',
+  iconLabel: 'iconLabel',
+  iconInput: 'iconInput',
+  iconSet: 'iconSet',
+  iconRemove: 'iconRemove',
+  iconOne: 'iconOne',
 } as const
 
 export type MsgKey = keyof typeof keys

@@ -6,6 +6,7 @@ import { PersonPicker, type Person } from '../components/PersonPicker'
 import { ActorMention, useUserNames } from '../components/UserMention'
 import { ago, useTranslation } from '../i18n'
 import { Menu, type MenuItem } from '../ui/Menu'
+import { paperIcon } from '../utils/icon'
 import { isEnter } from '../utils/keyboard'
 import { readPref, writePref } from '../utils/prefs'
 import { isSet, readFilters, toQuery, type Filters } from './papersFilters'
@@ -13,7 +14,7 @@ import { isSet, readFilters, toQuery, type Filters } from './papersFilters'
 type Open = { kind: 'creator' | 'visibility' | 'sort'; anchor: HTMLElement }
 
 /** Every paper, filtered; by default my unfiled ones (spec: R11). The filters live in the URL. */
-export function PapersPage({ ws, me, onNew, onNewPrivate, layoutTop }: { ws: string; me: Me; onNew: () => void; onNewPrivate: () => void; layoutTop: React.ReactNode }) {
+export function PapersPage({ ws, me, homeId, onNew, onNewPrivate, layoutTop }: { ws: string; me: Me; homeId?: string; onNew: () => void; onNewPrivate: () => void; layoutTop: React.ReactNode }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
@@ -73,7 +74,7 @@ export function PapersPage({ ws, me, onNew, onNewPrivate, layoutTop }: { ws: str
 
   const place = (p: PaperListItem) => (p.visibility === 'private'
     ? <span className="tag">🔒 {t('private')}</span>
-    : p.parent ? <span className="ploc"><span className="pic" aria-hidden>▤</span>{p.parent.title || t('untitled')}</span> : <span className="tag">{t('unfiled')}</span>)
+    : p.parent ? <span className="ploc"><span className="pic" aria-hidden>{paperIcon(p.parent, homeId)}</span>{p.parent.title || t('untitled')}</span> : <span className="tag">{t('unfiled')}</span>)
   const who = (p: PaperListItem) => (
     <span className="pwho"><ActorMention actor={p.created_by} /></span>
   )
@@ -140,7 +141,7 @@ export function PapersPage({ ws, me, onNew, onNewPrivate, layoutTop }: { ws: str
                     onKeyDown={(e) => { if (isEnter(e)) go(p) }}>
                     <td>
                       <div className="ptt">
-                        <span className="pic" aria-hidden>{p.visibility === 'private' ? '🔒' : '▤'}</span>
+                        <span className="pic" aria-hidden>{paperIcon(p)}</span>
                         <Link to={`/ws/${ws}/p/${p.id}`}>{p.title || t('untitled')}</Link>
                         {p.status === 'archived' && <span className="tag">{t('archived')}</span>}
                       </div>

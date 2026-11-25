@@ -1,6 +1,6 @@
 # What a paper is
 
-A paper is an ordered list of **blocks**. Each block is one paragraph, heading, list item, table or diagram, and people and AI agents rewrite the same paper block by block. Text can be *emphasised*, **bold**, ~~struck out~~, `code`, [red]{.red} or [highlighted]{.bg-yellow}, and can [link to the MCP endpoint](/mcp). Type @ to mention a person, like [@Alex Chen]{user=0Ud2lz0GcCaMILz7tUH0us}: a click on the mention opens a card that lists the papers they created.
+A paper is an ordered list of **blocks**, with a title and an optional emoji icon shown before the title in the sidebar, lists and links. A paper without an icon shows one for its kind: 📄 for a paper, 🗃️ for a database, 🧩 for an HTML paper and 🧭 for the home. Each block is one paragraph, heading, list item, table or diagram, and people and AI agents rewrite the same paper block by block. Text can be *emphasised*, **bold**, ~~struck out~~, `code`, [red]{.red} or [highlighted]{.bg-yellow}, and can [link to the MCP endpoint](/mcp). Type @ to mention a person, like [@Alex Chen]{user=0Ud2lz0GcCaMILz7tUH0us}: a click on the mention opens a card that lists the papers they created.
 
 > [!NOTE]
 > Everything here is sample content. Change anything; nothing else depends on it.
@@ -19,7 +19,7 @@ A paper is an ordered list of **blocks**. Each block is one paragraph, heading, 
 3. Press Save version to keep this state as v1, then open the history to compare.
 
 - [x] Open the sample papers
-- [ ] Create a paper of your own
+- [ ] Create a paper of your own and give it an icon (Add icon above the title)
 - [ ] Open the Product roadmap database and add an item
 - [ ] Ask an AI agent to summarise this one
 

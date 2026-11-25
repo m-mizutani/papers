@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import { api } from '../api/client'
 import type { PaperRef, SearchHit } from '../api/types'
 import { useTranslation } from '../i18n'
+import { paperIcon } from '../utils/icon'
 import { isEnter } from '../utils/keyboard'
 
 export interface Command {
@@ -22,9 +23,11 @@ function highlight(text: string, q: string): ReactNode {
 type Row = { kind: 'paper'; ref: PaperRef } | { kind: 'hit'; hit: SearchHit } | { kind: 'cmd'; cmd: Command }
 
 /** Search and commands in one box (Mod+K). Tab switches to "under this paper" (spec: R14). */
-export function Palette({ ws, wsName, under, recent, commands, onClose }: {
+export function Palette({ ws, wsName, homeId, under, recent, commands, onClose }: {
   ws: string
   wsName: string
+  /** The workspace's home, which shows its own default icon. */
+  homeId?: string
   /** The open paper, when it can scope a search. */
   under?: { id: string; title: string }
   recent: PaperRef[]
@@ -102,10 +105,10 @@ export function Palette({ ws, wsName, under, recent, commands, onClose }: {
             const body = r.kind === 'cmd'
               ? <span className="pt"><span aria-hidden>{r.cmd.icon}</span><span>{r.cmd.label}</span></span>
               : r.kind === 'paper'
-                ? <span className="pt">{r.ref.visibility === 'private' ? '🔒 ' : ''}{r.ref.title || t('untitled')}</span>
+                ? <span className="pt"><span className="pic-i" aria-hidden>{paperIcon(r.ref, homeId)}</span><span>{r.ref.title || t('untitled')}</span>{r.ref.visibility === 'private' && <span className="lock-i" aria-label={t('private')}>🔒</span>}</span>
                 : (
                   <>
-                    <span className="pt">{highlight(r.hit.paper.title || t('untitled'), q.trim())}</span>
+                    <span className="pt"><span className="pic-i" aria-hidden>{paperIcon(r.hit.paper, homeId)}</span><span>{highlight(r.hit.paper.title || t('untitled'), q.trim())}</span>{r.hit.paper.visibility === 'private' && <span className="lock-i" aria-label={t('private')}>🔒</span>}</span>
                     {r.hit.block_id && <span className="ps">{highlight(r.hit.text, q.trim())}</span>}
                   </>
                 )

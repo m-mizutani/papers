@@ -78,6 +78,10 @@ func TestSeedSamplesWritesTheSamplesIntoAnEmptyWorkspace(t *testing.T) {
 	}
 	gt.Equal(t, order, []string{"Welcome to papers", "Diagrams and rich blocks", "Release dashboard", "Product roadmap"})
 	gt.Equal(t, titles["Alpha"].ID, home) // the home keeps its title
+	// samples show icons, and papers without one (the dashboard, the roadmap) show the default
+	gt.Equal(t, titles["Welcome to papers"].Icon, "👋")
+	gt.Equal(t, titles["Working with AI agents"].Icon, "🤖")
+	gt.Equal(t, titles["Release dashboard"].Icon, "")
 }
 
 func TestSeedSamplesSkipsAWorkspaceWithAnotherPaper(t *testing.T) {

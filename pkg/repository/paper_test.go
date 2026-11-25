@@ -141,6 +141,30 @@ func TestPaperTree(t *testing.T) {
 	})
 }
 
+func TestPaperIcon(t *testing.T) {
+	runRepositoryTest(t, "icon round trip", func(t *testing.T, repo interfaces.Repository) {
+		ctx := context.Background()
+		home, child := homeAndChild(t, repo)
+		ws := home.WorkspaceID
+
+		// a paper written without an icon reads back without one
+		got := gt.R1(repo.GetPaper(ctx, ws, child.ID)).NoError(t)
+		gt.Equal(t, got.Icon, "")
+
+		child.Icon = "👩‍💻"
+		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(child) }))
+		got = gt.R1(repo.GetPaper(ctx, ws, child.ID)).NoError(t)
+		gt.Equal(t, got.Icon, "👩‍💻")
+		list := gt.R1(repo.GetPapers(ctx, ws, []model.PaperID{child.ID})).NoError(t)
+		gt.Equal(t, list[0].Icon, "👩‍💻")
+
+		// an invalid icon is never written
+		child.Icon = "🚀🔥"
+		err := repo.RunTx(ctx, ws, func(tx interfaces.Tx) error { return tx.PutPaper(child) })
+		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
+	})
+}
+
 func TestBlocks(t *testing.T) {
 	runRepositoryTest(t, "transaction reads its own writes", func(t *testing.T, repo interfaces.Repository) {
 		ctx := context.Background()

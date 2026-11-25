@@ -7,6 +7,7 @@ import { accountNote, canSignOut } from './account'
 import { useTranslation } from '../i18n'
 import { Menu, type MenuItem } from '../ui/Menu'
 import { actorColor, initials } from '../utils/actors'
+import { paperIcon } from '../utils/icon'
 import { MOD_LABEL } from '../utils/keyboard'
 
 /** A tree entry whose children load when it is opened. */
@@ -44,7 +45,7 @@ function TreeItem({ ws, paper, depth, current, expand, version, label, icon, onU
     <div>
       <div className={`tree-item${current === paper.id ? ' active' : ''}`} style={{ paddingLeft: `calc(var(--tree-indent) * ${depth})` }}>
         <button type="button" className={`tw${leaf || !canHaveChildren ? ' leaf' : ''}`} aria-label={open ? t('collapse') : t('expand')} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? '▾' : '▸'}</button>
-        {(icon || db) && <span className={`ticon${db ? ' db' : ''}`} aria-hidden>{db ? '⊞' : icon}</span>}
+        <span className="ticon" aria-hidden>{icon ?? paperIcon(paper)}</span>
         <Link className="tl" to={to} onClick={() => rememberKind(paper.id, paper.kind)}>{label ?? (paper.title || t('untitled'))}</Link>
         <span className="ta">
           {canHaveChildren && <button type="button" title={t('newInside', { title: label ?? (paper.title || t('untitled')) })} aria-label={t('newInside', { title: label ?? (paper.title || t('untitled')) })} onClick={() => onNewInside(paper.id)}>＋</button>}
@@ -127,7 +128,7 @@ export function Sidebar({ me, workspaces, ws, data, current, expand, version, ac
       <div className="sb-scroll">
         {data?.home && (
           <div className="sb-sec first">
-            <TreeItem ws={ws} paper={data.home} depth={0} current={current} expand={expand} version={version} label={t('home')} icon="⌂" onNewInside={onNewInside} />
+            <TreeItem ws={ws} paper={data.home} depth={0} current={current} expand={expand} version={version} label={t('home')} icon={paperIcon(data.home, data.home.id)} onNewInside={onNewInside} />
           </div>
         )}
         {!!data?.favorites.length && (
@@ -142,7 +143,9 @@ export function Sidebar({ me, workspaces, ws, data, current, expand, version, ac
             {data.recent.slice(0, 5).map((r) => (
               <div key={r.id} className={`tree-item${current === r.id ? ' active' : ''}`}>
                 <span className="tw leaf" />
-                <Link className="tl" to={`/ws/${ws}/p/${r.id}`}>{r.visibility === 'private' ? '🔒 ' : ''}{r.title || t('untitled')}</Link>
+                <span className="ticon" aria-hidden>{paperIcon(r, data.home?.id)}</span>
+                <Link className="tl" to={`/ws/${ws}/p/${r.id}`}>{r.title || t('untitled')}</Link>
+                {r.visibility === 'private' && <span className="lock-i" title={t('private')} aria-label={t('private')}>🔒</span>}
               </div>
             ))}
           </div>

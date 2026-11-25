@@ -25,7 +25,9 @@ import (
 // paper ID or a path) as a paper block, or is unfiled (no parent) when
 // Parent is empty; a private one stays out of the tree.
 type CreateInput struct {
-	Title      string
+	Title string
+	// Icon is the new paper's icon: one emoji, or empty for none.
+	Icon       string
 	Visibility model.Visibility
 	Parent     string
 	After      *string
@@ -49,6 +51,10 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 	}
 	title := strings.TrimSpace(in.Title)
 	if err := model.ValidateTitle(title); err != nil {
+		return nil, err
+	}
+	icon := model.NormalizeIcon(in.Icon)
+	if err := model.ValidateIcon(icon); err != nil {
 		return nil, err
 	}
 	if err := in.Kind.Validate(); err != nil {
@@ -85,7 +91,7 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		now := u.now()
 		actor := p.Actor()
 		paper = &model.Paper{
-			ID: model.NewPaperID(), WorkspaceID: ws, Kind: kind, Title: title, Visibility: vis,
+			ID: model.NewPaperID(), WorkspaceID: ws, Kind: kind, Title: title, Icon: icon, Visibility: vis,
 			CreatedBy: actor, CreatedAt: now, UpdatedBy: actor, UpdatedAt: now,
 		}
 		var html *stagedHTML
@@ -113,7 +119,7 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		if err != nil {
 			return nil, err
 		}
-		op := Op{Kind: OpInsert, Type: ptr(model.BlockPaper), Title: &title, After: in.After}
+		op := Op{Kind: OpInsert, Type: ptr(model.BlockPaper), Title: &title, Icon: &icon, After: in.After}
 		switch kind {
 		case model.PaperKindHTML:
 			op.PaperKind, op.HTML = ptr(kind), ptr(in.HTML)

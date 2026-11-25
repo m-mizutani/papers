@@ -51,7 +51,7 @@ const now = () => new Date().toISOString()
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
 
 const status = (p: Paper): PaperRef['status'] => (p.deleted_at ? 'trashed' : p.archived_at ? 'archived' : p.version_number > 0 ? 'canonical' : 'draft')
-const refOf = (p: Paper): PaperRef => ({ id: p.id, workspace_id: p.workspace_id, title: p.title, parent_id: p.parent_id, visibility: p.visibility, status: status(p), version_number: p.version_number, created_by: p.created_by })
+const refOf = (p: Paper): PaperRef => ({ id: p.id, workspace_id: p.workspace_id, kind: p.kind, title: p.title, icon: p.icon, parent_id: p.parent_id, visibility: p.visibility, status: status(p), version_number: p.version_number, created_by: p.created_by })
 const sees = (p: Paper) => (p.visibility === 'private' || p.deleted_at ? p.created_by.user_id === ME.id : true)
 
 function getPaper(ws: string, id: string): PaperData {
@@ -113,6 +113,7 @@ export function apply(d: PaperData, actor: Actor, ops: Op[], force = false): Bat
   const refs: Record<string, string> = {}
   const newPapers: Paper[] = []
   let title = d.paper.title
+  let icon = d.paper.icon
   const at = now()
   const resolve = (a: string) => (a.startsWith('ref:') ? refs[a.slice(4)] ?? (() => { throw new HttpError(400, 'invalid_argument', 'unknown ref') })() : a)
   const mk = (type: BlockType, content: string, props: BlockProps, order: string, parent?: string): Block => ({
@@ -227,6 +228,9 @@ export function apply(d: PaperData, actor: Actor, ops: Op[], force = false): Bat
       case 'set_title':
         title = (op.title ?? '').trim()
         break
+      case 'set_icon':
+        icon = (op.icon ?? '').trim() || undefined
+        break
       case 'insert_row': case 'insert_col': case 'delete_row': case 'delete_col': case 'move_row': case 'move_col': {
         const t = staged.get(op.block_id ?? '')
         if (!t || t.type !== 'table') break
@@ -268,7 +272,7 @@ export function apply(d: PaperData, actor: Actor, ops: Op[], force = false): Bat
   }
   d.blocks = staged
   for (const p of newPapers) papers.set(p.id, { paper: p, blocks: new Map(), versions: [] })
-  if (title !== d.paper.title || blocks.length || deleted.length) d.paper = { ...d.paper, title, updated_by: actor, updated_at: at }
+  if (title !== d.paper.title || icon !== d.paper.icon || blocks.length || deleted.length) d.paper = { ...d.paper, title, icon, updated_by: actor, updated_at: at }
   for (const b of blocks) publish(d.paper.id, { type: 'block_put', block: clone(b) })
   for (const id of deleted) publish(d.paper.id, { type: 'block_deleted', block_id: id })
   publish(d.paper.id, { type: 'paper_updated', paper: clone(d.paper) })
@@ -348,7 +352,7 @@ function listPapers(ws: string, home: string, q: URLSearchParams) {
     .sort((a, b) => (a[sort] < b[sort] ? 1 : a[sort] > b[sort] ? -1 : 0))
   const page = rows.slice(offset, offset + limit).map((x) => {
     const parent = x.parent_id ? papers.get(x.parent_id)?.paper : undefined
-    return { ...refOf(x), created_at: x.created_at, updated_at: x.updated_at, parent: parent ? { id: parent.id, title: parent.title } : null }
+    return { ...refOf(x), created_at: x.created_at, updated_at: x.updated_at, parent: parent ? { id: parent.id, title: parent.title, icon: parent.icon, kind: parent.kind } : null }
   })
   return { papers: page, next_cursor: offset + limit < rows.length ? String(offset + limit) : '' }
 }
