@@ -212,7 +212,10 @@ function CodeBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
 }
 
 function Body({ block, ctx }: { block: Block; ctx: BlockContext }) {
-  if (TEXT_TYPES.has(ctx.editing?.id === block.id ? ctx.editing.type : block.type) || block.type === 'image') return <TextBody block={block} ctx={ctx} />
+  // The block being edited shows the edit's type, which changes before its write is answered.
+  const type = ctx.editing?.id === block.id ? ctx.editing.type : block.type
+  if (TEXT_TYPES.has(type) || block.type === 'image') return <TextBody block={block} ctx={ctx} />
+  if (type === 'code') return <CodeBody block={block} ctx={ctx} />
   switch (block.type) {
     case 'code':
       return <CodeBody block={block} ctx={ctx} />

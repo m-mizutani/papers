@@ -1560,6 +1560,24 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     return items
   }
 
+  // "Turn into" from the block menu. The block being edited shows the edit's
+  // type, and finishing the edit sends that type, so its type changes through
+  // the edit (as the slash menu does): the text being typed goes with it and
+  // the edit goes on (a code block opens its own editor). An edit whose
+  // conflict is open sends nothing until it is resolved, so the change is sent
+  // on its own then and the conflict choice stays as it was.
+  const turnInto = (b: Block, c: TypeChoice) => {
+    const ed = editingRef.current
+    const indent = (from: BlockProps) => c.props.indent !== undefined ? from.indent ?? 0 : undefined
+    if (ed && ed.id === b.id && conflictRef.current?.blockId !== b.id) {
+      setEdit({ ...ed, type: c.type, props: { ...c.props, indent: indent(ed.props) } })
+      editorRef.current?.commands.focus()
+      void flushEdit()
+      return
+    }
+    void run([{ op: 'update', block_id: b.id, type: c.type, props: { ...c.props, indent: indent(b.props) }, content: b.content, base_rev: b.rev }])
+  }
+
   const blockItems = (b: Block): MenuItem[] => {
     const text = TEXT_TYPES.has(b.type)
     return [
@@ -1569,7 +1587,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       } },
       ...(text ? ['-' as const, { head: t('turnInto') }, ...TURN_INTO.map((c) => ({
         label: t(c.label), icon: c.icon,
-        onSelect: () => void run([{ op: 'update', block_id: b.id, type: c.type, props: { ...c.props, indent: c.props.indent !== undefined ? b.props.indent ?? 0 : undefined }, content: b.content, base_rev: b.rev }]),
+        onSelect: () => turnInto(b, c),
       }))] : []),
       '-',
       { label: t('moveUp'), icon: '↑', kbd: `${MOD_LABEL === '⌘' ? '⌥' : 'Alt'}↑`, onSelect: () => moveBlock(b, -1) },

@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
-  blocks, body, call, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
+  blocks, body, call, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, ops, paperOf, synced, titleField, topBlocks, unique, WS,
 } from './helpers'
 import type { Block } from '../src/api/types'
 
@@ -448,4 +448,105 @@ test('T62 a double or triple click selects a word or the paragraph, in a block b
   await page.mouse.dblclick(p.x, p.y)
   await expect(editor(page)).toBeFocused()
   await expect.poll(() => selected(page)).toBe('alpha')
+})
+
+/** Opens the block menu of the n-th block from its handle and turns the block into a type. */
+async function turnInto(page: Page, n: number, label: string): Promise<void> {
+  const b = blocks(page).nth(n)
+  await b.hover()
+  await b.locator('.hdl').click()
+  await page.getByRole('menuitem', { name: label, exact: true }).click()
+}
+
+test('T63 "Turn into" on the block being edited changes it at once and keeps the edit going', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Turn into') })
+  await openPaper(page, paper.id)
+  await page.getByRole('button', { name: msg('clickToAdd') }).click()
+  await page.keyboard.type('aaa')
+  // the pause in typing sends the text
+  const before = (await eventually(() => topBlocks(request, paper.id), (bs) => bs[0]?.content === 'aaa', 'text sent'))[0]
+  await synced(page)
+  // the caret is not at the end, to see that it comes back where it was
+  await page.keyboard.press('ArrowLeft')
+
+  await turnInto(page, 0, msg('typeCallout'))
+  await expect(blocks(page).nth(0)).toHaveClass(/t-callout/)
+  await expect(blocks(page).nth(0)).toHaveClass(/editing/)
+  await expect(blocks(page).nth(0).locator('.callout .emo')).toHaveText('💡')
+  await expect(editor(page)).toBeFocused()
+  // one write for the change
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs[0]?.type === 'callout' && bs[0]?.rev === (before?.rev ?? 0) + 1, 'turned into a callout')
+
+  await page.keyboard.type('b')
+  await expect(editor(page)).toHaveText('aaba')
+  await finishEditing(page)
+  await expect(blocks(page).nth(0)).toHaveClass(/t-callout/)
+  await expect(blocks(page).nth(0).locator('.txt')).toHaveText('aaba')
+  await page.waitForTimeout(500)
+  const saved = (await topBlocks(request, paper.id))[0]
+  expect(saved?.type).toBe('callout')
+  expect(saved?.content).toBe('aaba')
+})
+
+test('T64 "Turn into" before the typed text is sent keeps the text and opens no conflict', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Turn into unsent') })
+  await openPaper(page, paper.id)
+  await page.getByRole('button', { name: msg('clickToAdd') }).click()
+  await synced(page)
+  const sent: string[] = []
+  page.on('request', (r) => { if (r.url().endsWith('/ops') && r.method() === 'POST') sent.push(r.postData() ?? '') })
+  await page.keyboard.type('aaa')
+  await turnInto(page, 0, msg('typeCallout'))
+  // the pause that sends typed text is longer than this, so the text goes with the change
+  await eventually(async () => sent, (s) => s.some((d) => d.includes('callout')), 'the change sent')
+  expect(sent.filter((d) => d.includes('aaa')).every((d) => d.includes('callout'))).toBe(true)
+  await expect(blocks(page).nth(0)).toHaveClass(/t-callout/)
+  await expect(editor(page)).toHaveText('aaa')
+  await synced(page)
+  await page.waitForTimeout(1000)
+  await expect(page.locator('.conf')).toHaveCount(0)
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs[0]?.type === 'callout' && bs[0]?.content === 'aaa', 'saved as a callout with its text')
+})
+
+test('T65 "Turn into" on a block not being edited changes it without starting an edit', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Turn into idle'), markdown: 'idle' })
+  await openPaper(page, paper.id)
+  await turnInto(page, 0, msg('typeCallout'))
+  await expect(blocks(page).nth(0)).toHaveClass(/t-callout/)
+  await expect(editor(page)).toHaveCount(0)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs[0]?.type === 'callout' && bs[0]?.content === 'idle', 'turned into a callout')
+})
+
+test('T66 "Turn into" a list on the list item being edited keeps its indent', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Turn into indent') })
+  await ops(request, paper.id, [
+    { op: 'insert', type: 'bulleted_list_item', content: 'top' },
+    { op: 'insert', type: 'bulleted_list_item', content: 'nested', props: { indent: 1 } },
+  ])
+  await openPaper(page, paper.id)
+  await editBlock(page, 1)
+  await page.keyboard.type('!')
+  await turnInto(page, 1, msg('typeNumbered'))
+  await expect(blocks(page).nth(1)).toHaveClass(/t-numbered_list_item/)
+  await expect(blocks(page).nth(1).locator('.li')).toHaveAttribute('style', /--ind: 1/)
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs[1]?.type === 'numbered_list_item' && bs[1]?.props.indent === 1 && bs[1]?.content === 'nested!', 'turned into a numbered item')
+})
+
+test('T67 "Turn into" code on the block being edited goes on in the code editor with the text', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Turn into code') })
+  await openPaper(page, paper.id)
+  await page.getByRole('button', { name: msg('clickToAdd') }).click()
+  await page.keyboard.type('let x')
+  await turnInto(page, 0, msg('typeCode'))
+  await expect(blocks(page).nth(0)).toHaveClass(/t-code/)
+  const code = page.getByRole('textbox', { name: msg('codeText'), exact: true })
+  await expect(code).toBeFocused()
+  await expect(code).toHaveValue('let x')
+  await page.keyboard.press('End')
+  await page.keyboard.type(' = 1')
+  await code.press('Escape')
+  await synced(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs[0]?.type === 'code' && bs[0]?.content === 'let x = 1', 'saved as code')
 })
