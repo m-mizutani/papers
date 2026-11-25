@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   blocks, body, call, createPaper, drag, editBlock, editor, eventually, finishEditing, msg, openPaper, paperOf, synced, titleField, topBlocks, unique, WS,
 } from './helpers'
@@ -357,4 +357,95 @@ test('T61 a click anywhere from the add line down continues the paper', async ({
   await expect(editor(page)).toHaveCount(0)
   await expect(blocks(page)).toHaveCount(3)
   await eventually(() => topBlocks(request, paper.id), (bs) => bs.map((b) => b.content).join('|') === 'first|second|', 'saved')
+})
+
+/** The middle of the first occurrence of word in the element's text, in page coordinates. */
+async function wordPoint(el: Locator, word: string): Promise<{ x: number; y: number }> {
+  return el.evaluate((root, w) => {
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const at = n.textContent?.indexOf(w) ?? -1
+      if (at < 0) continue
+      const range = document.createRange()
+      range.setStart(n, at)
+      range.setEnd(n, at + w.length)
+      const r = range.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    }
+    throw new Error(`no "${w}" in the element`)
+  }, word)
+}
+
+const selected = (page: Page) => page.evaluate(() => String(window.getSelection()))
+// Presses further apart than this are not one double click.
+const apart = (page: Page) => page.waitForTimeout(700)
+
+test('T62 a double or triple click selects a word or the paragraph, in a block being edited or not', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: unique('Double click'), markdown: 'alpha bravo charlie\n\n| a | b |\n|---|---|\n| alpha bravo | x |\n' })
+  await openPaper(page, paper.id)
+  const text = blocks(page).nth(0).locator('.bd')
+  const bar = page.getByRole('toolbar', { name: msg('formatting') })
+
+  // T7 a single click on a block not being edited places the caret only
+  let p = await wordPoint(text, 'bravo')
+  await page.mouse.click(p.x, p.y)
+  await expect(editor(page)).toBeFocused()
+  await expect.poll(() => selected(page)).toBe('')
+  await expect(bar).toHaveCount(0)
+
+  // T1 a double click in the block being edited selects the word and keeps it
+  await apart(page)
+  p = await wordPoint(editor(page), 'bravo')
+  await page.mouse.dblclick(p.x, p.y)
+  await expect(bar).toBeVisible()
+  await expect.poll(() => selected(page)).toBe('bravo')
+
+  // T8 Escape collapses the selection and keeps editing
+  await page.keyboard.press('Escape')
+  await expect(bar).toHaveCount(0)
+  await expect.poll(() => selected(page)).toBe('')
+  await expect(editor(page)).toBeFocused()
+
+  // T2 a triple click in the block being edited selects the paragraph
+  await apart(page)
+  await page.mouse.click(p.x, p.y, { clickCount: 3 })
+  await expect(bar).toBeVisible()
+  await expect.poll(() => selected(page)).toBe('alpha bravo charlie')
+
+  // T9 a press outside the editor closes the toolbar and ends the edit
+  await titleField(page).click()
+  await expect(bar).toHaveCount(0)
+  await expect(editor(page)).toHaveCount(0)
+  await synced(page)
+
+  // T4 a triple click on a block not being edited selects the paragraph
+  await apart(page)
+  p = await wordPoint(text, 'bravo')
+  await page.mouse.click(p.x, p.y, { clickCount: 3 })
+  await expect(editor(page)).toBeFocused()
+  await expect.poll(() => selected(page)).toBe('alpha bravo charlie')
+  // the first Escape collapses the selection, the second leaves the block
+  await page.keyboard.press('Escape')
+  await finishEditing(page)
+
+  // T3 a double click on a block not being edited starts editing with the word selected
+  await apart(page)
+  await page.mouse.dblclick(p.x, p.y)
+  await expect(editor(page)).toBeFocused()
+  await expect(bar).toBeVisible()
+  await expect.poll(() => selected(page)).toBe('bravo')
+
+  // T5 the selected word takes formatting
+  await bar.getByRole('button', { name: msg('bold') }).click()
+  await page.keyboard.press('Escape')
+  await finishEditing(page)
+  await eventually(() => topBlocks(request, paper.id), (bs) => bs[0]?.content === 'alpha **bravo** charlie', 'bold word saved')
+
+  // T6 a double click on a table cell selects the word
+  await apart(page)
+  const cell = page.locator('.cell').filter({ hasText: 'alpha bravo' })
+  p = await wordPoint(cell, 'alpha')
+  await page.mouse.dblclick(p.x, p.y)
+  await expect(editor(page)).toBeFocused()
+  await expect.poll(() => selected(page)).toBe('alpha')
 })
