@@ -229,14 +229,14 @@ The documents of HTML papers ([model D20](model.md#d20-html-papers-decided-2026-
 
 ## Testing and CI
 
-- **Go**: unit and use-case tests on the memory repository (`go test -race -tags mcp_go_client_oauth ./...`; the tag builds the MCP SDK's OAuth client, which `pkg/controller/http/oauth_sdk_test.go` connects with), and the repository contract tests on the Firestore emulator.
+- **Go**: unit and use-case tests on the memory repository (`go test -race ./...`), and the repository contract tests on the Firestore emulator.
 - **Frontend**: ESLint, Vitest unit tests, and the type-checked build of the app and the demo.
 - **End to end**: Playwright tests in `frontend/e2e/` drive the built server (memory storage, sign-in off, the example workspaces) in Chromium, one test per basic use case: workspaces and navigation, editing and formatting, block types, tables, images, child papers, moves within and across workspaces, trash and restore, archive, private papers, favorites, search, versions, live updates, conflicts, API tokens and agents, Markdown export and printing. A second server runs beside it in anonymous mode. The sample papers need a Firestore database, so they are tested in Go (`pkg/usecase/sample_test.go`, and `pkg/cli/firestore_test.go` on the emulator) instead. `task test:e2e` runs them locally.
 - **CI** runs one workflow per concern on every pull request, so each shows as its own check:
 
 | Workflow | Jobs |
 |---|---|
-| `go-test.yml` | `go test -race -tags mcp_go_client_oauth ./...` on the memory backend; repository contract tests and the reset tests on the Firestore emulator |
+| `go-test.yml` | `go test -race ./...` on the memory backend; repository contract tests and the reset tests on the Firestore emulator |
 | `ui-test.yml` | Vitest |
 | `e2e.yml` | Playwright against the built server |
 | `lint.yml` | golangci-lint (`.golangci.yml`), go vet, go mod tidy, ESLint, TypeScript (app and e2e) |

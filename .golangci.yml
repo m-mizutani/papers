@@ -1,10 +1,5 @@
 version: "2"
 
-run:
-  # builds the MCP SDK's OAuth client used by pkg/controller/http/oauth_sdk_test.go
-  build-tags:
-    - mcp_go_client_oauth
-
 linters:
   default: standard
 

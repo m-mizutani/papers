@@ -21,9 +21,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # mcp_go_client_oauth builds the MCP SDK's OAuth client, which the
-      # OAuth flow test (pkg/controller/http/oauth_sdk_test.go) connects with.
-      - run: go test -race -tags mcp_go_client_oauth ./...
+      - run: go test -race ./...
 
   firestore:
     name: go test (Firestore emulator)
