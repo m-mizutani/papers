@@ -376,6 +376,22 @@ export const keys = {
   dbWriteFailed: 'dbWriteFailed',
   unchoose: 'unchoose',
   properties: 'properties',
+  people: 'people',
+  noPeople: 'noPeople',
+  loadingPeople: 'loadingPeople',
+  peopleFailed: 'peopleFailed',
+  papersByPerson: 'papersByPerson',
+  choosePeople: 'choosePeople',
+  propPerson: 'propPerson',
+  colCreated: 'colCreated',
+  authorIs: 'authorIs',
+  visibilityIs: 'visibilityIs',
+  meMention: 'meMention',
+  unknownUser: 'unknownUser',
+  searchByName: 'searchByName',
+  noOneMatches: 'noOneMatches',
+  youTag: 'youTag',
+  papersLoadFailed: 'papersLoadFailed',
 } as const
 
 export type MsgKey = keyof typeof keys

@@ -1,9 +1,10 @@
 // The twin of pkg/domain/markup: inline Markdown (bold, italic, strike,
-// code, links) plus colour spans [text]{.red} / [text]{.bg-yellow}. Both
+// code, links), colour spans [text]{.red} / [text]{.bg-yellow} and
+// mentions of users [@name]{user=ID}. Both
 // implementations run testdata/markup/cases.json, so the editor writes the
 // same canonical strings the server stores.
 
-export type Kind = 'text' | 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'span'
+export type Kind = 'text' | 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'span' | 'mention'
 
 export interface MNode {
   kind: Kind
@@ -12,6 +13,27 @@ export interface MNode {
   url?: string
   color?: string
   bg?: string
+  /** mention: the user's ID and the name written with it (without "@"). */
+  user_id?: string
+  name?: string
+}
+
+/** Whether id looks like a papers ID (22 characters of base62); the markup does not check that the user exists. */
+export const validUserId = (id: string) => /^[0-9A-Za-z]{22}$/.test(id)
+
+function mentionNode(label: string, attrs: string): MNode | undefined {
+  const fields = attrs.split(/\s+/).filter(Boolean)
+  if (fields.length !== 1 || !fields[0]?.startsWith('user=')) return undefined
+  const id = fields[0].slice('user='.length)
+  if (!validUserId(id)) return undefined
+  let name = ''
+  for (let i = 0; i < label.length; i++) {
+    if (label[i] === '\\' && i + 1 < label.length && isPunct(label[i + 1])) i++
+    name += label[i]
+  }
+  if (name.startsWith('@')) name = name.slice(1)
+  if (name.trim() === '' || /[\n\r]/.test(name)) return undefined
+  return { kind: 'mention', user_id: id, name }
 }
 
 export const PALETTE = ['gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red'] as const
@@ -191,6 +213,13 @@ class Parser {
           if (s[j + 1] === '{') {
             const k = s.indexOf('}', j + 2)
             if (k >= 0) {
+              const m = mentionNode(label, s.slice(j + 2, k))
+              if (m) {
+                flush()
+                out.push(m)
+                i = k + 1
+                continue
+              }
               const n = this.span(s.slice(j + 2, k))
               if (n) {
                 flush()
@@ -242,7 +271,7 @@ function sameFormat(a: MNode, b: MNode): boolean {
 function appendNodes(out: MNode[], nodes: MNode[]): MNode[] {
   for (const n of nodes) {
     const last = out[out.length - 1]
-    if (last && last.kind === n.kind && sameFormat(last, n)) {
+    if (last && last.kind === n.kind && n.kind !== 'mention' && sameFormat(last, n)) {
       if (n.kind === 'text') {
         last.text = (last.text ?? '') + (n.text ?? '')
         continue
@@ -260,6 +289,10 @@ function appendNodes(out: MNode[], nodes: MNode[]): MNode[] {
 export function merge(nodes: MNode[]): MNode[] {
   let out: MNode[] = []
   for (const n of nodes) {
+    if (n.kind === 'mention') {
+      out.push(n)
+      continue
+    }
     if (n.kind !== 'text' && n.kind !== 'code') {
       n.children = merge(n.children ?? [])
       if (n.children.length === 0) continue
@@ -344,6 +377,9 @@ export function render(nodes: MNode[]): string {
         out += `[${render(n.children ?? [])}]{${cls}}`
         break
       }
+      case 'mention':
+        out += `[@${(n.name ?? '').replace(/[\\[\]`]/g, (c) => `\\${c}`)}]{user=${n.user_id ?? ''}}`
+        break
     }
   }
   return out
@@ -360,6 +396,7 @@ export function plainText(src: string): string {
   } catch {
     return src
   }
-  const walk = (ns: MNode[]): string => ns.map((n) => (n.kind === 'text' || n.kind === 'code' ? (n.text ?? '') : walk(n.children ?? []))).join('')
+  const walk = (ns: MNode[]): string =>
+    ns.map((n) => (n.kind === 'text' || n.kind === 'code' ? (n.text ?? '') : n.kind === 'mention' ? `@${n.name ?? ''}` : walk(n.children ?? []))).join('')
   return walk(nodes)
 }

@@ -36,7 +36,7 @@ Model
 - Block IDs are issued by the server. To point at a block you insert in the same batch, give the insert a ref ("n1") and use after:"ref:n1"; the result maps refs to IDs.
 
 Block types (type: props)
-- paragraph, quote, heading (props.level 1-3), bulleted_list_item / numbered_list_item (props.indent 0-6), todo (props.indent, props.checked), callout (props.icon, one emoji), table_cell: content is inline markup: **bold**, *italic*, ~~strike~~, ` + "`code`" + `, [link](url), and colour [text]{.red} / background [text]{.bg-yellow}. Colours: gray brown orange yellow green blue purple pink red.
+- paragraph, quote, heading (props.level 1-3), bulleted_list_item / numbered_list_item (props.indent 0-6), todo (props.indent, props.checked), callout (props.icon, one emoji), table_cell: content is inline markup: **bold**, *italic*, ~~strike~~, ` + "`code`" + `, [link](url), colour [text]{.red} / background [text]{.bg-yellow}, and a mention of a person [@name]{user=<user id>} (find the id and name with papers_find_users). Colours: gray brown orange yellow green blue purple pink red.
 - code: props.language, content verbatim. divider: no content. image: content = caption, props.url (external) or props.attachment_id (an image attached to this paper).
 - paper: a child paper. Insert it with {"op":"insert","type":"paper","title":"..."}; it creates the child. Deleting it sends the child (and everything under it) to the trash if you created them all, otherwise archives the child with everything under it.
 - table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
@@ -55,12 +55,12 @@ Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
 
 Databases (tables of papers, like Notion databases)
 - A database is a paper of kind "database" (papers_create_paper with kind:"database", or insert {"type":"paper","paper_kind":"database"}). It has no body and no versions; it holds property definitions (columns) and its items in order. Each item is a paper of kind "item" with a body of its own; it stays in its database.
-- Property types: text, date (YYYY-MM-DD), select, multi_select. select and multi_select choose from elements: each element has an id and a value (the text people see). Property values store element ids, never the text: renaming an element changes every item at once.
+- Property types: text, date (YYYY-MM-DD), select, multi_select, person. A person value is a list of people, each {"user_id":"<id>","name":"<name>"} from papers_find_users. select and multi_select choose from elements: each element has an id and a value (the text people see). Property values store element ids, never the text: renaming an element changes every item at once.
 - papers_read on a database returns its properties (with element ids and values) and a page of items with their property values; pass filter and sort to narrow and order them. papers_read on an item also returns its property values.
 - Write a database with papers_write on the database. Ops:
   {"op":"add_property","name":"Status","property_type":"select","ref":"p1"}  update_property {property, name}  move_property {property, after}  delete_property {property}
   {"op":"add_element","property":"<id>|ref:p1","value":"Doing","color":"blue","ref":"e1"}  update_element {property, element, value?, color?}  move_element {property, element, after}  delete_element {property, element}
-  {"op":"insert_item","title":"...","set":{"<property id>":"<value>"},"ref":"i1"}  {"op":"set_values","item":"<id>","set":{"<property id>":"ref:e1","<multi id>":["<element id>"],"<date id>":"2026-12-10","<text id>":"...","<id>":null}}  move_item {item, after}  set_title {title}
+  {"op":"insert_item","title":"...","set":{"<property id>":"<value>"},"ref":"i1"}  {"op":"set_values","item":"<id>","set":{"<property id>":"ref:e1","<multi id>":["<element id>"],"<date id>":"2026-12-10","<text id>":"...","<person id>":[{"user_id":"<user id>","name":"..."}],"<id>":null}}  move_item {item, after}  set_title {title}
   Create an element and use it in one batch through its ref. null or "" clears a value. Colors: gray brown orange yellow green blue purple pink red.
 - Item bodies, titles and versions are written as for any paper (papers_write / papers_save_version on the item). A version of an item includes its property values.`
 
@@ -157,6 +157,15 @@ type mcpWorkspacesOut struct {
 	Workspaces []mcpWorkspace `json:"workspaces"`
 }
 
+type mcpFindUsersIn struct {
+	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
+	Query       string            `json:"query,omitempty" jsonschema:"a part of the name or email; empty lists everyone (at most 20)"`
+}
+
+type mcpFindUsersOut struct {
+	Users []*usecase.UserSummary `json:"users"`
+}
+
 type mcpSearchIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
 	Query       string            `json:"query" jsonschema:"words to find in titles and blocks; quote a phrase to keep it together"`
@@ -193,7 +202,7 @@ type mcpReadIn struct {
 	After       string                    `json:"after,omitempty" jsonschema:"cursor from a previous read (next) to continue a long paper"`
 	Limit       int                       `json:"limit,omitempty" jsonschema:"max top-level blocks (default 200); 0 with at reads the whole version"`
 	TOC         bool                      `json:"toc,omitempty" jsonschema:"only headings and child papers, to find your way in a long paper"`
-	Filter      []usecase.FilterCondition `json:"filter,omitempty" jsonschema:"database only: conditions all items must meet, e.g. [{\"property\":\"<id>\",\"op\":\"is\",\"elements\":[\"<element id>\"]}]; ops: is (select), contains (multi_select), on/before/after (date, with date), between (date, with from and to), starts_with (text, with text), is_empty, is_not_empty"`
+	Filter      []usecase.FilterCondition `json:"filter,omitempty" jsonschema:"database only: conditions all items must meet, e.g. [{\"property\":\"<id>\",\"op\":\"is\",\"elements\":[\"<element id>\"]}]; ops: is (select), contains (multi_select, with elements; person, with users), on/before/after (date, with date), between (date, with from and to), starts_with (text, with text), is_empty, is_not_empty"`
 	Sort        string                    `json:"sort,omitempty" jsonschema:"database only: <property id>|title|created|updated followed by :asc or :desc"`
 }
 
@@ -426,6 +435,15 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				out.Workspaces = append(out.Workspaces, mcpWorkspace{ID: v.ID, Name: v.Name, Rules: v.Description, Language: v.Language, HomePaperID: v.HomePaperID})
 			}
 			return out, nil
+		})
+
+	addTool(server, "papers_find_users", "Find people who can use the workspace, to mention them ([@name]{user=id}) or set a person property.",
+		func(ctx context.Context, p *model.Principal, in mcpFindUsersIn) (mcpFindUsersOut, error) {
+			users, err := s.uc.FindUsers(ctx, p, in.WorkspaceID, usecase.FindUsersInput{Query: in.Query})
+			if err != nil {
+				return mcpFindUsersOut{}, err
+			}
+			return mcpFindUsersOut{Users: users}, nil
 		})
 
 	addTool(server, "papers_search", "Find papers and blocks containing the words (current state; archived papers excluded).",

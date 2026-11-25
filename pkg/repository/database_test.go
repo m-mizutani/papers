@@ -27,6 +27,7 @@ func databaseIn(t *testing.T, repo interfaces.Repository, ws model.WorkspaceID, 
 			{ID: model.NewElementID(), Value: "search", Color: "green"},
 		}},
 		{ID: model.NewPropertyID(), Name: "Memo", Type: model.PropertyText},
+		{ID: model.NewPropertyID(), Name: "Owner", Type: model.PropertyPerson},
 	}
 	var items []*model.Paper
 	for i, title := range titles {
@@ -65,13 +66,14 @@ func TestDatabaseRoundTrip(t *testing.T) {
 		ctx := context.Background()
 		ws := newWorkspaceID()
 		db, items := databaseIn(t, repo, ws, "A", "B")
-		status, due, tags, memo := db.Properties[0], db.Properties[1], db.Properties[2], db.Properties[3]
+		status, due, tags, memo, owner := db.Properties[0], db.Properties[1], db.Properties[2], db.Properties[3], db.Properties[4]
 		a := items[0]
 		vals := []*model.PropertyValue{
 			valueOf(db, a, status.ID, string(status.Elements[1].ID)),
 			valueOf(db, a, due.ID, "2026-12-10"),
 			valueOf(db, a, tags.ID, []string{string(tags.Elements[0].ID)}),
 			valueOf(db, a, memo.ID, "sort by relevance"),
+			valueOf(db, a, owner.ID, model.PeopleValue([]model.PersonRef{{UserID: model.NewUserID(), Name: "Ann"}, {UserID: model.NewUserID(), Name: "Bob"}})),
 		}
 		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
 			for _, v := range vals {
@@ -96,7 +98,7 @@ func TestDatabaseRoundTrip(t *testing.T) {
 		}
 		refs = append(refs, model.PropertyValueRef{PaperID: items[1].ID, PropertyID: status.ID})
 		read := gt.R1(repo.GetPropertyValues(ctx, ws, refs)).NoError(t)
-		gt.A(t, read).Length(4)
+		gt.A(t, read).Length(5)
 		byProp := map[model.PropertyID]*model.PropertyValue{}
 		for _, v := range read {
 			byProp[v.PropertyID] = v
@@ -113,6 +115,10 @@ func TestDatabaseRoundTrip(t *testing.T) {
 				l, ok := r.Strings()
 				gt.True(t, ok)
 				gt.Equal(t, l, want)
+			} else if want, ok := v.People(); ok {
+				l, ok := r.People()
+				gt.True(t, ok)
+				gt.Equal(t, l, want)
 			} else {
 				s, ok := r.Str()
 				gt.True(t, ok)
@@ -126,7 +132,7 @@ func TestDatabaseRoundTrip(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			gt.A(t, list).Length(4)
+			gt.A(t, list).Length(5)
 			if err := tx.DeletePropertyValue(a.ID, memo.ID); err != nil {
 				return err
 			}
@@ -134,13 +140,13 @@ func TestDatabaseRoundTrip(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			gt.A(t, list).Length(3)
+			gt.A(t, list).Length(4)
 			got, err := tx.GetPropertyValues([]model.PropertyValueRef{{PaperID: a.ID, PropertyID: memo.ID}})
 			gt.A(t, got).Length(0)
 			return err
 		}))
 		left := gt.R1(repo.GetPropertyValues(ctx, ws, refs)).NoError(t)
-		gt.A(t, left).Length(3)
+		gt.A(t, left).Length(4)
 
 		// a version keeps an item's values
 		v := &model.Version{

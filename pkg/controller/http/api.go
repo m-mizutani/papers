@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,6 +32,7 @@ func (s *Server) routeAPI(r chi.Router) {
 		r.Get("/sidebar", s.handleSidebar)
 		r.Get("/search", s.handleSearch)
 		r.Get("/trash", s.handleListTrash)
+		r.Get("/users", s.handleFindUsers)
 		r.Get("/resolve", s.handleResolve)
 		r.Get("/papers", s.handleListPapers)
 		r.Post("/papers", s.handleCreatePaper)
@@ -223,6 +225,20 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 	p, err := s.uc.ResolvePaper(r.Context(), principalFrom(r.Context()), wsParam(r), r.URL.Query().Get("path"))
 	respond(w, r, http.StatusOK, p, err)
+}
+
+// handleFindUsers lists the people of a workspace to mention: by a part of
+// their name or email (q), or by ID (ids, comma-separated).
+func (s *Server) handleFindUsers(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	in := usecase.FindUsersInput{Query: q.Get("q")}
+	if v := q.Get("ids"); v != "" {
+		for _, id := range strings.Split(v, ",") {
+			in.IDs = append(in.IDs, model.UserID(strings.TrimSpace(id)))
+		}
+	}
+	users, err := s.uc.FindUsers(r.Context(), principalFrom(r.Context()), wsParam(r), in)
+	respond(w, r, http.StatusOK, map[string]any{"users": users}, err)
 }
 
 // handleListPapers reads one page of the papers list. Every parameter is

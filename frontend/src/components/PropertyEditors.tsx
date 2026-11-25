@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react'
-import { chosenElements, ELEMENT_COLORS } from '../api/databaseState'
+import { asPeople, chosenElements, ELEMENT_COLORS } from '../api/databaseState'
 import type { Element, Property, PropertyType, Value } from '../api/types'
 import { useTranslation, type MsgKey } from '../i18n'
 import { Popover, type Anchor } from '../ui/Popover'
 import { isEnter } from '../utils/keyboard'
+import { PeopleView } from './UserMention'
 
 // Editors of property values and definitions, shared by the database table
 // and the property panel of an item. Values are written as element ids;
 // element texts and colours live only in the property definition.
 
-export const TYPE_ICON: Record<PropertyType, string> = { text: 'T', date: '▦', select: '◉', multi_select: '☰' }
-export const TYPE_LABEL: Record<PropertyType, MsgKey> = { text: 'propText', date: 'propDate', select: 'propSelect', multi_select: 'propMultiSelect' }
+export const TYPE_ICON: Record<PropertyType, string> = { text: 'T', date: '▦', select: '◉', multi_select: '☰', person: '☺' }
+export const TYPE_LABEL: Record<PropertyType, MsgKey> = { text: 'propText', date: 'propDate', select: 'propSelect', multi_select: 'propMultiSelect', person: 'propPerson' }
 const COLOR_LABEL: Record<(typeof ELEMENT_COLORS)[number], MsgKey> = {
   gray: 'colorGray', brown: 'colorBrown', orange: 'colorOrange', yellow: 'colorYellow', green: 'colorGreen',
   blue: 'colorBlue', purple: 'colorPurple', pink: 'colorPink', red: 'colorRed',
@@ -32,6 +33,7 @@ export function ValueView({ prop, value }: { prop: Property; value: Value | unde
   if (prop.type === 'select' || prop.type === 'multi_select') {
     return <span className="chips">{chosenElements(prop, value).map((e) => <Chip key={e.id} el={e} />)}</span>
   }
+  if (prop.type === 'person') return <PeopleView people={asPeople(value)} />
   return <span className="vt">{value as string}</span>
 }
 
@@ -232,7 +234,7 @@ export function DateEditor({ value, anchor, onChange, onClose }: {
   )
 }
 
-/** Adds a property: a name and one of the four types. */
+/** Adds a property: a name and one of the five types. */
 export function AddPropertyPopover({ anchor, names, onAdd, onClose }: {
   anchor: Anchor
   names: string[]
@@ -257,7 +259,7 @@ export function AddPropertyPopover({ anchor, names, onAdd, onClose }: {
       {dup && <p className="err">{t('duplicatePropertyName')}</p>}
       <div className="hd">{t('propertyType')}</div>
       <div className="typegrid" role="radiogroup" aria-label={t('propertyType')}>
-        {(['text', 'date', 'select', 'multi_select'] as PropertyType[]).map((ty) => (
+        {(['text', 'date', 'select', 'multi_select', 'person'] as PropertyType[]).map((ty) => (
           <button key={ty} type="button" role="radio" aria-checked={ty === type} className={ty === type ? 'on' : ''} onClick={() => setType(ty)}>
             <span aria-hidden>{TYPE_ICON[ty]}</span>{t(TYPE_LABEL[ty])}
           </button>

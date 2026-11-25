@@ -25,6 +25,15 @@ describe('editor document conversion', () => {
     expect(fromDoc(doc)).toBe('[***ab***]{.red}\nx_y')
   })
 
+  it('turns mentions into atoms and back (T5)', () => {
+    const id = '1csQdaLtbzOEz6NzfMfH6Z'
+    const src = `Ask **[@Masayoshi Mizutani]{user=${id}} now** [@A \\] B]{user=${id}}`
+    const doc = toDoc(src)
+    expect(doc.content[0]?.content).toContainEqual({ type: 'mention', attrs: { userId: id, name: 'Masayoshi Mizutani' }, marks: [{ type: 'bold' }] })
+    expect(doc.content[0]?.content).toContainEqual({ type: 'mention', attrs: { userId: id, name: 'A ] B' } })
+    expect(fromDoc(doc)).toBe(src)
+  })
+
   it('shows invalid markup as text', () => {
     expect(toDoc('[a]{.neon}').content[0]?.content?.[0]).toEqual({ type: 'text', text: '[a]{.neon}' })
   })

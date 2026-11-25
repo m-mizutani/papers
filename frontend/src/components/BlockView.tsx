@@ -166,7 +166,7 @@ function TextBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
     />
   ) : (
     <div className="txt" onMouseDown={(e) => {
-      if (!ctx.canEdit || e.button !== 0 || (e.target as HTMLElement).closest('a')) return
+      if (!ctx.canEdit || e.button !== 0 || (e.target as HTMLElement).closest('a, .mention')) return
       e.preventDefault()
       ctx.actions.startEdit(block, { x: e.clientX, y: e.clientY })
     }}>{content}</div>
@@ -212,7 +212,10 @@ function CodeBody({ block, ctx }: { block: Block; ctx: BlockContext }) {
 }
 
 function Body({ block, ctx }: { block: Block; ctx: BlockContext }) {
-  if (TEXT_TYPES.has(ctx.editing?.id === block.id ? ctx.editing.type : block.type) || block.type === 'image') return <TextBody block={block} ctx={ctx} />
+  // The block being edited shows the edit's type, which changes before its write is answered.
+  const type = ctx.editing?.id === block.id ? ctx.editing.type : block.type
+  if (TEXT_TYPES.has(type) || block.type === 'image') return <TextBody block={block} ctx={ctx} />
+  if (type === 'code') return <CodeBody block={block} ctx={ctx} />
   switch (block.type) {
     case 'code':
       return <CodeBody block={block} ctx={ctx} />

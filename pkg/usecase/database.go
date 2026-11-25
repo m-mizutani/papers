@@ -73,6 +73,10 @@ func sameValue(a, b any) bool {
 		bs, ok := b.(string)
 		return ok && as == bs
 	}
+	if ap, ok := (&model.PropertyValue{Value: a}).People(); ok {
+		bp, ok := (&model.PropertyValue{Value: b}).People()
+		return ok && slices.Equal(ap, bp)
+	}
 	al, aok := (&model.PropertyValue{Value: a}).Strings()
 	bl, bok := (&model.PropertyValue{Value: b}).Strings()
 	return aok && bok && slices.Equal(al, bl)
@@ -560,6 +564,9 @@ func (a *dbApplier) value(prop *model.Property, raw any) (any, error) {
 			raw = id
 		}
 	case []any, []string:
+		if prop.Type == model.PropertyPerson {
+			break
+		}
 		l, ok := (&model.PropertyValue{Value: x}).Strings()
 		if !ok {
 			return nil, goerr.Wrap(model.ErrInvalidArgument, "a multi_select value is a list of element ids", goerr.V("property_id", prop.ID))

@@ -1,7 +1,7 @@
 import { Link } from 'react-router'
 import type { VersionSummary } from '../api/types'
 import { ago, useTranslation } from '../i18n'
-import { actorName } from '../utils/actors'
+import { ActorMention } from './UserMention'
 
 export interface ChangeCounts {
   added: number
@@ -62,7 +62,7 @@ export function HistoryDrawer({ base, versions, viewing, counts, showChanges, on
           <Link key={v.number} className={`ver${viewing === v.number ? ' on' : ''}`} to={`${base}/v/${v.number}`}>
             <span className="vn">v{v.number}</span>
             <span className="vi">
-              <span className="vt" style={{ display: 'block' }}>{actorName(v.created_by)}</span>
+              <span className="vt" style={{ display: 'block' }}><ActorMention actor={v.created_by} /></span>
               <span className="vs" style={{ display: 'block' }}>{ago(v.created_at)}</span>
               {v.note && <span className="vnote" style={{ display: 'block' }}>{v.note}</span>}
             </span>

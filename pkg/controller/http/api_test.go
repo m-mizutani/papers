@@ -348,9 +348,12 @@ func TestUnfiledAPI(t *testing.T) {
 			ID         model.PaperID    `json:"id"`
 			Title      string           `json:"title"`
 			Visibility model.Visibility `json:"visibility"`
-			CreatedAt  *string          `json:"created_at"`
-			UpdatedAt  *string          `json:"updated_at"`
-			Parent     *struct {
+			CreatedBy  struct {
+				UserID model.UserID `json:"user_id"`
+			} `json:"created_by"`
+			CreatedAt *string `json:"created_at"`
+			UpdatedAt *string `json:"updated_at"`
+			Parent    *struct {
 				ID    model.PaperID `json:"id"`
 				Title string        `json:"title"`
 			} `json:"parent"`
@@ -369,6 +372,10 @@ func TestUnfiledAPI(t *testing.T) {
 	bob.expect("GET", papers+"?creator=all", nil, http.StatusOK, &page)
 	gt.A(t, page.Papers).Length(1) // alice's unfiled paper, not her private one
 	gt.Equal(t, page.Papers[0].ID, m.ID)
+	// one person's papers by their user ID
+	bob.expect("GET", papers+"?creator="+string(page.Papers[0].CreatedBy.UserID), nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(1)
+	gt.Equal(t, page.Papers[0].ID, m.ID)
 	alice.expect("GET", papers+"?place=filed&creator=all&visibility=public&archived=true&sort=created&limit=1", nil, http.StatusOK, &page)
 	gt.A(t, page.Papers).Length(1)
 	gt.Equal(t, page.Papers[0].ID, runbook)
@@ -380,7 +387,7 @@ func TestUnfiledAPI(t *testing.T) {
 	alice.expect("GET", papers+"?limit=1&cursor="+*page.NextCursor, nil, http.StatusOK, &page)
 	gt.A(t, page.Papers).Length(1)
 	gt.Equal(t, *page.NextCursor, "")
-	for _, bad := range []string{"place=x", "creator=x", "visibility=x", "archived=x", "sort=x", "limit=0", "limit=101", "limit=x", "cursor=x"} {
+	for _, bad := range []string{"place=x", "creator=x", "creator=%25%25", "visibility=x", "archived=x", "sort=x", "limit=0", "limit=101", "limit=x", "cursor=x"} {
 		alice.expect("GET", papers+"?"+bad, nil, http.StatusBadRequest, nil)
 	}
 
@@ -622,4 +629,34 @@ func TestHTMLPaperRequestLimit(t *testing.T) { // T61
 	// other requests keep the 4 MiB limit
 	big := strings.Repeat("a", 5<<20)
 	alice.expect("PUT", "/api/v1/workspaces/team/papers/"+string(p.ID)+"/visibility", map[string]any{"visibility": "public", "parent": big}, http.StatusBadRequest, nil)
+}
+
+func TestUsersAPI(t *testing.T) {
+	// T19, T21, T24 through REST
+	ts := newTestServer(t, false)
+	alice, bob, ws, _ := setupPaper(t, ts)
+	type usersResp struct {
+		Users []map[string]any `json:"users"`
+	}
+	var r usersResp
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?q=BOB", nil, http.StatusOK, &r)
+	gt.A(t, r.Users).Length(1)
+	_, hasEmail := r.Users[0]["email"]
+	gt.False(t, hasEmail)
+	bobID, _ := r.Users[0]["id"].(string)
+
+	var byID usersResp
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?ids="+bobID+","+string(model.NewUserID()), nil, http.StatusOK, &byID)
+	gt.A(t, byID.Users).Length(1)
+	gt.Equal(t, byID.Users[0]["id"], any(bobID))
+
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?ids=short", nil, http.StatusBadRequest, nil)
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/users?ids="+bobID+"&q=b", nil, http.StatusBadRequest, nil)
+	bob.expect("GET", "/api/v1/workspaces/nowhere/users", nil, http.StatusNotFound, nil)
+
+	// T10 through REST: the papers list by a user's ID
+	var page usecase.PapersPage
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers?place=all&creator="+bobID, nil, http.StatusOK, &page)
+	gt.A(t, page.Papers).Length(0)
+	alice.expect("GET", "/api/v1/workspaces/"+string(ws)+"/papers?creator=bob", nil, http.StatusBadRequest, nil)
 }

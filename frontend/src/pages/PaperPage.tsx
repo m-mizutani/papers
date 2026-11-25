@@ -22,7 +22,8 @@ import { SlashMenu } from '../components/SlashMenu'
 import { detectShortcut } from '../components/shortcuts'
 import { History, type Snap, type Step } from '../editing/history'
 import { blockAt, dropAfter, moveOps, normalize, overlapping, selectedIds, stepAfter, type Selection, type Span } from '../editing/selection'
-import { ago, useTranslation } from '../i18n'
+import { ago, tParts, useTranslation } from '../i18n'
+import { ActorMention } from '../components/UserMention'
 import { plainText } from '../markup/markup'
 import { Menu, type MenuItem } from '../ui/Menu'
 import { Modal } from '../ui/Modal'
@@ -1563,6 +1564,24 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     return items
   }
 
+  // "Turn into" from the block menu. The block being edited shows the edit's
+  // type, and finishing the edit sends that type, so its type changes through
+  // the edit (as the slash menu does): the text being typed goes with it and
+  // the edit goes on (a code block opens its own editor). An edit whose
+  // conflict is open sends nothing until it is resolved, so the change is sent
+  // on its own then and the conflict choice stays as it was.
+  const turnInto = (b: Block, c: TypeChoice) => {
+    const ed = editingRef.current
+    const indent = (from: BlockProps) => c.props.indent !== undefined ? from.indent ?? 0 : undefined
+    if (ed && ed.id === b.id && conflictRef.current?.blockId !== b.id) {
+      setEdit({ ...ed, type: c.type, props: { ...c.props, indent: indent(ed.props) } })
+      editorRef.current?.commands.focus()
+      void flushEdit()
+      return
+    }
+    void run([{ op: 'update', block_id: b.id, type: c.type, props: { ...c.props, indent: indent(b.props) }, content: b.content, base_rev: b.rev }])
+  }
+
   const blockItems = (b: Block): MenuItem[] => {
     const text = TEXT_TYPES.has(b.type)
     return [
@@ -1572,7 +1591,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       } },
       ...(text ? ['-' as const, { head: t('turnInto') }, ...TURN_INTO.map((c) => ({
         label: t(c.label), icon: c.icon,
-        onSelect: () => void run([{ op: 'update', block_id: b.id, type: c.type, props: { ...c.props, indent: c.props.indent !== undefined ? b.props.indent ?? 0 : undefined }, content: b.content, base_rev: b.rev }]),
+        onSelect: () => turnInto(b, c),
       }))] : []),
       '-',
       { label: t('moveUp'), icon: '↑', kbd: `${MOD_LABEL === '⌘' ? '⌥' : 'Alt'}↑`, onSelect: () => moveBlock(b, -1) },
@@ -1714,7 +1733,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                     {paper.visibility === 'private' && <><span className="mdot" /><span>🔒 {t('private')}</span><button type="button" className="linkbtn" onClick={() => void doPaper(() => api.setVisibility(ws, paperId, 'public'), t('publishedUnfiled'))}>{t('makePublic')}</button></>}
                     {unfiled && <><span className="mdot" /><span>{t('unfiled')}</span><button type="button" className="linkbtn" onClick={() => setDialog({ kind: 'move' })}>{t('moveEllipsis')}</button></>}
                     {paper.archived_at && <><span className="mdot" /><span>{t('archived')}</span></>}
-                    <span className="mdot" /><span>{t('editedBy', { name: actorName(paper.updated_by), when: ago(paper.updated_at) })}</span>
+                    <span className="mdot" /><span>{tParts('editedBy', { name: <ActorMention actor={paper.updated_by} />, when: ago(paper.updated_at) })}</span>
                   </div>
                 )}
                 {readOnlyVersion && shown && isHTML && (
@@ -1727,7 +1746,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                 {readOnlyVersion && shown && !isHTML && (
                   <div className="banner ver">
                     <span className="vmark"><span className="vdot" /><span className="vnum">v{shown.number}</span></span>
-                    <span className="sp"><b>{t('viewing', { n: shown.number })}</b> · {t('savedBy', { name: actorName(shown.created_by), when: ago(shown.created_at) })}{shown.note && <span className="muted" style={{ display: 'block' }}>{shown.note}</span>}</span>
+                    <span className="sp"><b>{t('viewing', { n: shown.number })}</b> · {tParts('savedBy', { name: <ActorMention actor={shown.created_by} />, when: ago(shown.created_at) })}{shown.note && <span className="muted" style={{ display: 'block' }}>{shown.note}</span>}</span>
                     <span className="seg" role="group">
                       <button type="button" className={diffMode === 'version' ? 'on' : ''} aria-pressed={diffMode === 'version'} onClick={() => setDiffMode('version')}>{t('changesInVersion')}</button>
                       <button type="button" className={diffMode === 'now' ? 'on' : ''} aria-pressed={diffMode === 'now'} onClick={() => setDiffMode('now')}>{t('comparedToNow')}</button>

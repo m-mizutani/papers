@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { UserMention } from '../components/UserMention'
 import { parse, type MNode } from '../markup/markup'
 
 // Renders the stored inline markup (D10) as React elements. It never
@@ -36,6 +37,8 @@ function nodes(ns: MNode[], key: string): ReactNode[] {
         const href = safeHref(n.url ?? '')
         return href ? <a key={k} href={href} target="_blank" rel="noopener noreferrer">{kids()}</a> : <span key={k}>{kids()}</span>
       }
+      case 'mention':
+        return <UserMention key={k} id={n.user_id ?? ''} name={n.name ?? ''} />
       case 'span': {
         const cls = [n.color ? `mk-c-${n.color}` : '', n.bg ? `mk-bg-${n.bg}` : ''].filter(Boolean).join(' ')
         return <span key={k} className={cls}>{kids()}</span>

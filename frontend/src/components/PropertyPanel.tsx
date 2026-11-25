@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { ApiError, api } from '../api/client'
-import { nextColor, shownValue } from '../api/databaseState'
+import { asPeople, nextColor, shownValue } from '../api/databaseState'
 import type { BatchResult, Op, Property, PropertyType, PropertyValue, Value } from '../api/types'
 import { useTranslation } from '../i18n'
 import type { Anchor } from '../ui/Popover'
 import { useToast } from '../ui/Toast'
 import { isEnter } from '../utils/keyboard'
+import { PersonValuePicker } from './UserMention'
 import { AddPropertyPopover, DateEditor, ElementPicker, TYPE_ICON, ValueView, type ElementActions } from './PropertyEditors'
 
 // The property values of an item, under its title (spec 2.9 I1, I2). The
@@ -99,6 +100,10 @@ export function PropertyPanel({ ws, item, database, properties, values, readOnly
       {open && openProp && (openProp.type === 'select' || openProp.type === 'multi_select') && (
         <ElementPicker prop={openProp} value={shownValue(openProp, values.get(openProp.id))} anchor={open.anchor}
           onChange={(v) => setValue(openProp, v)} actions={actions(openProp)} onClose={() => setOpen(null)} />
+      )}
+      {open && openProp?.type === 'person' && (
+        <PersonValuePicker ws={ws} value={asPeople(shownValue(openProp, values.get(openProp.id)))} anchor={open.anchor} label={openProp.name}
+          onChange={(v) => setValue(openProp, v)} onClose={() => setOpen(null)} />
       )}
       {open && openProp?.type === 'date' && (
         <DateEditor value={shownValue(openProp, values.get(openProp.id)) as string | undefined} anchor={open.anchor}

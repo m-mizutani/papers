@@ -792,3 +792,88 @@ func putPaper(t *testing.T, e *env, q *model.Paper) {
 }
 
 func containsStr(s, sub string) bool { return strings.Contains(s, sub) }
+
+func TestPersonProperty(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	ex := newExample(t, e, alice)
+	a, b := model.NewUserID(), model.NewUserID()
+	if a > b {
+		a, b = b, a
+	}
+	owner := model.PropertyID(e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpAddProperty, Name: ptr("Owner"), PropertyType: model.PropertyPerson, Ref: "o"}).Refs["o"])
+	person := func(id model.UserID, name string) map[string]any {
+		return map[string]any{"user_id": string(id), "name": name}
+	}
+
+	// T13: stored by user ID without repeats; an empty list clears it
+	e.apply(t, alice, wsA, ex.db.ID,
+		usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.invite), Set: map[string]any{string(owner): []any{person(b, "Bob"), person(a, "Ann"), person(b, "Bob again")}}},
+		usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.search), Set: map[string]any{string(owner): []any{person(b, "Bob")}}},
+	)
+	page := gt.R1(e.uc.ListItems(ctx, alice, wsA, ex.db.ID, usecase.ItemsInput{})).NoError(t)
+	got, ok := (&model.PropertyValue{Value: valueIn(page.Items[0], owner)}).People()
+	gt.True(t, ok)
+	gt.Equal(t, got, []model.PersonRef{{UserID: a, Name: "Ann"}, {UserID: b, Name: "Bob"}})
+	e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.search), Set: map[string]any{string(owner): []any{}}})
+	// the same people again is no write
+	stamp := func() time.Time {
+		row := gt.R1(e.uc.ListItems(ctx, alice, wsA, ex.db.ID, usecase.ItemsInput{})).NoError(t).Items[0]
+		for _, v := range row.Values {
+			if v.PropertyID == owner {
+				return v.UpdatedAt
+			}
+		}
+		return time.Time{}
+	}
+	before := stamp()
+	e.clock.Advance(time.Second)
+	e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.invite), Set: map[string]any{string(owner): []any{person(a, "Ann"), person(b, "Bob")}}})
+	gt.Equal(t, stamp(), before)
+
+	// T17: contains any of the users; empty and not empty
+	list := func(c usecase.FilterCondition) []model.PaperID {
+		return itemIDs(gt.R1(e.uc.ListItems(ctx, alice, wsA, ex.db.ID, usecase.ItemsInput{Filter: []usecase.FilterCondition{c}})).NoError(t))
+	}
+	gt.Equal(t, list(usecase.FilterCondition{Property: owner, Op: usecase.FilterContains, Users: []model.UserID{a}}), []model.PaperID{ex.invite})
+	gt.Equal(t, list(usecase.FilterCondition{Property: owner, Op: usecase.FilterIsNotEmpty}), []model.PaperID{ex.invite})
+	gt.Equal(t, len(list(usecase.FilterCondition{Property: owner, Op: usecase.FilterIsEmpty})), 3)
+
+	// T14, T15: invalid values and the limits
+	many := func(n int, name string) []any {
+		l := make([]any, n)
+		for i := range l {
+			l[i] = person(model.NewUserID(), name)
+		}
+		return l
+	}
+	e.apply(t, alice, wsA, ex.db.ID, usecase.Op{Kind: usecase.OpSetValues, Item: string(ex.x), Set: map[string]any{string(owner): many(100, strings.Repeat("n", 100))}})
+	for _, v := range []any{
+		"Ann",
+		[]any{string(a)},
+		[]any{person("short", "Ann")},
+		[]any{person(a, "")},
+		[]any{person(a, "two\nlines")},
+		[]any{map[string]any{"user_id": string(a), "name": "Ann", "extra": "x"}},
+		many(101, "n"),
+		many(1, strings.Repeat("n", 101)),
+	} {
+		_, err := e.uc.Apply(ctx, alice, wsA, ex.db.ID, usecase.BatchInput{Ops: []usecase.Op{{Kind: usecase.OpSetValues, Item: string(ex.notify), Set: map[string]any{string(owner): v}}}})
+		isInvalid(t, err)
+	}
+
+	// T18: not a sort key; is and element conditions do not fit it
+	for _, in := range []usecase.ItemsInput{
+		{Sort: usecase.ItemSortSpec{Property: owner}},
+		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterIs, Elements: []model.ElementID{ex.todo}}}},
+		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains}}},
+		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains, Users: []model.UserID{"short"}}}},
+		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains, Users: make([]model.UserID, 11)}}},
+		{Filter: []usecase.FilterCondition{{Property: owner, Op: usecase.FilterContains, Users: []model.UserID{a}, Elements: []model.ElementID{ex.todo}}}},
+		{Filter: []usecase.FilterCondition{{Property: ex.status, Op: usecase.FilterIs, Elements: []model.ElementID{ex.todo}, Users: []model.UserID{a}}}},
+	} {
+		_, err := e.uc.ListItems(ctx, alice, wsA, ex.db.ID, in)
+		isInvalid(t, err)
+	}
+}

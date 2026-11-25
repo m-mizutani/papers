@@ -214,8 +214,16 @@ func TestListPapersDefault(t *testing.T) {
 	page = gt.R1(e.uc.ListPapers(ctx, bob, wsA, usecase.ListPapersInput{Creator: usecase.CreatorAll})).NoError(t)
 	gt.Equal(t, ids(page), []model.PaperID{theirs.ID, mine.ID})
 
+	// one person's: their public papers, never their private ones
+	page = gt.R1(e.uc.ListPapers(ctx, bob, wsA, usecase.ListPapersInput{Place: usecase.PlaceAll, Creator: usecase.PaperCreator(alice.User.ID)})).NoError(t)
+	gt.Equal(t, ids(page), []model.PaperID{filed.ID, mine.ID})
+	page = gt.R1(e.uc.ListPapers(ctx, alice, wsA, usecase.ListPapersInput{Creator: usecase.PaperCreator(bob.User.ID)})).NoError(t)
+	gt.Equal(t, ids(page), []model.PaperID{theirs.ID})
+	page = gt.R1(e.uc.ListPapers(ctx, alice, wsA, usecase.ListPapersInput{Creator: usecase.PaperCreator(model.NewUserID())})).NoError(t)
+	gt.A(t, page.Papers).Length(0)
+
 	for _, bad := range []usecase.ListPapersInput{
-		{Place: "tree"}, {Creator: "you"}, {Visibility: "secret"}, {Sort: "title"}, {Limit: 101}, {Limit: -1}, {Cursor: "!!"},
+		{Place: "tree"}, {Creator: "not an id"}, {Creator: "you"}, {Visibility: "secret"}, {Sort: "title"}, {Limit: 101}, {Limit: -1}, {Cursor: "!!"},
 	} {
 		_, err := e.uc.ListPapers(ctx, alice, wsA, bad)
 		gt.True(t, errors.Is(err, model.ErrInvalidArgument))
@@ -272,6 +280,14 @@ func TestListPapersReadsOn(t *testing.T) {
 	gt.A(t, page.Papers).Length(11)
 	gt.V(t, e.count.papers).Equal(1)
 	gt.V(t, e.count.reads()-e.count.callsOf("GetWorkspaceRecord")).Equal(e.count.callsOf("ListPapers") + 1)
+	mine := e.count.reads()
+
+	// one person's list reads the same as one's own
+	bob := e.user(t, "bob")
+	e.count.reset()
+	page = gt.R1(e.uc.ListPapers(ctx, bob, wsA, usecase.ListPapersInput{Place: usecase.PlaceFiled, Creator: usecase.PaperCreator(alice.User.ID), Limit: 20})).NoError(t)
+	gt.A(t, page.Papers).Length(11)
+	gt.V(t, e.count.reads()).Equal(mine)
 }
 
 func TestListWorkspacesLastOpened(t *testing.T) {
@@ -403,4 +419,19 @@ func TestFieldsAreSearchable(t *testing.T) {
 		Props: &model.BlockProps{Fields: map[string]string{"rto": "1m"}},
 	})
 	gt.Nil(t, para.Blocks[0].Props.Fields)
+}
+
+func TestMentionsAreSearchable(t *testing.T) {
+	// T4: a mention is stored as written and found by the name
+	e := newEnv(t)
+	ctx := context.Background()
+	alice := e.user(t, "alice")
+	p := e.child(t, alice, wsA, "", "Weekly")
+	id := model.NewUserID()
+	res := e.apply(t, alice, wsA, p.ID, usecase.Op{Kind: usecase.OpInsert, Type: ptr(model.BlockParagraph), Content: ptr("Ask [Masayoshi Mizutani]{user=" + string(id) + "} to review")})
+	gt.Equal(t, res.Blocks[0].Content, "Ask [@Masayoshi Mizutani]{user="+string(id)+"} to review")
+	hits := gt.R1(e.uc.Search(ctx, alice, wsA, usecase.SearchInput{Query: "Mizutani"})).NoError(t)
+	gt.A(t, hits).Length(1)
+	gt.Equal(t, hits[0].BlockID, res.Blocks[0].ID)
+	gt.Equal(t, hits[0].Text, "Ask @Masayoshi Mizutani to review")
 }
