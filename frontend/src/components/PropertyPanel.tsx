@@ -8,6 +8,7 @@ import { useToast } from '../ui/Toast'
 import { isEnter } from '../utils/keyboard'
 import { PersonValuePicker } from './UserMention'
 import { AddPropertyPopover, DateEditor, ElementPicker, TYPE_ICON, ValueView, type ElementActions } from './PropertyEditors'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 // The property values of an item, under its title (spec 2.9 I1, I2). The
 // writes go to the database's batch; the definitions come with the item's
@@ -78,7 +79,7 @@ export function PropertyPanel({ ws, item, database, properties, values, readOnly
           <div key={p.id} style={{ display: 'contents' }}>
             <div className="pn"><span className="ti" aria-hidden>{TYPE_ICON[p.type]}</span><span className="nm">{p.name}</span></div>
             {text?.prop === p.id ? (
-              <input className="pv" autoFocus value={text.draft} aria-label={p.name}
+              <input {...NO_AUTOFILL} className="pv" autoFocus value={text.draft} aria-label={p.name}
                 onChange={(e) => setText({ prop: p.id, draft: e.target.value.replace(/\n/g, '') })}
                 onBlur={() => { setValue(p, text.draft.trim() === '' ? null : text.draft); setText(null) }}
                 onKeyDown={(e) => {

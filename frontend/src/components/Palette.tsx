@@ -6,6 +6,7 @@ import type { PaperRef, SearchHit } from '../api/types'
 import { useTranslation } from '../i18n'
 import { paperIcon } from '../utils/icon'
 import { isEnter } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 export interface Command {
   label: string
@@ -81,7 +82,7 @@ export function Palette({ ws, wsName, homeId, under, recent, commands, onClose }
       <div className="pal" role="dialog" aria-label={t('search')}>
         <div className="pal-in">
           <span className="muted" aria-hidden style={{ fontSize: 'var(--text-h3)' }}>⌕</span>
-          <input autoFocus value={q} placeholder={t('palettePlaceholder')} aria-label={t('search')} autoComplete="off"
+          <input {...NO_AUTOFILL} autoFocus value={q} placeholder={t('palettePlaceholder')} aria-label={t('search')}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(rows.length - 1, a + 1)) }

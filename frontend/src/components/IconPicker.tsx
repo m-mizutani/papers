@@ -4,6 +4,7 @@ import { Popover, type Anchor } from '../ui/Popover'
 import { classifyIconInput, emojiHint, loadEmojiNames, searchEmoji, type EmojiName } from '../utils/emojiSearch'
 import { isIcon, PICKER_ICONS } from '../utils/icon'
 import { isEnter } from '../utils/keyboard'
+import { NO_AUTOFILL } from '../utils/autofill'
 
 /**
  * Chooses a paper's icon: one of the offered emoji, one found by typing its
@@ -71,7 +72,7 @@ export function IconPicker({ anchor, value, onPick, onClose, loadNames = loadEmo
     <Popover anchor={anchor} onClose={onClose} className="iconpick" label={t('iconLabel')}>
       {body}
       <div className="ip-row">
-        <input className={`ip-in${kind === 'invalid' ? ' bad' : ''}`} value={typed} placeholder={t('iconInput')} aria-label={t('iconInput')} aria-invalid={kind === 'invalid'}
+        <input {...NO_AUTOFILL} className={`ip-in${kind === 'invalid' ? ' bad' : ''}`} value={typed} placeholder={t('iconInput')} aria-label={t('iconInput')} aria-invalid={kind === 'invalid'}
           onChange={(e) => {
             setTyped(e.target.value)
             if (failed) { setFailed(false); setAttempt((n) => n + 1) }
