@@ -21,6 +21,7 @@ import type { Caret, Slash } from '../components/RichEditor'
 import { SlashMenu } from '../components/SlashMenu'
 import { detectShortcut } from '../components/shortcuts'
 import { History, type Snap, type Step } from '../editing/history'
+import { blockAt, dropAfter, moveOps, normalize, overlapping, selectedIds, stepAfter, type Selection, type Span } from '../editing/selection'
 import { ago, useTranslation } from '../i18n'
 import { plainText } from '../markup/markup'
 import { Menu, type MenuItem } from '../ui/Menu'
@@ -201,7 +202,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const [held, setHeld] = useState<Map<string, Held>>(() => new Map())
   const [recent, setRecent] = useState<Set<string>>(new Set())
   const [conflict, setConflict] = useState<ConflictState | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
+  // The selected blocks: the range from anchor to focus among the top-level blocks.
+  const [selection, setSelection] = useState<Selection | null>(null)
+  const setSelected = useCallback((id: string | null) => setSelection(id ? { anchor: id, focus: id } : null), [])
   const [slash, setSlash] = useState<(Slash & { blockId: string; active: number; mode: 'type' | 'insert'; anchor?: HTMLElement; filter?: string }) | null>(null)
   const [blockMenu, setBlockMenu] = useState<{ block: Block; anchor: HTMLElement } | null>(null)
   const [pageMenu, setPageMenu] = useState<HTMLElement | null>(null)
@@ -460,7 +463,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       window.clearTimeout(slowTimer)
       live.close()
     }
-  }, [ws, paperId, readOnlyVersion, load, receive, commit, refreshStatus, me.user.id, onChanged, setEdit, openConflict])
+  }, [ws, paperId, readOnlyVersion, load, receive, commit, refreshStatus, me.user.id, onChanged, setEdit, openConflict, setSelected])
 
   // Presence: tell others which block I am editing, and when I stop.
   const editingId = editing?.id
@@ -555,7 +558,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     if (conflictRef.current && conflictRef.current.blockId !== b.id) openConflict(null)
     setSelected(null)
     setEdit({ id: b.id, draft: b.content, type: b.type, props: b.props, base: b.rev, orig: { content: b.content, type: b.type, props: b.props }, textChanged: false, session: sessionId(), caret })
-  }, [readOnlyVersion, setEdit, openConflict, shownOf])
+  }, [readOnlyVersion, setEdit, openConflict, shownOf, setSelected])
 
   /** Sends run one after another, so each is based on the revisions the one before produced. */
   const serial = useCallback(<T,>(fn: () => Promise<T>): Promise<T> => {
@@ -677,6 +680,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     return extra.length ? [...list, ...extra].sort(byOrder) : list
   }, [state, conflict, diffMarks, readOnlyVersion, showChanges])
   const live = useMemo(() => (state ? topLevel(state) : []), [state])
+  const selIds = useMemo(() => selectedIds(live, selection), [live, selection])
+  const selIdsRef = useRef(selIds)
+  selIdsRef.current = selIds
   // Blocks just left show the text being sent for them.
   const shownList = useMemo(() => (held.size ? ordered.map((b) => shownOf(b, held)) : ordered), [ordered, held, shownOf])
   const numbers = useMemo(() => listNumbers(shownList), [shownList])
@@ -749,7 +755,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         if (fresh) startEdit(fresh, { offset })
       }
     })
-  }, [live, runOk, run, realId, startEdit, flushEdit, setEdit, serial, baseFor])
+  }, [live, runOk, run, realId, startEdit, flushEdit, setEdit, serial, baseFor, setSelected])
 
   const arrowOut = useCallback((dir: 'up' | 'down') => {
     const ed = editingRef.current
@@ -767,7 +773,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       setSelected(b.id)
       return
     }
-  }, [live, startEdit, finishEdit])
+  }, [live, startEdit, finishEdit, setSelected])
 
   const setDraft = useCallback((text: string, changed: boolean) => {
     const ed = editingRef.current
@@ -999,11 +1005,37 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     })
   }, [run, setEdit, toast, t])
 
-  const moveBlock = useCallback((b: Block, dir: -1 | 1) => {
-    const idx = live.findIndex((x) => x.id === b.id)
-    if (dir === -1 && idx > 0) void run([{ op: 'move', block_id: b.id, after: idx >= 2 ? live[idx - 2]?.id ?? '' : '' }])
-    if (dir === 1 && idx >= 0 && idx < live.length - 1) void run([{ op: 'move', block_id: b.id, after: live[idx + 1]?.id }])
+  /** Moves blocks (list order) one place up or down, together. */
+  const moveBlocks = useCallback((ids: string[], dir: -1 | 1) => {
+    if (ids.some((id) => id.startsWith('tmp:'))) return
+    const after = stepAfter(live, ids, dir)
+    const ops = after === undefined ? [] : moveOps(live, ids, after)
+    if (ops.length) void run(ops)
   }, [live, run])
+  const moveBlock = useCallback((b: Block, dir: -1 | 1) => moveBlocks([b.id], dir), [moveBlocks])
+
+  /** Deletes the selected blocks in one batch; child papers go one at a time through their dialog. */
+  const deleteBlocks = useCallback((ids: string[]): boolean => {
+    const s = stateRef.current
+    if (!s) return false
+    if (ids.some((id) => id.startsWith('tmp:'))) return false
+    const bs = ids.map((id) => s.blocks.get(id)).filter((b): b is Block => !!b)
+    if (bs.some((b) => b.type === 'paper')) {
+      toast(t('childPapersInSelection'))
+      return false
+    }
+    if (bs.some((b) => b.id === editingRef.current?.id)) setEdit(null)
+    // After any edit still being sent (a drag ends the edit), based on what it produced.
+    void serial(async () => {
+      const cur = stateRef.current
+      const res = await run(bs.map((b) => ({ op: 'delete', block_id: b.id, base_rev: baseFor(b.id, cur?.blocks.get(b.id)?.rev ?? b.rev) })))
+      if (!res) return
+      // Tables are not in the undo history, so undo would not bring them back.
+      const undoable = !bs.some((b) => b.type === 'table')
+      toast(t('blocksDeleted', { n: bs.length }), undoable ? { label: t('undo'), run: () => void undoRef.current('undo') } : undefined)
+    })
+    return true
+  }, [run, setEdit, toast, t, serial, baseFor])
 
   const duplicate = useCallback((b: Block) => {
     if (b.type === 'paper' || b.type === 'table') return
@@ -1021,10 +1053,15 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   }, [run])
 
   // Dragging a block's handle; a click without moving opens the block menu.
+  // The handle of a selected block drags all the selected blocks.
   const startDrag = useCallback((e: ReactPointerEvent, b: Block) => {
     if (e.button !== 0) return
     e.preventDefault()
     const anchor = e.currentTarget as HTMLElement
+    const selectedNow = selIdsRef.current
+    const inSelection = selectedNow.includes(b.id)
+    const group = inSelection ? selectedNow : [b.id]
+    if (!inSelection) setSelection(null)
     const sx = e.clientX
     const sy = e.clientY
     let moved = false
@@ -1033,13 +1070,13 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     line.className = 'dropline'
     line.hidden = true
     document.body.append(line)
-    const el = anchor.closest('.blk') as HTMLElement | null
+    const els = group.map((id) => document.querySelector<HTMLElement>(`.blocks > .blk[data-block-id="${id}"]`)).filter((x): x is HTMLElement => !!x)
     const mv = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
       if (!moved) {
         moved = true
         finishEdit()
-        if (el) el.style.opacity = '0.4'
+        els.forEach((x) => { x.style.opacity = '0.4' })
       }
       const blocks = [...document.querySelectorAll<HTMLElement>('.blocks > .blk[data-block-id]')]
       let best: { el: HTMLElement; before: boolean } | null = null
@@ -1059,26 +1096,28 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
       Object.assign(line.style, { left: `${bd.left}px`, width: `${bd.width}px`, top: `${(best.before ? r.top : r.bottom) - 1}px` })
       target = { id: best.el.dataset.blockId ?? '', before: best.before }
     }
-    const up = () => {
+    const up = (ev: PointerEvent) => {
       document.removeEventListener('pointermove', mv)
       document.removeEventListener('pointerup', up)
+      document.removeEventListener('pointercancel', up)
       line.remove()
-      if (el) el.style.opacity = ''
+      els.forEach((x) => { x.style.opacity = '' })
+      if (ev.type === 'pointercancel') return
       if (!moved) {
+        if (inSelection) setSelected(b.id)
         setBlockMenu({ block: b, anchor })
         return
       }
       const tg = target as { id: string; before: boolean } | null
-      if (!tg || tg.id === b.id) return
-      const rest = live.filter((x) => x.id !== b.id)
-      const i = rest.findIndex((x) => x.id === tg.id)
-      const after = tg.before ? (i > 0 ? rest[i - 1]?.id ?? '' : '') : tg.id
-      if (after === prevOf(live, b.id)) return
-      void run([{ op: 'move', block_id: b.id, after }])
+      if (!tg || group.some((id) => id.startsWith('tmp:'))) return
+      const after = dropAfter(live, group, tg)
+      const ops = after === undefined ? [] : moveOps(live, group, after)
+      if (ops.length) void run(ops)
     }
     document.addEventListener('pointermove', mv)
     document.addEventListener('pointerup', up)
-  }, [finishEdit, live, run])
+    document.addEventListener('pointercancel', up)
+  }, [finishEdit, live, run, setSelected])
 
   // ---- undo / redo ----
   const undo = useCallback(async (dir: 'undo' | 'redo') => {
@@ -1220,41 +1259,55 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         void undo(e.key.toLowerCase() === 'y' || e.shiftKey ? 'redo' : 'undo')
         return
       }
-      // A selected block (Esc from the editor): arrows move, Delete removes.
-      const sel = selectedRef.current
+      // Selected blocks (Esc from the editor, or a range dragged with the
+      // mouse): arrows move the selection, ⇧ arrows extend it, ⌥ arrows move
+      // the blocks, Delete removes them.
+      const sel = normalize(live, selectionRef.current)
       if (!sel || target.closest('.ProseMirror, input, textarea')) return
-      const b = stateRef.current?.blocks.get(sel)
-      if (!b) return
-      const idx = live.findIndex((x) => x.id === sel)
+      const ids = selectedIds(live, sel)
+      const b = ids.length === 1 ? stateRef.current?.blocks.get(sel.focus) : undefined
+      const idx = live.findIndex((x) => x.id === sel.focus)
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault()
-        setSelected(live[idx + 1]?.id ?? live[idx - 1]?.id ?? null)
-        deleteBlock(b)
+        const lo = live.findIndex((x) => x.id === ids[0])
+        const hi = live.findIndex((x) => x.id === ids[ids.length - 1])
+        const next = live[hi + 1]?.id ?? live[lo - 1]?.id ?? null
+        if (b) {
+          setSelected(next)
+          deleteBlock(b)
+        } else if (deleteBlocks(ids)) setSelected(next)
       } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.altKey) {
         e.preventDefault()
-        moveBlock(b, e.key === 'ArrowUp' ? -1 : 1)
+        moveBlocks(ids, e.key === 'ArrowUp' ? -1 : 1)
+      } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.shiftKey) {
+        e.preventDefault()
+        const n = live[idx + (e.key === 'ArrowUp' ? -1 : 1)]
+        if (n) setSelection({ anchor: sel.anchor, focus: n.id })
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault()
         const n = live[idx + (e.key === 'ArrowUp' ? -1 : 1)]
         if (n) setSelected(n.id)
       } else if (isNativeEnter(e)) {
         e.preventDefault()
-        if (TEXT_TYPES.has(b.type) || b.type === 'code') startEdit(b, 'end')
+        if (b && (TEXT_TYPES.has(b.type) || b.type === 'code')) startEdit(b, 'end')
       } else if (modKey(e) && e.key.toLowerCase() === 'd') {
         e.preventDefault()
-        duplicate(b)
+        if (b) duplicate(b)
       } else if (e.key === 'Escape') {
         setSelected(null)
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [saveVersion, undo, layout, live, deleteBlock, moveBlock, startEdit, duplicate])
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
+  }, [saveVersion, undo, layout, live, deleteBlock, deleteBlocks, moveBlocks, startEdit, duplicate, setSelected])
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
+  const focusId = normalize(live, selection)?.focus
+  // While a mouse drag selects, the drag scrolls the page; otherwise the page follows the focus.
+  const draggingSelection = useRef(false)
   useEffect(() => {
-    if (selected) document.querySelector<HTMLElement>(`.blk[data-block-id="${selected}"]`)?.focus()
-  }, [selected])
+    if (focusId) document.querySelector<HTMLElement>(`.blk[data-block-id="${focusId}"]`)?.focus({ preventScroll: draggingSelection.current })
+  }, [focusId])
 
   const onViewRef = useRef(onView)
   onViewRef.current = onView
@@ -1307,6 +1360,115 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
     const last = live[live.length - 1]
     if (last && last.type === 'paragraph' && !last.content) startEdit(last, 'start')
     else void insertShown({ op: 'insert', type: 'paragraph', content: '', after: last?.id })
+  }
+
+  // Selecting blocks with the mouse: a drag that starts outside the blocks'
+  // bodies draws a band and selects the blocks it overlaps vertically; a drag
+  // that starts in a block's text and leaves that block turns into selecting
+  // blocks from it. A drag inside one block stays a text selection.
+  const swallowClick = useRef(false)
+  const selSet = new Set(selIds)
+  const rangeSelect = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || e.pointerType === 'touch' || !canEdit || isHTML || !state) return
+    const scroller = e.currentTarget
+    const el = e.target as HTMLElement
+    if (el.closest('.hdl')) return
+    setSelection(null)
+    const blockEl = el.closest<HTMLElement>('.blocks > .blk[data-block-id]')
+    const inBody = !!blockEl && !!el.closest('.bd')
+    let from: string | null = null
+    if (inBody) {
+      const b = live.find((x) => x.id === blockEl?.dataset.blockId)
+      if (!b || !(TEXT_TYPES.has(b.type) || b.type === 'code') || el.closest('.conf, a, input, button, select')) return
+      from = b.id
+    } else if (el.closest('.title-input, .meta, .banner, .props, a, input, textarea, select, button:not(.addline button)')) {
+      return
+    }
+    const sx = e.clientX
+    // the press point in the scroller's content, so it stays on its block while scrolling
+    const startY = e.clientY + scroller.scrollTop
+    let px = e.clientX
+    let py = e.clientY
+    let active = false
+    let frame = 0
+    const band = document.createElement('div')
+    band.className = 'marquee'
+    band.hidden = true
+    document.body.append(band)
+    const spans = (): Span[] => [...document.querySelectorAll<HTMLElement>('.blocks > .blk[data-block-id]')].flatMap((x) => {
+      const id = x.dataset.blockId ?? ''
+      const r = (x.querySelector('.bd') ?? x).getBoundingClientRect()
+      return live.some((b) => b.id === id) ? [{ id, top: r.top, bottom: r.bottom }] : []
+    })
+    const update = () => {
+      const y0 = startY - scroller.scrollTop
+      const ss = spans()
+      if (from) {
+        const focus = blockAt(ss, py)
+        if (focus) setSelection({ anchor: from, focus })
+      } else {
+        Object.assign(band.style, { left: `${Math.min(sx, px)}px`, top: `${Math.min(y0, py)}px`, width: `${Math.abs(px - sx)}px`, height: `${Math.abs(py - y0)}px` })
+        setSelection(overlapping(ss, y0, py))
+      }
+      window.getSelection()?.removeAllRanges()
+    }
+    // Near the top or bottom edge the page scrolls, and the selection follows.
+    const tick = () => {
+      const r = scroller.getBoundingClientRect()
+      const edge = 40
+      const dy = py < r.top + edge ? -Math.ceil((r.top + edge - py) / 4) : py > r.bottom - edge ? Math.ceil((py - r.bottom + edge) / 4) : 0
+      if (dy) {
+        scroller.scrollTop += dy
+        update()
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    const begin = () => {
+      active = true
+      draggingSelection.current = true
+      swallowClick.current = true
+      document.body.classList.add('selecting')
+      // an editor finishes its edit when it loses focus; anything else is finished here
+      const focused = document.activeElement as HTMLElement | null
+      const inEditor = !!focused?.closest('.blk.editing')
+      focused?.blur()
+      if (!inEditor) finishEdit()
+      if (!from) band.hidden = false
+      frame = requestAnimationFrame(tick)
+    }
+    const mv = (ev: PointerEvent) => {
+      // the button was released outside the window
+      if (ev.buttons === 0) {
+        up()
+        return
+      }
+      px = ev.clientX
+      py = ev.clientY
+      if (!active) {
+        if (from) {
+          const r = blockEl?.querySelector('.bd')?.getBoundingClientRect()
+          if (!r || (py >= r.top && py <= r.bottom)) return
+        } else if (Math.hypot(px - sx, py - e.clientY) < 5) return
+        begin()
+      }
+      update()
+    }
+    const up = () => {
+      document.removeEventListener('pointermove', mv)
+      document.removeEventListener('pointerup', up)
+      document.removeEventListener('pointercancel', up)
+      window.removeEventListener('blur', up)
+      draggingSelection.current = false
+      cancelAnimationFrame(frame)
+      band.remove()
+      document.body.classList.remove('selecting')
+      // the click that ends a drag neither adds a block nor selects one
+      if (active) window.setTimeout(() => { swallowClick.current = false }, 0)
+    }
+    document.addEventListener('pointermove', mv)
+    document.addEventListener('pointerup', up)
+    document.addEventListener('pointercancel', up)
+    window.addEventListener('blur', up)
   }
 
   // The title is sent after a pause in typing, and at once on Enter or blur
@@ -1443,7 +1605,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const marks = readOnlyVersion || (showChanges && !readOnlyVersion) ? diffMarks?.marks : undefined
 
   const ctx: BlockContext | null = state ? {
-    ws, state, canEdit, editing, conflict, recent, numbers, selected, menuFor: blockMenu?.block.id ?? null, marks, slashOpen: !!slash && slash.mode === 'type', external,
+    ws, state, canEdit, editing, conflict, recent, numbers, selected: selSet, menuFor: blockMenu?.block.id ?? null, marks, slashOpen: !!slash && slash.mode === 'type', external,
     actions: {
       startEdit, setDraft, setDraftProps, finishEdit, split, join, arrowOut, indent, pasteLines, pasteImage, pickImage, run: runOk,
       openBlockMenu: (b, anchor) => setBlockMenu({ block: b, anchor }), startDrag, resolveConflict,
@@ -1519,6 +1681,13 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
         </header>
         <div className="scroll" onScroll={(e) => setScrolled((e.target as HTMLElement).scrollTop > 4)}
           onMouseDown={(e) => { pressedEmpty.current = e.target === e.currentTarget || e.target === e.currentTarget.firstElementChild }}
+          onPointerDown={rangeSelect}
+          onClickCapture={(e) => {
+            if (!swallowClick.current) return
+            swallowClick.current = false
+            e.stopPropagation()
+            e.preventDefault()
+          }}
           onClick={(e) => {
             // empty space beside or below the add line also adds (the button covers the column);
             // a press that started elsewhere (a text selection dragged out of a block) does not

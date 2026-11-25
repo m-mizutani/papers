@@ -91,7 +91,12 @@ export class History {
     const stack = dir === 'undo' ? this.done : this.undone
     const entry = stack[stack.length - 1]
     if (!entry) return { ok: false, reason: 'empty' }
-    const steps = dir === 'undo' ? [...entry.steps].reverse() : entry.steps
+    // Undo goes backwards, except moves: blocks moved together each went
+    // after the one before them, so they go back front first, each after the
+    // block it followed, which is then already back in its place.
+    const moves = entry.steps.filter((s) => s.k === 'move')
+    let m = 0
+    const steps = dir === 'undo' ? [...entry.steps].reverse().map((s) => (s.k === 'move' ? moves[m++] ?? s : s)) : entry.steps
     const ops: Op[] = []
     const refs = new Map<string, string>()
     // Blocks brought back in this plan, by their recorded ID: one can be the

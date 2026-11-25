@@ -279,6 +279,8 @@ a.vmark:hover { background: var(--surface-2); }
 .g button:hover { background: var(--surface-2); color: var(--fg); }
 .bd { flex: 1; min-width: 0; position: relative; }
 .blk.sel .bd { background: var(--accent-weak); border-radius: 4px; }
+.blk.sel .g { opacity: 1; }
+.blk.sel:focus-visible { outline: none; }
 .blk.flash .bd { animation: flash 1.4s ease-out; }
 @keyframes flash { 0% { background: var(--ai-weak); } 100% { background: transparent; } }
 .blk.pres .bd { box-shadow: -3px 0 0 0 var(--pc); }
@@ -392,6 +394,8 @@ table.tb { border-collapse: collapse; min-width: 100%; font-size: var(--text-ui)
 .tb .rgrip:hover, .tb .cgrip:hover { background: var(--accent-weak); border-color: var(--accent); }
 .tb .dragsrc { opacity: 0.35; }
 .tdrop { position: fixed; background: var(--accent); border-radius: 2px; z-index: 45; pointer-events: none; }
+.marquee { position: fixed; z-index: 45; pointer-events: none; border: var(--hair) solid var(--accent); background: var(--accent-weak); opacity: 0.55; border-radius: var(--r-sm); }
+body.selecting, body.selecting * { user-select: none; cursor: default; }
 .dropline { position: fixed; height: 2px; background: var(--accent); z-index: 45; pointer-events: none; border-radius: 2px; }
 
 /* conflicts */

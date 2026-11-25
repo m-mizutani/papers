@@ -15,7 +15,7 @@ function block(id: string, childId: string): Block {
 function ctxWith(children: Record<string, PaperRef>, blocks: Block[]): BlockContext {
   return {
     ws: 'team', state: initState(paper, blocks, children), canEdit: false, editing: null, conflict: null, recent: new Set(), numbers: new Map(),
-    selected: null, menuFor: null, slashOpen: false, external: true, actions: {} as BlockContext['actions'],
+    selected: new Set<string>(), menuFor: null, slashOpen: false, external: true, actions: {} as BlockContext['actions'],
   }
 }
 

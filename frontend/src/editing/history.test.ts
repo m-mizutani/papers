@@ -99,4 +99,33 @@ describe('History', () => {
     expect(h.plan('undo', () => undefined, 'Q3 plan')).toEqual({ ok: false, reason: 'changed', blockId: '' })
     expect(h.plan('undo', () => undefined, 'Q3 draft').ok).toBe(true)
   })
+  it('undoes blocks moved together front first, so they all go back (T77)', () => {
+    const h = new History()
+    // P A B C D E: B and C moved after E in one batch
+    h.record([{ k: 'move', id: 'B', from: 'A', to: 'E' }, { k: 'move', id: 'C', from: 'B', to: 'B' }])
+    const s = store({ A: { rev: 1, snap: p('a') }, B: { rev: 1, snap: p('b') }, C: { rev: 1, snap: p('c') }, E: { rev: 1, snap: p('e') } })
+    const undo = h.plan('undo', s.lookup)
+    expect(undo.ok && undo.ops).toEqual([
+      { op: 'move', block_id: 'B', after: 'A' },
+      { op: 'move', block_id: 'C', after: 'B' },
+    ])
+    if (!undo.ok) return
+    h.applied('undo', undo, null)
+    const redo = h.plan('redo', s.lookup)
+    expect(redo.ok && redo.ops).toEqual([
+      { op: 'move', block_id: 'B', after: 'E' },
+      { op: 'move', block_id: 'C', after: 'B' },
+    ])
+  })
+
+  it('undoes one move as before, and other steps still go backwards (T78)', () => {
+    const h = new History()
+    h.record([{ k: 'move', id: 'B', from: 'A', to: 'C' }])
+    const s = store({ A: { rev: 2, snap: p('a2') }, B: { rev: 1, snap: p('b') } })
+    expect(h.plan('undo', s.lookup)).toMatchObject({ ok: true, ops: [{ op: 'move', block_id: 'B', after: 'A' }] })
+    const h2 = new History()
+    h2.record([{ k: 'update', id: 'A', before: p('a'), after: p('a2') }, { k: 'insert', id: 'B', after: 'A', snap: p('b') }])
+    const plan = h2.plan('undo', s.lookup)
+    expect(plan.ok && plan.ops.map((o) => o.op)).toEqual(['delete', 'update'])
+  })
 })

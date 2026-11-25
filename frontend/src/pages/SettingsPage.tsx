@@ -16,7 +16,7 @@ export function ShortcutList() {
   const rows: [string, string][] = [
     [`${MOD_LABEL} K`, t('keySearch')], [`${MOD_LABEL} S`, t('keySave')], [`${MOD_LABEL} ⇧ H`, t('keyHistory')], [`${MOD_LABEL} \\`, t('keySidebar')],
     [`${MOD_LABEL} Z / ${MOD_LABEL} ⇧ Z`, t('keyUndo')], ['/', t('keySlash')], ['#  -  1.  []  >  ```', t('keyMarkdown')], [`${MOD_LABEL} B / ${MOD_LABEL} I`, t('keyBold')],
-    ['Tab / ⇧Tab', t('keyIndent')], ['Esc', t('keyEscape')], ['?', t('keyHelp')],
+    ['Tab / ⇧Tab', t('keyIndent')], ['Esc', t('keyEscape')], ['⇧↑ / ⇧↓', t('keyExtendSelection')], [`${MOD_LABEL === '⌘' ? '⌥' : 'Alt '}↑ / ${MOD_LABEL === '⌘' ? '⌥' : 'Alt '}↓`, t('keyMoveBlocks')], ['?', t('keyHelp')],
   ]
   return (
     <div className="list">
