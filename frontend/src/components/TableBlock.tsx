@@ -176,7 +176,7 @@ export function TableBlock({ block, ctx }: { block: Block; ctx: BlockContext }) 
                         </div>
                       ) : (
                         <div className="cell" onMouseDown={(e) => {
-                          if (!ctx.canEdit || !cell || e.button !== 0) return
+                          if (!ctx.canEdit || !cell || e.button !== 0 || (e.target as HTMLElement).closest('.mention')) return
                           e.preventDefault()
                           ctx.actions.startEdit(cell, { x: e.clientX, y: e.clientY })
                         }}>{cell ? renderMarkup(cell.content) : null}</div>

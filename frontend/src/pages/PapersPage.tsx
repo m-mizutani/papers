@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api } from '../api/client'
 import type { PaperListItem, PaperListQuery } from '../api/types'
 import { ago, useTranslation } from '../i18n'
-import { actorName } from '../utils/actors'
+import { ActorMention, UserMention, useUserNames } from '../components/UserMention'
 import { isEnter } from '../utils/keyboard'
 import { readPref, writePref } from '../utils/prefs'
 
@@ -22,7 +22,19 @@ function stored(): Filters {
 export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string; onNew: () => void; onNewPrivate: () => void; layoutTop: React.ReactNode }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [f, setF] = useState<Filters>(stored)
+  const [saved, setF] = useState<Filters>(stored)
+  // A person's card links here with ?place=all&creator={user id}; those
+  // apply until the filter is changed, and are not remembered.
+  const [params, setParams] = useSearchParams()
+  const urlPlace = params.get('place')
+  const urlCreator = params.get('creator')
+  const f = useMemo<Filters>(() => ({
+    ...saved,
+    ...(urlPlace === 'unfiled' || urlPlace === 'filed' || urlPlace === 'all' ? { place: urlPlace } : {}),
+    ...(urlCreator ? { creator: urlCreator } : {}),
+  }), [saved, urlPlace, urlCreator])
+  const person = f.creator !== 'me' && f.creator !== 'all' ? f.creator : ''
+  const personName = useUserNames(ws, person ? [person] : []).get(person)
   const [rows, setRows] = useState<PaperListItem[]>()
   const [next, setNext] = useState('')
 
@@ -41,9 +53,15 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
     void load().catch(() => setRows([]))
   }, [load])
   const set = (patch: Partial<Filters>) => {
-    const n = { ...f, ...patch }
+    const n = { ...saved, ...patch }
     setF(n)
     writePref('papersFilters', JSON.stringify(n))
+    if ((patch.place && urlPlace) || (patch.creator && urlCreator)) {
+      const p = new URLSearchParams(params)
+      if (patch.place) p.delete('place')
+      if (patch.creator) p.delete('creator')
+      setParams(p, { replace: true })
+    }
   }
   const seg = <K extends keyof Filters>(label: string, key: K, opts: [Filters[K], string][]) => (
     <div className="fg">
@@ -68,6 +86,7 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
         <div className="filters">
           {seg(t('place'), 'place', [['unfiled', t('unfiled')], ['filed', t('filed')], ['all', t('all')]])}
           {seg(t('author'), 'creator', [['me', t('me')], ['all', t('everyone')]])}
+          {person && <span className="fg"><UserMention id={person} name={personName ?? '…'} ws={ws} onRemove={() => set({ creator: saved.creator })} /></span>}
           {seg(t('visibilityLabel'), 'visibility', [['all', t('all')], ['public', t('publicLabel')], ['private', t('private')]])}
           <label className="fg"><input type="checkbox" checked={f.archived} onChange={(e) => set({ archived: e.target.checked })} />{t('includeArchived')}</label>
           <span style={{ flex: 1 }} />
@@ -89,7 +108,7 @@ export function PapersPage({ ws, onNew, onNewPrivate, layoutTop }: { ws: string;
                     <tr key={p.id} tabIndex={0} onClick={(e) => { if (!(e.target as HTMLElement).closest('a,button')) navigate(`/ws/${ws}/p/${p.id}`) }}
                       onKeyDown={(e) => { if (isEnter(e)) navigate(`/ws/${ws}/p/${p.id}`) }}>
                       <td className="tt"><Link to={`/ws/${ws}/p/${p.id}`} style={{ textDecoration: 'none' }}>{p.visibility === 'private' ? '🔒 ' : ''}{p.title || t('untitled')}</Link>{p.status === 'archived' && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {t('archived')}</span>}</td>
-                      <td className="nw">{actorName(p.created_by)}</td>
+                      <td className="nw"><ActorMention actor={p.created_by} /></td>
                       <td className={`loc${unfiled ? ' is-loose' : ''}`}>{where(p)}</td>
                       <td className="nw">{ago(f.sort === 'created' ? p.created_at : p.updated_at)}</td>
                     </tr>

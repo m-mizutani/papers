@@ -21,6 +21,22 @@ export function t(key: MsgKey, params: Record<string, string | number> = {}): st
   return dictionaries[lang][key].replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`))
 }
 
+/** A message with elements (a mention) in its parameters, as a list of parts to render. */
+export function tParts<T>(key: MsgKey, params: Record<string, T | string | number>): (T | string)[] {
+  const out: (T | string)[] = []
+  const re = /\{(\w+)\}/g
+  const text = dictionaries[lang][key]
+  let last = 0
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    const v = params[m[1] ?? '']
+    out.push(v === undefined ? m[0] : typeof v === 'number' ? String(v) : v)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push(text.slice(last))
+  return out
+}
+
 /** "3 min ago" and so on, for times shown next to people and versions. */
 export function ago(iso: string | undefined, now = Date.now()): string {
   if (!iso) return ''

@@ -342,7 +342,7 @@ function listPapers(ws: string, home: string, q: URLSearchParams) {
   const offset = Number(q.get('cursor') ?? 0) || 0
   const rows = [...papers.values()].map((x) => x.paper).filter((x) => x.workspace_id === ws && x.id !== home && sees(x) && !x.deleted_at
     && (place === 'all' || (place === 'unfiled') === !filed(x, home))
-    && (creator === 'all' || x.created_by.user_id === ME.id)
+    && (creator === 'all' || x.created_by.user_id === (creator === 'me' ? ME.id : creator))
     && (vis === 'all' || x.visibility === vis)
     && (archived || !x.archived_at))
     .sort((a, b) => (a[sort] < b[sort] ? 1 : a[sort] > b[sort] ? -1 : 0))
@@ -412,6 +412,17 @@ export function handle(method: string, url: URL, body: unknown): { status: numbe
         unfiled_count: Math.min(100, [...papers.values()].filter((x) => x.paper.workspace_id === ws.id && !x.paper.parent_id && x.paper.id !== ws.home_paper_id
           && x.paper.created_by.user_id === ME.id && !x.paper.deleted_at && !x.paper.archived_at).length),
       } }
+    }
+    if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/users$/))) {
+      const people = [ME, ALICE, BOB]
+      const ids = url.searchParams.get('ids')
+      if (ids) {
+        const byId = new Map(people.map((u) => [u.id, u]))
+        return { status: 200, json: { users: ids.split(',').flatMap((id) => { const u = byId.get(id); return u ? [{ id: u.id, name: u.name }] : [] }) } }
+      }
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const users = people.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name))
+      return { status: 200, json: { users: users.map((u) => ({ id: u.id, name: u.name })) } }
     }
     if ((m = p.match(/^\/api\/v1\/workspaces\/([^/]+)\/search$/))) {
       const q = (url.searchParams.get('q') ?? '').toLowerCase()

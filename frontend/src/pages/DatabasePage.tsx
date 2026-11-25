@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { ApiError, api } from '../api/client'
-import { appendRows, applyDatabaseEvent, clearValue, initDatabase, moveAfter, nextColor, placeItems, putValue, shownValue, visibleRows, type DatabaseState, type DbRow } from '../api/databaseState'
+import { appendRows, applyDatabaseEvent, asPeople, clearValue, initDatabase, moveAfter, nextColor, placeItems, putValue, shownValue, visibleRows, type DatabaseState, type DbRow } from '../api/databaseState'
 import { LiveConnection } from '../api/live'
 import type { BatchResult, Element, FilterCondition, Me, Op, PaperEvent, PaperView, Property, Sidebar, Value, Workspace } from '../api/types'
 import type { Layout } from '../App'
 import { AddPropertyPopover, Chip, ColumnMenu, DateEditor, ElementPicker, TYPE_ICON, ValueView, type ElementActions } from '../components/PropertyEditors'
-import { ago, useTranslation, type MsgKey } from '../i18n'
+import { ago, tParts, useTranslation, type MsgKey } from '../i18n'
 import { Menu, type MenuItem } from '../ui/Menu'
 import { Modal } from '../ui/Modal'
 import { Popover, type Anchor } from '../ui/Popover'
 import { useToast } from '../ui/Toast'
 import { actorName } from '../utils/actors'
+import { ActorMention, PeopleChooser, PersonPicker, useUserNames } from '../components/UserMention'
 import { MOD_LABEL, isEnter } from '../utils/keyboard'
 
 // A database: its items as a table, one column per property. Definitions
@@ -31,6 +32,7 @@ const OP_LABEL: Record<FilterCondition['op'], MsgKey> = {
 const OPS_OF: Record<Property['type'], [FilterCondition['op'], ...FilterCondition['op'][]]> = {
   select: ['is', 'is_empty', 'is_not_empty'],
   multi_select: ['contains', 'is_empty', 'is_not_empty'],
+  person: ['contains', 'is_empty', 'is_not_empty'],
   date: ['on', 'before', 'after', 'is_empty', 'is_not_empty'],
   text: ['starts_with', 'is_empty', 'is_not_empty'],
 }
@@ -47,7 +49,7 @@ function parseFilter(raw: string | null): FilterCondition[] {
 
 /** Whether a condition says enough to be sent. */
 const complete = (c: FilterCondition) =>
-  c.op === 'is_empty' || c.op === 'is_not_empty' || (c.elements?.length ?? 0) > 0 || !!c.date || !!c.text || (!!c.from && !!c.to)
+  c.op === 'is_empty' || c.op === 'is_not_empty' || (c.elements?.length ?? 0) > 0 || (c.users?.length ?? 0) > 0 || !!c.date || !!c.text || (!!c.from && !!c.to)
 
 export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
   ws: string
@@ -307,6 +309,8 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
 
   const props = state?.db.properties ?? []
   const propOf = (id: string) => props.find((p) => p.id === id)
+  const filterUsers = useMemo(() => [...new Set(filter.flatMap((c) => c.users ?? []))], [filter])
+  const userNames = useUserNames(ws, filterUsers)
 
   const sortLabel = (): string => {
     const [key, dir] = sort.split(':')
@@ -323,7 +327,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
       items.push({ label: `${name} · ${t('descending')}`, icon: sort === `${key}:desc` ? '✓' : '', onSelect: () => setQuery(`${key}:desc`, filter) })
     }
     add('title', t('colName'))
-    for (const p of props) if (p.type !== 'multi_select') add(p.id, p.name)
+    for (const p of props) if (p.type !== 'multi_select' && p.type !== 'person') add(p.id, p.name)
     items.push('-')
     items.push({ label: t('sortCreatedNewest'), icon: sort === 'created:desc' ? '✓' : '', onSelect: () => setQuery('created:desc', filter) })
     items.push({ label: t('sortUpdatedNewest'), icon: sort === 'updated:desc' ? '✓' : '', onSelect: () => setQuery('updated:desc', filter) })
@@ -346,6 +350,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
     const p = propOf(c.property)
     if (!p) return '?'
     if (c.op === 'is_empty' || c.op === 'is_not_empty') return `${p.name} ${t(OP_LABEL[c.op])}`
+    if (c.users) return `${p.name}: ${c.users.map((id) => `@${userNames.get(id) ?? '…'}`).join(', ')}`
     if (c.elements) return `${p.name}: ${(p.elements ?? []).filter((e) => c.elements?.includes(e.id)).map((e) => e.value).join(', ')}`
     return `${p.name} ${t(OP_LABEL[c.op])} ${c.date ?? c.text ?? ''}`
   }
@@ -450,7 +455,7 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
                 <div className="meta">
                   <span className="kindmark"><span aria-hidden>⊞</span>{t('database')}</span>
                   {db.archived_at && <><span className="mdot" /><span>{t('archived')}</span></>}
-                  <span className="mdot" /><span>{t('editedBy', { name: actorName(db.updated_by), when: ago(db.updated_at) })}</span>
+                  <span className="mdot" /><span>{tParts('editedBy', { name: <ActorMention actor={db.updated_by} />, when: ago(db.updated_at) })}</span>
                 </div>
                 {db.deleted_at && <div className="banner info"><span className="sp">{t('inTrash')}</span></div>}
                 {db.archived_at && <div className="banner info"><span className="sp">{t('archivedBanner')}</span></div>}
@@ -597,12 +602,16 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
         <ElementPicker prop={cellProp} value={shownValue(cellProp, cellRow.values.get(cellProp.id))} anchor={cell.anchor}
           onChange={(v) => setValue(cellRow.item.id, cellProp.id, v)} actions={elementActions(cellRow, cellProp)} onClose={() => setCell(null)} />
       )}
+      {cell && cellRow && cellProp?.type === 'person' && (
+        <PersonPicker ws={ws} value={asPeople(shownValue(cellProp, cellRow.values.get(cellProp.id)))} anchor={cell.anchor} label={cellProp.name}
+          onChange={(v) => setValue(cellRow.item.id, cellProp.id, v)} onClose={() => setCell(null)} />
+      )}
       {cell && cellRow && cellProp?.type === 'date' && (
         <DateEditor value={shownValue(cellProp, cellRow.values.get(cellProp.id)) as string | undefined} anchor={cell.anchor}
           onChange={(v) => setValue(cellRow.item.id, cellProp.id, v)} onClose={() => setCell(null)} />
       )}
       {cond && condOpen && condProp && (
-        <ConditionEditor prop={condProp} cond={condOpen} anchor={cond.anchor}
+        <ConditionEditor ws={ws} names={userNames} prop={condProp} cond={condOpen} anchor={cond.anchor}
           onChange={(c) => setQuery(sort, filter.map((x, j) => (j === cond.index ? c : x)))}
           onRemove={() => { setQuery(sort, filter.filter((_, j) => j !== cond.index)); setCond(null) }}
           onClose={() => setCond(null)} />
@@ -612,7 +621,9 @@ export function DatabasePage({ ws, paperId, me, sidebar, onChanged, layout }: {
 }
 
 /** Edits one filter condition: its operator and what it compares with. */
-function ConditionEditor({ prop, cond, anchor, onChange, onRemove, onClose }: {
+function ConditionEditor({ ws, names, prop, cond, anchor, onChange, onRemove, onClose }: {
+  ws: string
+  names: Map<string, string>
   prop: Property
   cond: FilterCondition
   anchor: Anchor
@@ -626,7 +637,8 @@ function ConditionEditor({ prop, cond, anchor, onChange, onRemove, onClose }: {
   const needs = cond.op !== 'is_empty' && cond.op !== 'is_not_empty'
   const setOp = (op: FilterCondition['op']) => {
     const base: FilterCondition = { property: prop.id, op }
-    if (op === 'is' || op === 'contains') base.elements = cond.elements ?? []
+    if (prop.type === 'person' && op === 'contains') base.users = cond.users ?? []
+    else if (op === 'is' || op === 'contains') base.elements = cond.elements ?? []
     else if (op === 'starts_with') base.text = cond.text
     else if (op !== 'is_empty' && op !== 'is_not_empty') base.date = cond.date
     onChange(base)
@@ -647,7 +659,11 @@ function ConditionEditor({ prop, cond, anchor, onChange, onRemove, onClose }: {
       <select className="inp" value={cond.op} aria-label={t('filterItems')} onChange={(e) => setOp(e.target.value as FilterCondition['op'])}>
         {ops.map((op) => <option key={op} value={op}>{op === 'is' || op === 'contains' ? t('anyOf') : t(OP_LABEL[op])}</option>)}
       </select>
-      {needs && (cond.op === 'is' || cond.op === 'contains') && (prop.elements ?? []).map((el) => (
+      {needs && prop.type === 'person' && (
+        <PeopleChooser ws={ws} max={10} chosen={(cond.users ?? []).map((id) => ({ user_id: id, name: names.get(id) ?? '…' }))}
+          onChange={(next) => { next.forEach((p) => names.set(p.user_id, p.name)); onChange({ ...cond, users: next.map((p) => p.user_id) }) }} />
+      )}
+      {needs && prop.type !== 'person' && (cond.op === 'is' || cond.op === 'contains') && (prop.elements ?? []).map((el) => (
         <label key={el.id} className="opt">
           <input type="checkbox" checked={(cond.elements ?? []).includes(el.id)} onChange={() => toggle(el)} />
           <Chip el={el} />

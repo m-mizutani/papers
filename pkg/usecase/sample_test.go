@@ -15,6 +15,7 @@ import (
 	"github.com/m-mizutani/gt"
 
 	"github.com/m-mizutani/papers/pkg/domain/interfaces"
+	"github.com/m-mizutani/papers/pkg/domain/markup"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 	"github.com/m-mizutani/papers/pkg/repository/memory"
 	"github.com/m-mizutani/papers/pkg/service/attachment"
@@ -330,13 +331,13 @@ func TestSeedSamplesBuildsTheSampleDatabase(t *testing.T) {
 	for _, p := range db.Properties {
 		types = append(types, p.Type)
 	}
-	gt.Equal(t, types, []model.PropertyType{model.PropertySelect, model.PropertyDate, model.PropertyMultiSelect, model.PropertyText})
+	gt.Equal(t, types, []model.PropertyType{model.PropertySelect, model.PropertyDate, model.PropertyMultiSelect, model.PropertyText, model.PropertyPerson})
 	gt.A(t, db.Items).Length(5)
 
 	page := gt.R1(e.uc.ListItems(ctx, alice, wsA, db.ID, usecase.ItemsInput{})).NoError(t)
 	gt.A(t, page.Items).Length(5)
 	gt.Equal(t, page.Items[0].Item.Title, "Rank search results by recent edits")
-	gt.A(t, page.Items[0].Values).Length(4) // every property type has a value
+	gt.A(t, page.Items[0].Values).Length(5) // every property type has a value
 	for _, row := range page.Items {
 		gt.Equal(t, row.Item.DatabaseID, db.ID)
 		gt.Equal(t, row.Item.CreatedBy.Kind, model.ActorSystem)
@@ -348,4 +349,37 @@ func TestSeedSamplesBuildsTheSampleDatabase(t *testing.T) {
 	gt.True(t, len(body) > 0)
 	// and the items are counted among the sample papers
 	gt.True(t, seed(t, e)[wsA].Papers == 0) // a second run writes nothing
+}
+
+// TestSamplesShowMentionsAndPeople keeps a mention in a sample's text and a
+// person property value in the sample database (spec: T23).
+func TestSamplesShowMentionsAndPeople(t *testing.T) {
+	e := newEnv(t)
+	seed(t, e)
+	ctx := context.Background()
+	mentions := 0
+	for _, p := range allPapers(t, e, wsA) {
+		for _, b := range gt.R1(e.repo.ListBlocks(ctx, wsA, p.ID)).NoError(t) {
+			nodes := gt.R1(markup.Parse(b.Content)).NoError(t)
+			for _, n := range nodes {
+				if n.Kind == markup.KindMention {
+					mentions++
+				}
+			}
+		}
+	}
+	gt.True(t, mentions > 0)
+
+	alice := e.user(t, "alice")
+	db := byTitle(allPapers(t, e, wsA))["Product roadmap"]
+	page := gt.R1(e.uc.ListItems(ctx, alice, wsA, db.ID, usecase.ItemsInput{})).NoError(t)
+	people := 0
+	for _, row := range page.Items {
+		for _, v := range row.Values {
+			if ps, ok := v.People(); ok {
+				people += len(ps)
+			}
+		}
+	}
+	gt.True(t, people > 0)
 }

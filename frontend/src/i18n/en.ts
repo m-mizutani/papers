@@ -377,4 +377,11 @@ export const en: Record<MsgKey, string> = {
   dbWriteFailed: 'Could not write: {message}. The table was read again.',
   unchoose: 'Remove',
   properties: 'Properties',
+  people: 'People',
+  noPeople: 'No matching people',
+  loadingPeople: 'Loading…',
+  peopleFailed: 'Could not load people',
+  papersByPerson: 'Papers created by this person →',
+  choosePeople: 'Choose people',
+  propPerson: 'Person',
 }
