@@ -417,8 +417,11 @@ export const ja: Record<MsgKey, string> = {
   addIcon: 'アイコンを追加',
   changeIcon: 'アイコンを変更',
   iconLabel: 'アイコン',
-  iconInput: '絵文字を入力',
+  iconInput: '名前・絵文字を入力',
   iconSet: '設定',
   iconRemove: '削除',
   iconOne: '絵文字を1つだけ入力してください',
+  iconNoMatch: '一致する絵文字がありません',
+  iconLoading: '読み込み中…',
+  iconNamesFailed: '名前を読み込めませんでした',
 }

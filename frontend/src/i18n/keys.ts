@@ -420,6 +420,9 @@ export const keys = {
   iconSet: 'iconSet',
   iconRemove: 'iconRemove',
   iconOne: 'iconOne',
+  iconNoMatch: 'iconNoMatch',
+  iconLoading: 'iconLoading',
+  iconNamesFailed: 'iconNamesFailed',
 } as const
 
 export type MsgKey = keyof typeof keys

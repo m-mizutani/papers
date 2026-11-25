@@ -36,8 +36,7 @@ export function paperIcon(p: { id: string; icon?: string; kind?: PaperKind }, ho
  * Whether s (trimmed) can be an icon: one grapheme cluster (one character on
  * screen) of at most 32 bytes, without spaces or control characters, and
  * not made only of invisible characters (format characters and combining
- * marks). Empty
- * is not an icon here; removing one is a separate action.
+ * marks). Empty is not an icon here; removing one is a separate action.
  */
 export function isIcon(s: string): boolean {
   const v = s.trim()

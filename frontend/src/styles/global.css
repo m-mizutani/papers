@@ -446,7 +446,8 @@ body.selecting, body.selecting * { user-select: none; cursor: default; }
 /* Paper icons: the emoji before a title, the large one above a paper's title, and the picker. */
 .pic-i { display: inline-block; width: var(--icon-w); flex: none; text-align: center; font-weight: 400; line-height: 1; }
 .lock-i { flex: none; font-size: var(--text-xs); color: var(--fg-3); margin-left: var(--sp-2); }
-.page-icon { display: block; margin: 0 0 var(--sp-2) calc(var(--gutter) + var(--sp-1)); padding: var(--sp-2); border-radius: var(--r-md); font-size: var(--page-icon); line-height: 1; }
+/* The space above meets .meta's bottom margin (they collapse), so it is set whole: 28px above the glyph and 16px below it, the glyph lined up with the title. */
+.page-icon { display: block; margin: calc(var(--sp-9) - var(--sp-2)) 0 calc(var(--sp-7) - var(--sp-2)) calc(var(--gutter) + var(--sp-1) - var(--sp-2)); padding: var(--sp-2); border-radius: var(--r-md); font-size: var(--page-icon); line-height: 1; }
 button.page-icon:hover, button.page-icon:focus-visible { background: var(--surface-2); }
 .add-icon { display: inline-flex; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-3) calc(var(--gutter) + var(--sp-1)); padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--text-sm); color: var(--fg-3); opacity: 0; }
 .add-icon:hover { background: var(--surface-2); color: var(--fg-2); }
@@ -457,6 +458,9 @@ button.page-icon:hover, button.page-icon:focus-visible { background: var(--surfa
 .ip-grid button { height: var(--control-h); border-radius: var(--r-sm); font-size: var(--text-h3); line-height: 1; display: grid; place-items: center; }
 .ip-grid button:hover { background: var(--surface-2); }
 .ip-grid button.on { background: var(--accent-weak); box-shadow: inset 0 0 0 var(--hair) var(--accent); }
+.ip-grid.scroll { max-height: calc(5 * var(--control-h) + 4 * var(--sp-1)); overflow-y: auto; overscroll-behavior: contain; }
+.ip-grid button.first:not(.on) { background: var(--surface-2); box-shadow: inset 0 0 0 var(--hair) var(--line-2); }
+.ip-note { padding: var(--sp-8) var(--sp-4); text-align: center; font-size: var(--text-sm); color: var(--fg-3); }
 .ip-row { display: flex; gap: var(--sp-3); align-items: center; margin-top: var(--sp-4); }
 .ip-in { flex: 1; min-width: 0; height: var(--control-sm-h); border: var(--hair) solid var(--line-2); border-radius: var(--r-sm); padding: 0 var(--sp-4); background: var(--surface); color: var(--fg); font-size: var(--text-ui); }
 .ip-in.bad { border-color: var(--danger); }
