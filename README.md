@@ -1,29 +1,93 @@
 # papers
 
-An AI-native, real-time knowledge canvas. People and AI agents write
-**papers** together. A paper is an ordered list of **blocks**: headings, text
-with inline formatting and colours, lists, tables, code, images, child papers,
-and rich blocks that AI writes (Mermaid diagrams, SVG and sandboxed HTML).
+**A shared canvas where people and AI agents write the same papers, block by block.**
 
-- **Workspaces come from configuration.** One TOML file per workspace, with a
-  Rego rule deciding who may use it. There are no roles; a paper is either
-  public (everyone in the workspace) or private (its creator).
-- **Papers nest.** A child paper is a block in its parent's body. Every
-  workspace has a home paper.
-- **The current state and versions.** What anyone writes is the current state
-  at once. A version (v1, v2, …) exists only when a person or an agent saves
-  one. Any version can be viewed, compared and restored.
-- **No locks.** Each edit names the revision of the block it was based on. If
-  someone else changed that block meanwhile, the whole batch is rejected once
-  with the current contents; the writer can redo or overwrite.
-- Web UI (React) with live updates and presence over WebSocket; REST API and
-  an MCP endpoint (`/mcp`) for AI agents.
+**[Try the demo](https://papers-240228871785.asia-northeast1.run.app)**: no sign-in needed. Everything in it is deleted every day at 04:17 JST, so do not keep anything there.
 
-[docs/model.md](docs/model.md) is the source of truth for the model.
-[docs/design.md](docs/design.md) covers the architecture and the Firestore
-layout, and [docs/codebase.md](docs/codebase.md) is a tour of the code.
+![The "Welcome to papers" paper open in papers, with the workspace's papers in the sidebar](docs/images/readme-welcome.png)
 
-## Run locally
+## What makes papers different
+
+papers looks like the block editors you know: a sidebar of nested pages and a body of blocks. It is built for a different job: a team's knowledge, kept current by people and AI agents working on the same papers at the same time.
+
+- **AI agents are writers, not plugins.** Agents read and write papers through the MCP endpoint and the REST API with the same operations people use. Every change records whether a person or an agent made it, and for whom.
+- **Edit by block, with no locks.** Each edit names the revision of the block it started from. If someone else changed that block meanwhile, the edit is refused with both versions, and the writer keeps one, keeps both or overwrites. Nobody waits for anybody.
+- **Versions are saved on purpose.** What anyone writes is the current state at once. A version (v1, v2, …) exists only when a person or an agent saves one, so the history is a list of states someone chose to keep, and any of them can be compared or restored.
+- **Rich blocks written by AI.** Agents add Mermaid diagrams, SVG and self-contained HTML, even whole HTML papers. They run in a sandboxed frame, and people change only the values the agent marked as editable.
+- **Connect an agent in one command.** `claude mcp add` and a consent screen in the browser: the agent receives its own token, with nothing to copy. Tokens are listed and revoked in Settings.
+- **Workspaces are configuration.** One TOML file per workspace and a Rego rule decide who may use it. There are no roles, no administrators and no admin screens; a paper is public to the workspace or private to its creator.
+
+## Features
+
+- **Blocks**: paragraphs, headings, quotes, bulleted, numbered and to-do lists, callouts, code, dividers, images and tables. Type `/` at the start of a block or after a space to pick a type.
+- **Inline formatting**: bold, italic, strikethrough, code, links, coloured and highlighted text, and `@` mentions of people.
+- **Nested papers**: a paper placed in another paper's body becomes its child. Every workspace has a home paper, and the sidebar shows the tree.
+- **Rich blocks and HTML papers** written by AI agents: Mermaid, SVG and HTML, drawn in a sandboxed frame.
+
+  ![Mermaid and SVG blocks in the "Diagrams and rich blocks" paper](docs/images/readme-rich-blocks.png)
+
+- **Live editing together**: changes appear on every open screen as they are written, and a name tag shows who is editing which block.
+- **Conflicts you can see**: when someone changed the block you are editing, papers shows their text and yours and lets you keep both, use theirs or overwrite with yours.
+
+  ![An agent named Claude changed the block being edited in "Working with AI agents"; papers shows both texts with "Keep both", "Use theirs" and "Overwrite with mine"](docs/images/readme-conflict.png)
+
+- **Databases**: a paper whose body is a table of items, with text, date, select, multi-select and person properties, sorting and filters. Each item is a paper of its own.
+
+  ![The "Product roadmap" database with Status, Due and Area columns](docs/images/readme-database.png)
+
+- **Versions**: save the current state as v1, v2, …, compare any two states and restore one.
+- **Search** across the titles and blocks of a workspace.
+- **Public and private papers**, favorites, emoji icons, archive, and a trash you can restore from.
+- **Several workspaces**, each with its own rules for AI agents, grouped in the sidebar.
+
+## Try it
+
+1. **Open the [demo](https://papers-240228871785.asia-northeast1.run.app).** It holds the same sample papers as these screenshots; edit anything.
+2. **Run your own server** ([Run your own server](#run-your-own-server)): a single binary, with in-memory storage for a try and Firestore for real use.
+3. **Connect an AI agent** to it ([Connect an AI agent (MCP)](#connect-an-ai-agent-mcp)) and ask the agent to read or rewrite a paper while you have it open.
+
+## Connect an AI agent (MCP)
+
+The MCP endpoint is `/mcp`. The tools an agent uses most:
+
+| Tool | What it does |
+|---|---|
+| `papers_guide` | Explains papers, block types, operations and the workspace's rules; agents call it once before writing |
+| `papers_search` | Finds papers and blocks containing words |
+| `papers_read` | Reads a paper's blocks with their revisions |
+| `papers_create_paper` | Creates a paper, optionally from Markdown, or an HTML paper |
+| `papers_write` | Applies a batch of operations based on those revisions; fails with a conflict when a block changed meanwhile |
+| `papers_save_version`, `papers_versions`, `papers_diff` | Save, list and compare versions |
+
+In no-authn mode the MCP endpoint needs no token:
+
+```sh
+claude mcp add --transport http papers http://localhost:8080/mcp
+```
+
+With sign-in enabled, add the same command without a header (Settings shows
+it with the right URL) and start authenticating papers in Claude Code
+(`/mcp`). papers is an OAuth 2.1 authorization server: the browser opens a
+consent screen, and Claude Code receives an **AI agent** token (valid 90 days,
+listed and revocable under *API tokens*). No token passes through the shell,
+so none is left in its history. MCP clients without OAuth can still send a
+token created under *API tokens* as `Authorization: Bearer pap_…`.
+
+When MCP clients reach the server under another URL than browsers do, set
+`--mcp-base-url`. For example, with IAP in front of
+`https://papers.example.com` (`--base-url`) and a VPN route to the same
+server at `https://papers-direct.example.com`, set
+`--mcp-base-url https://papers-direct.example.com`: Settings then shows that
+URL, the consent screen still opens on `--base-url` (where the browser has
+its session), and a code made there is exchanged on either host. OAuth
+metadata is answered only for the hosts of these two URLs. A client that goes
+through IAP itself (another service connecting to `papers.example.com`) sends
+its IAP token in `Proxy-Authorization` and the papers token in
+`Authorization`.
+
+## Run your own server
+
+### Run locally
 
 ```sh
 # terminal 1: API server, no sign-in, in-memory storage, example workspaces
@@ -66,34 +130,6 @@ input is `{"workspace": {"id"}, "user": {"id", "email", "domain"}}`. Decisions
 are cached for 60 seconds; an error denies. Everything is validated at
 startup and a bad file stops the server. `--global-config` groups workspaces
 in the sidebar (see `examples/global.toml`).
-
-### Connect Claude Code (MCP)
-
-In no-authn mode the MCP endpoint needs no token:
-
-```sh
-claude mcp add --transport http papers http://localhost:8080/mcp
-```
-
-With sign-in enabled, add the same command without a header (Settings shows
-it with the right URL) and start authenticating papers in Claude Code
-(`/mcp`). papers is an OAuth 2.1 authorization server: the browser opens a
-consent screen, and Claude Code receives an **AI agent** token (valid 90 days,
-listed and revocable under *API tokens*). No token passes through the shell,
-so none is left in its history. MCP clients without OAuth can still send a
-token created under *API tokens* as `Authorization: Bearer pap_…`.
-
-When MCP clients reach the server under another URL than browsers do, set
-`--mcp-base-url`. For example, with IAP in front of
-`https://papers.example.com` (`--base-url`) and a VPN route to the same
-server at `https://papers-direct.example.com`, set
-`--mcp-base-url https://papers-direct.example.com`: Settings then shows that
-URL, the consent screen still opens on `--base-url` (where the browser has
-its session), and a code made there is exchanged on either host. OAuth
-metadata is answered only for the hosts of these two URLs. A client that goes
-through IAP itself (another service connecting to `papers.example.com`) sends
-its IAP token in `Proxy-Authorization` and the papers token in
-`Authorization`.
 
 ## Configuration
 
@@ -149,3 +185,13 @@ A test checks that every flag of every command has a `PAPERS_*` environment vari
 `papers firestore reset` deletes every document in the database, for example to start an environment over; indexes and TTL policies are kept. Stop the server first. It asks you to type `yes`; `--force-dangerous-apply` (`PAPERS_FORCE_DANGEROUS_APPLY`) skips the question, so never leave that variable set. With `FIRESTORE_EMULATOR_HOST` set it works on the emulator. Images in the attachment store are not deleted. With `--demo` (`PAPERS_DEMO`) it then creates each workspace's home and writes the sample papers of `pkg/usecase/sample/` into it (not the in-browser demo of `pnpm build:demo`); it reads the workspace configuration (`--config`, `--global-config`) and the attachment store (`--attachment-backend` `gcs` or `dir`, with the same flags and variables as `papers serve`) and stops before deleting anything when they are missing or invalid. It prints one line per workspace: `seeded` with the number of sample papers, or `skipped` when someone wrote in the workspace while the reset ran.
 
 Both take `--firestore-project-id` and `--firestore-database-id` (or `PAPERS_FIRESTORE_PROJECT_ID`, `PAPERS_FIRESTORE_DATABASE_ID`).
+
+## Documentation
+
+[docs/model.md](docs/model.md) is the source of truth for the model and its terms.
+[docs/design.md](docs/design.md) covers the architecture and the Firestore
+layout, and [docs/codebase.md](docs/codebase.md) is a tour of the code.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
