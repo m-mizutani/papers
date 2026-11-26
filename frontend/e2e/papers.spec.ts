@@ -288,12 +288,15 @@ test('T7 T8 a title another writer changes shows every line, and shrinks back', 
 })
 
 test('T9 a narrower window wraps the title onto more lines, all shown', async ({ page, request }) => {
-  const paper = await createPaper(request, { title: 'A title on one line at desktop width', markdown: 'body' })
+  // Compared with the line count at desktop width, so the test does not
+  // depend on the fonts installed where it runs.
+  const paper = await createPaper(request, { title: LONG_TITLE, markdown: 'body' })
   await page.setViewportSize({ width: 1280, height: 800 })
   await openPaper(page, paper.id)
-  expect(await titleLines(page)).toBe(1)
+  expect(await titleFits(page)).toBe(true)
+  const wide = await titleLines(page)
   await page.setViewportSize({ width: 390, height: 800 })
-  await expect.poll(() => titleLines(page)).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => titleLines(page)).toBeGreaterThan(wide)
   expect(await titleFits(page)).toBe(true)
 })
 
