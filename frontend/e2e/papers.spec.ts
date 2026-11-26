@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { call, createPaper, homeOf, menu, msg, openPaper, paperOf, titleField, unique, waitLive, WS } from './helpers'
+import { agent, call, createPaper, homeOf, menu, msg, openPaper, paperOf, titleField, unique, waitLive, WS } from './helpers'
 import type { Sidebar } from '../src/api/types'
 
 const sidebarOf = (request: Parameters<typeof createPaper>[0]) => call<Sidebar>(request, 'GET', `/workspaces/${WS}/sidebar`)
@@ -244,4 +244,65 @@ test('T56 / opens the last workspace, or the chooser; "Continue" opens the last 
   await waitLive(page)
   await expect(titleField(page)).toHaveValue(paper.title)
   await ctx.close()
+})
+
+// The title field shows every wrapped line: no part of its content is
+// scrolled out of its box.
+const titleFits = (page: Page) => titleField(page).evaluate((el) => el.scrollHeight <= el.clientHeight)
+const titleLines = (page: Page) => titleField(page).evaluate((el) => Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)))
+const LONG_TITLE = 'Telemetry values cut to the limit still exceed it once the dropped count is appended to them'
+const LONGER_TITLE = `${LONG_TITLE}, so the whole batch is rejected by the server`
+
+test('T4 T5 T6 a long title shows every line when a paper opens', async ({ page, request }) => {
+  const plain = await createPaper(request, { title: `${LONG_TITLE} ${unique('t')}`, markdown: 'body' })
+  const html = await createPaper(request, { title: `${LONG_TITLE} ${unique('t')}`, kind: 'html', html: '<p>body</p>' })
+  await page.setViewportSize({ width: 1100, height: 800 })
+  for (const p of [plain, html]) {
+    await openPaper(page, p.id)
+    await expect(titleField(page)).toHaveValue(p.title)
+    expect(await titleLines(page)).toBeGreaterThanOrEqual(2)
+    expect(await titleFits(page)).toBe(true)
+  }
+  await page.setViewportSize({ width: 390, height: 800 })
+  await openPaper(page, plain.id)
+  expect(await titleLines(page)).toBeGreaterThanOrEqual(3)
+  expect(await titleFits(page)).toBe(true)
+})
+
+test('T7 T8 a title another writer changes shows every line, and shrinks back', async ({ page, request, playwright, baseURL }) => {
+  const paper = await createPaper(request, { title: unique('Short'), markdown: 'body' })
+  const other = await agent(playwright, request, baseURL ?? '')
+  await page.setViewportSize({ width: 1100, height: 800 })
+  await openPaper(page, paper.id)
+  expect(await titleLines(page)).toBe(1)
+
+  await call(other.api, 'POST', `/workspaces/${WS}/papers/${paper.id}/ops`, { ops: [{ op: 'set_title', title: LONGER_TITLE }] })
+  await expect(titleField(page)).toHaveValue(LONGER_TITLE)
+  await expect.poll(() => titleLines(page)).toBeGreaterThanOrEqual(2)
+  expect(await titleFits(page)).toBe(true)
+
+  await call(other.api, 'POST', `/workspaces/${WS}/papers/${paper.id}/ops`, { ops: [{ op: 'set_title', title: 'Short again' }] })
+  await expect(titleField(page)).toHaveValue('Short again')
+  await expect.poll(() => titleLines(page)).toBe(1)
+  await other.api.dispose()
+})
+
+test('T9 a narrower window wraps the title onto more lines, all shown', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: 'A title on one line at desktop width', markdown: 'body' })
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await openPaper(page, paper.id)
+  expect(await titleLines(page)).toBe(1)
+  await page.setViewportSize({ width: 390, height: 800 })
+  await expect.poll(() => titleLines(page)).toBeGreaterThanOrEqual(2)
+  expect(await titleFits(page)).toBe(true)
+})
+
+test('T10 typing a long title grows the field', async ({ page, request }) => {
+  const paper = await createPaper(request, { title: '', markdown: 'body' })
+  await page.setViewportSize({ width: 1100, height: 800 })
+  await openPaper(page, paper.id)
+  await titleField(page).click()
+  await page.keyboard.type(LONG_TITLE)
+  expect(await titleLines(page)).toBeGreaterThanOrEqual(2)
+  expect(await titleFits(page)).toBe(true)
 })
