@@ -1,8 +1,9 @@
 # Frontend build stage
-FROM node:22-alpine AS build-frontend
+FROM node:26-alpine AS build-frontend
 WORKDIR /app/frontend
-RUN corepack enable
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+# Node.js no longer bundles corepack; install the pnpm that packageManager names
+RUN npm install -g "$(node -p "require('./package.json').packageManager")"
 RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
 # shared test cases, read by the type-checked markup tests
@@ -10,7 +11,7 @@ COPY testdata/markup/ /app/testdata/markup/
 RUN pnpm run build
 
 # Go build stage
-FROM golang:1.26-alpine AS build-go
+FROM golang:1.27-alpine AS build-go
 ENV CGO_ENABLED=0
 ARG BUILD_VERSION=dev
 RUN apk add --no-cache git
