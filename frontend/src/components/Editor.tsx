@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useAutoHeight } from '../utils/autoHeight'
 import { isEnter, isImeComposing } from '../utils/keyboard'
 import { NO_AUTOFILL } from '../utils/autofill'
 
@@ -22,12 +23,7 @@ export function Editor({ value, onChange, onBlur, keys, placeholder, label }: {
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
 
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = '0px'
-    el.style.height = `${el.scrollHeight}px`
-  }, [value])
+  useAutoHeight(ref, value)
 
   useLayoutEffect(() => {
     const el = ref.current
