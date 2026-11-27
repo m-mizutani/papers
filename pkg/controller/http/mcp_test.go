@@ -10,6 +10,7 @@ import (
 	"github.com/m-mizutani/gt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	httpctrl "github.com/m-mizutani/papers/pkg/controller/http"
 	"github.com/m-mizutani/papers/pkg/domain/model"
 )
 
@@ -400,4 +401,130 @@ func TestMCPIcon(t *testing.T) {
 	g, ok := callTool[guide](t, session, "papers_guide", map[string]any{})
 	gt.True(t, ok)
 	gt.True(t, strings.Contains(g.Guide, "set_icon"))
+}
+
+const testBaseURL = "https://papers.example.com"
+
+type mcpCreated struct {
+	ID  model.PaperID `json:"id"`
+	URL string        `json:"url"`
+}
+
+type mcpWritten struct {
+	PaperID     model.PaperID     `json:"paper_id"`
+	URL         string            `json:"url"`
+	Refs        map[string]string `json:"refs"`
+	ChildPapers []struct {
+		BlockID model.BlockID `json:"block_id"`
+		PaperID model.PaperID `json:"paper_id"`
+		URL     string        `json:"url"`
+	} `json:"child_papers"`
+	Items []struct {
+		ID    model.PaperID `json:"id"`
+		Title string        `json:"title"`
+		URL   string        `json:"url"`
+	} `json:"items"`
+}
+
+func wsURL(ws model.WorkspaceID, id model.PaperID) string {
+	return testBaseURL + "/ws/" + string(ws) + "/p/" + string(id)
+}
+
+func TestMCPURLs(t *testing.T) {
+	// T9: the MCP base URL differs, and the URLs still name --base-url
+	ts := newTestServerOpts(t, authGoogle, nil, func(string) []httpctrl.Option {
+		return []httpctrl.Option{httpctrl.WithBaseURL(testBaseURL + "/"), httpctrl.WithMCPBaseURL("https://papers-direct.example.com")}
+	})
+	alice, _, ws, paper := setupPaper(t, ts)
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	session := connectMCP(t, ts, agent.bearer)
+
+	// T1: a paper of blocks
+	c, ok := callTool[mcpCreated](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Notes", "parent": string(paper)})
+	gt.True(t, ok).Required()
+	gt.Equal(t, c.URL, wsURL(ws, c.ID))
+
+	// T2: an HTML paper and a database
+	h, ok := callTool[mcpCreated](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Page", "kind": "html", "html": "<!doctype html><p>hi</p>"})
+	gt.True(t, ok).Required()
+	gt.Equal(t, h.URL, wsURL(ws, h.ID))
+	db, ok := callTool[mcpCreated](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Incidents", "kind": "database", "parent": string(paper)})
+	gt.True(t, ok).Required()
+	gt.Equal(t, db.URL, wsURL(ws, db.ID))
+
+	// T3, T6: a write of blocks only
+	w, ok := callTool[mcpWritten](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(c.ID), "ops": []map[string]any{
+		{"op": "insert", "type": "paragraph", "content": "hello"},
+	}})
+	gt.True(t, ok).Required()
+	gt.Equal(t, w.URL, wsURL(ws, c.ID))
+	gt.A(t, w.ChildPapers).Length(0)
+	gt.A(t, w.Items).Length(0)
+
+	// T4: a child paper inserted through its paper block
+	w, ok = callTool[mcpWritten](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(c.ID), "ops": []map[string]any{
+		{"op": "insert", "type": "paper", "title": "Child", "ref": "c1"},
+	}})
+	gt.True(t, ok).Required()
+	gt.A(t, w.ChildPapers).Length(1).Required()
+	child := w.ChildPapers[0]
+	gt.Equal(t, string(child.BlockID), w.Refs["c1"])
+	gt.NotEqual(t, child.PaperID, "")
+	gt.Equal(t, child.URL, wsURL(ws, child.PaperID))
+
+	// T5: items a database batch created
+	w, ok = callTool[mcpWritten](t, session, "papers_write", map[string]any{"workspace_id": ws, "paper": string(db.ID), "ops": []map[string]any{
+		{"op": "insert_item", "title": "DB failover", "ref": "i1"},
+		{"op": "insert_item", "title": "Disk full", "ref": "i2"},
+	}})
+	gt.True(t, ok).Required()
+	gt.Equal(t, w.URL, wsURL(ws, db.ID))
+	gt.A(t, w.Items).Length(2).Required()
+	gt.A(t, w.ChildPapers).Length(0)
+	for i, ref := range []string{"i1", "i2"} {
+		gt.Equal(t, string(w.Items[i].ID), w.Refs[ref])
+		gt.Equal(t, w.Items[i].URL, wsURL(ws, w.Items[i].ID))
+	}
+	gt.Equal(t, w.Items[0].Title, "DB failover")
+
+	// T7: the saved version
+	type saved struct {
+		Saved   bool   `json:"saved"`
+		Version int    `json:"version"`
+		URL     string `json:"url"`
+	}
+	sv, ok := callTool[saved](t, session, "papers_save_version", map[string]any{"workspace_id": ws, "paper": string(c.ID)})
+	gt.True(t, ok).Required()
+	gt.True(t, sv.Saved)
+	gt.Equal(t, sv.URL, wsURL(ws, c.ID)+"/v/1")
+
+	// T8: read the current state and a version
+	type read struct {
+		URL string `json:"url"`
+	}
+	r, ok := callTool[read](t, session, "papers_read", map[string]any{"workspace_id": ws, "paper": string(c.ID)})
+	gt.True(t, ok)
+	gt.Equal(t, r.URL, wsURL(ws, c.ID))
+	r, ok = callTool[read](t, session, "papers_read", map[string]any{"workspace_id": ws, "paper": string(c.ID), "at": "1"})
+	gt.True(t, ok)
+	gt.Equal(t, r.URL, wsURL(ws, c.ID)+"/v/1")
+
+	// T11: the guide says what url is for
+	type guide struct {
+		Guide string `json:"guide"`
+	}
+	g, ok := callTool[guide](t, session, "papers_guide", map[string]any{})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(g.Guide, "return url: where people open the paper"))
+}
+
+func TestMCPURLsWithoutBaseURL(t *testing.T) { // T10
+	ts := newTestServer(t, false)
+	alice, _, ws, _ := setupPaper(t, ts)
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	session := connectMCP(t, ts, agent.bearer)
+
+	c, ok := callTool[mcpCreated](t, session, "papers_create_paper", map[string]any{"workspace_id": ws, "title": "Notes"})
+	gt.True(t, ok).Required()
+	gt.Equal(t, c.URL, "/ws/"+string(ws)+"/p/"+string(c.ID))
 }

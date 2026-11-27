@@ -18,7 +18,7 @@ import (
 
 const (
 	mcpServerName    = "papers"
-	mcpServerVersion = "0.2.0"
+	mcpServerVersion = "0.3.0"
 	mcpDefaultAgent  = "MCP client"
 )
 
@@ -33,6 +33,7 @@ Model
 - Each workspace has rules (its description). Follow them; they come with papers_guide and every read and write.
 - public papers are for everyone who can use the workspace; private papers only for their creator (you act for the user who issued your token).
 - There are no locks. update and delete carry base_rev: the block's rev you read. If someone changed that block's contents since, the whole batch fails with a conflict listing each block's current state. Re-read, redo your edit on top, and send again. Send force:true only when the user explicitly wants their version to win. Moves never conflict.
+- Creating, writing and saving a version return url: where people open the paper (or version) in a browser. Give it to the user when you create or change a paper.
 - Block IDs are issued by the server. To point at a block you insert in the same batch, give the insert a ref ("n1") and use after:"ref:n1"; the result maps refs to IDs.
 
 Block types (type: props)
@@ -294,6 +295,18 @@ type mcpCreateIn struct {
 	HTML        string            `json:"html,omitempty" jsonschema:"the document of an HTML paper (required with kind html; UTF-8, at most 5 MiB)"`
 }
 
+// mcpCreateOut is the paper papers_create_paper created, with the URL
+// where people open it.
+type mcpCreateOut struct {
+	ID      model.PaperID     `json:"id"`
+	Title   string            `json:"title"`
+	Icon    string            `json:"icon,omitempty"`
+	Status  model.PaperStatus `json:"status"`
+	Version int               `json:"version"`
+	Private bool              `json:"private,omitempty"`
+	URL     string            `json:"url"`
+}
+
 type mcpWriteIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
 	Paper       string            `json:"paper" jsonschema:"paper id or path"`
@@ -301,8 +314,24 @@ type mcpWriteIn struct {
 	Force       bool              `json:"force,omitempty" jsonschema:"overwrite newer changes by others instead of failing with a conflict; only when the user asks"`
 }
 
+// mcpChildPaper is a child paper whose paper block a batch inserted or
+// moved; BlockID is that block (the value of its ref).
+type mcpChildPaper struct {
+	BlockID model.BlockID `json:"block_id"`
+	PaperID model.PaperID `json:"paper_id"`
+	URL     string        `json:"url"`
+}
+
+// mcpCreatedItem is an item a database batch created.
+type mcpCreatedItem struct {
+	ID    model.PaperID `json:"id"`
+	Title string        `json:"title"`
+	URL   string        `json:"url"`
+}
+
 type mcpWriteOut struct {
 	PaperID model.PaperID `json:"paper_id"`
+	URL     string        `json:"url"`
 	// Refs maps each ref to the ID the server issued.
 	Refs map[string]string `json:"refs,omitempty"`
 	// Revs maps each changed block to its new rev; pass it as base_rev on
@@ -315,6 +344,10 @@ type mcpWriteOut struct {
 	// Unsaved reminds that the change is not in a version yet.
 	Unsaved        bool   `json:"unsaved"`
 	WorkspaceRules string `json:"workspace_rules,omitempty"`
+	// ChildPapers and Items are the papers the batch placed or created,
+	// with the URLs where people open them.
+	ChildPapers []mcpChildPaper  `json:"child_papers,omitempty"`
+	Items       []mcpCreatedItem `json:"items,omitempty"`
 }
 
 type mcpSaveIn struct {
@@ -372,7 +405,15 @@ func actorLabel(a model.Actor) string {
 
 const timeLayout = "2006-01-02T15:04:05Z07:00"
 
-func paperURL(ws model.WorkspaceID, id model.PaperID, at string) string {
+// paperURL is where people open the paper (at a version when at is set) in
+// a browser: --base-url and the UI's path. Without a base URL (tests) it is
+// the path alone.
+func (s *Server) paperURL(ws model.WorkspaceID, id model.PaperID, at string) string {
+	return s.baseURL + paperPath(ws, id, at)
+}
+
+// paperPath is the UI's route of a paper (frontend/src/App.tsx).
+func paperPath(ws model.WorkspaceID, id model.PaperID, at string) string {
 	u := "/ws/" + string(ws) + "/p/" + string(id)
 	switch at {
 	case "":
@@ -477,16 +518,16 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 		})
 
 	addTool(server, "papers_create_paper", "Create a paper under a parent (unfiled without one, or a private one), optionally with initial Markdown, or an HTML paper (kind html) with its HTML.",
-		func(ctx context.Context, p *model.Principal, in mcpCreateIn) (mcpPaperRef, error) {
+		func(ctx context.Context, p *model.Principal, in mcpCreateIn) (mcpCreateOut, error) {
 			vis := model.VisibilityPublic
 			if in.Private {
 				vis = model.VisibilityPrivate
 			}
 			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Icon: in.Icon, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown, Kind: in.Kind, HTML: in.HTML})
 			if err != nil {
-				return mcpPaperRef{}, err
+				return mcpCreateOut{}, err
 			}
-			return mcpPaperRef{ID: q.ID, Title: q.Title, Icon: q.Icon, Status: q.Status(), Private: q.IsPrivate()}, nil
+			return mcpCreateOut{ID: q.ID, Title: q.Title, Icon: q.Icon, Status: q.Status(), Version: q.VersionNumber, Private: q.IsPrivate(), URL: s.paperURL(in.WorkspaceID, q.ID, "")}, nil
 		})
 
 	addTool(server, "papers_write", "Apply ops to a paper atomically (see papers_guide; an HTML paper takes set_html, set_title and set_icon). Fails with a conflict when a block changed since your base_rev. Does not save a version.",
@@ -500,12 +541,18 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				return mcpWriteOut{}, err
 			}
 			out := mcpWriteOut{
-				PaperID: q.ID, Refs: res.Refs, Revs: map[model.BlockID]int64{}, Deleted: res.Deleted,
+				PaperID: q.ID, URL: s.paperURL(in.WorkspaceID, q.ID, ""), Refs: res.Refs, Revs: map[model.BlockID]int64{}, Deleted: res.Deleted,
 				Editing: res.Editing, NotRestored: res.NotRestored,
 				Unsaved: res.Version == nil, WorkspaceRules: s.rules(ctx, p, in.WorkspaceID),
 			}
 			for _, b := range res.Blocks {
 				out.Revs[b.ID] = b.Rev
+				if b.Type == model.BlockPaper && b.Props.PaperID != "" {
+					out.ChildPapers = append(out.ChildPapers, mcpChildPaper{BlockID: b.ID, PaperID: b.Props.PaperID, URL: s.paperURL(in.WorkspaceID, b.Props.PaperID, "")})
+				}
+			}
+			for _, item := range res.Items {
+				out.Items = append(out.Items, mcpCreatedItem{ID: item.ID, Title: item.Title, URL: s.paperURL(in.WorkspaceID, item.ID, "")})
 			}
 			if res.Version != nil {
 				out.Version = &res.Version.Number
@@ -527,7 +574,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 				return mcpSaveOut{Saved: false, Version: q.VersionNumber}, nil
 			}
 			n := v.Number
-			return mcpSaveOut{Saved: true, Version: n, URL: paperURL(in.WorkspaceID, q.ID, itoa(n))}, nil
+			return mcpSaveOut{Saved: true, Version: n, URL: s.paperURL(in.WorkspaceID, q.ID, itoa(n))}, nil
 		})
 
 	addTool(server, "papers_versions", "List a paper's saved versions, newest first (who saved, when, note).",
@@ -608,7 +655,7 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 		for _, r := range page.Items {
 			out.Items = append(out.Items, mcpItem{ID: r.Item.ID, Title: r.Item.Title, Icon: r.Item.Icon, Values: toMCPValues(view.Paper.Properties, r.Values)})
 		}
-		out.URL, out.Blocks = paperURL(in.WorkspaceID, q.ID, ""), []mcpBlock{}
+		out.URL, out.Blocks = s.paperURL(in.WorkspaceID, q.ID, ""), []mcpBlock{}
 		return out, nil
 	}
 	if view.Database != nil {
@@ -626,14 +673,14 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 			return mcpReadOut{}, err
 		}
 		blocks, refs, out.Next = page.Blocks, page.Papers, page.Next
-		out.URL = paperURL(in.WorkspaceID, q.ID, "")
+		out.URL = s.paperURL(in.WorkspaceID, q.ID, "")
 	} else {
 		v, err := s.uc.GetVersion(ctx, p, in.WorkspaceID, q.ID, at)
 		if err != nil {
 			return mcpReadOut{}, err
 		}
 		blocks, out.Title, out.At = v.Blocks, v.Paper.Title, itoa(v.Version.Number)
-		out.URL = paperURL(in.WorkspaceID, q.ID, out.At)
+		out.URL = s.paperURL(in.WorkspaceID, q.ID, out.At)
 	}
 	if in.TOC {
 		var keep []*model.Block
