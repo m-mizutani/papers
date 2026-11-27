@@ -401,3 +401,53 @@ func TestMCPIcon(t *testing.T) {
 	gt.True(t, ok)
 	gt.True(t, strings.Contains(g.Guide, "set_icon"))
 }
+
+func TestMCPHTMLDatabaseGuide(t *testing.T) { // T23, T28
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	agent := ts.token(alice, model.TokenAgent, model.ScopeWrite)
+	session := connectMCP(t, ts, agent.bearer)
+
+	type guideOut struct {
+		Guide string `json:"guide"`
+	}
+	g, ok := callTool[guideOut](t, session, "papers_guide", map[string]any{})
+	gt.True(t, ok)
+	gt.True(t, strings.Contains(g.Guide, "papers.db"))
+	gt.True(t, strings.Contains(g.Guide, `topic:"html_database"`))
+
+	full, ok := callTool[guideOut](t, session, "papers_guide", map[string]any{"topic": "html_database"})
+	gt.True(t, ok)
+	for _, want := range []string{"papers.db.databases()", "papers.db.items(", "papers.db.setValues(", "papers.db.addItem(", "papers.db.item(", "papers.db.writeItem(", "papers.db.subscribe(", "not_connected", "read_only", "unavailable", "insert_markdown", "<script>"} {
+		gt.True(t, strings.Contains(full.Guide, want))
+	}
+	gt.False(t, strings.Contains(full.Guide, "Block types (type: props)"))
+
+	_, ok = callTool[guideOut](t, session, "papers_guide", map[string]any{"topic": "nope"})
+	gt.False(t, ok)
+
+	type created struct {
+		ID model.PaperID `json:"id"`
+	}
+	db, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": "team", "title": "Roadmap", "kind": "database"})
+	gt.True(t, ok)
+	cp, ok := callTool[created](t, session, "papers_create_paper", map[string]any{"workspace_id": "team", "title": "Board", "kind": "html", "html": "<p>board</p>",
+		"databases": []map[string]any{{"id": db.ID, "write": true}}})
+	gt.True(t, ok)
+	type readOut struct {
+		Databases []model.DatabaseLink `json:"databases"`
+	}
+	r, ok := callTool[readOut](t, session, "papers_read", map[string]any{"workspace_id": "team", "paper": string(cp.ID)})
+	gt.True(t, ok)
+	gt.Equal(t, r.Databases, []model.DatabaseLink{{ID: db.ID, Write: true}})
+
+	// the tool's description points to the topic
+	tools, err := session.ListTools(context.Background(), nil)
+	gt.NoError(t, err)
+	for _, tool := range tools.Tools {
+		if tool.Name == "papers_create_paper" {
+			raw, _ := json.Marshal(tool.InputSchema)
+			gt.True(t, strings.Contains(string(raw), "html_database"))
+		}
+	}
+}

@@ -299,6 +299,8 @@ type createPaperRequest struct {
 	// Kind is blocks (default), html or database; an HTML paper needs HTML.
 	Kind model.PaperKind `json:"kind"`
 	HTML string          `json:"html"`
+	// Databases are an HTML paper's database connections.
+	Databases []model.DatabaseLink `json:"databases"`
 }
 
 func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +311,7 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.uc.CreatePaper(r.Context(), principalFrom(r.Context()), wsParam(r), usecase.CreateInput{
 		Title: req.Title, Icon: req.Icon, Visibility: req.Visibility, Parent: req.Parent, After: req.After, Markdown: req.Markdown,
-		Kind: req.Kind, HTML: req.HTML,
+		Kind: req.Kind, HTML: req.HTML, Databases: req.Databases,
 	})
 	respond(w, r, http.StatusCreated, p, err)
 }

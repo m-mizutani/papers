@@ -62,6 +62,9 @@ type moveSource struct {
 	snaps   map[model.SnapshotRef]*model.BlockSnapshot
 	// children are the child papers that come along.
 	children map[model.PaperID]bool
+	// databases are the databases named by the paper's HTML (props.databases)
+	// that come along; connections to the others are dropped.
+	databases map[model.PaperID]bool
 	// items are a database's items that come along, in order, and values
 	// an item's property values.
 	items  []model.PaperID
@@ -70,7 +73,7 @@ type moveSource struct {
 
 func (u *UseCases) readMoveSource(ctx context.Context, j *model.Job, it *model.JobItem) (*moveSource, error) {
 	ws := j.WorkspaceID
-	src := &moveSource{snaps: map[model.SnapshotRef]*model.BlockSnapshot{}, children: map[model.PaperID]bool{}}
+	src := &moveSource{snaps: map[model.SnapshotRef]*model.BlockSnapshot{}, children: map[model.PaperID]bool{}, databases: map[model.PaperID]bool{}}
 	var err error
 	if src.paper, err = u.repo.GetPaper(ctx, ws, it.PaperID); err != nil {
 		return nil, goerr.Wrap(err, "failed to read original", goerr.V("paper_id", it.PaperID))
@@ -108,6 +111,28 @@ func (u *UseCases) readMoveSource(ctx context.Context, j *model.Job, it *model.J
 	}
 	for _, k := range items {
 		src.children[k.PaperID] = true
+	}
+	var linked []model.PaperID
+	for _, b := range src.blocks {
+		for _, l := range b.Props.Databases {
+			linked = append(linked, l.ID)
+		}
+	}
+	for _, s := range snaps {
+		for _, l := range s.Props.Databases {
+			linked = append(linked, l.ID)
+		}
+	}
+	slices.Sort(linked)
+	linked = slices.Compact(linked)
+	if len(linked) > 0 {
+		along, err := u.repo.GetJobItems(ctx, ws, j.ID, linked)
+		if err != nil {
+			return nil, goerr.Wrap(err, "failed to read job items")
+		}
+		for _, k := range along {
+			src.databases[k.PaperID] = true
+		}
 	}
 	if src.paper.IsDatabase() && len(src.paper.Items) > 0 {
 		along, err := u.repo.GetJobItems(ctx, ws, j.ID, src.paper.Items)
@@ -181,6 +206,15 @@ func (s *moveSource) mapProps(j *model.Job, props model.BlockProps) model.BlockP
 	}
 	if props.AttachmentID != "" {
 		props.AttachmentID = copyAttachmentID(j, props.AttachmentID)
+	}
+	if len(props.Databases) > 0 {
+		var links []model.DatabaseLink
+		for _, l := range props.Databases {
+			if s.databases[l.ID] {
+				links = append(links, model.DatabaseLink{ID: copyPaperID(j, l.ID), Write: l.Write})
+			}
+		}
+		props.Databases = links
 	}
 	return props
 }

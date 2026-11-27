@@ -195,3 +195,26 @@ func TestMCPDatabase(t *testing.T) {
 	gt.True(t, ok)
 	gt.True(t, strings.Contains(g.Guide, "set_values"))
 }
+
+func TestHTMLDatabaseLinksAPI(t *testing.T) { // T3 (REST)
+	ts := newTestServer(t, false)
+	alice := ts.login("alice@example.com")
+	base := "/api/v1/workspaces/team/papers"
+	var db model.Paper
+	alice.expect("POST", base, map[string]any{"title": "Roadmap", "parent": string(homeOf(alice, ws)), "kind": "database"}, http.StatusCreated, &db)
+	var p model.Paper
+	alice.expect("POST", base, map[string]any{"title": "Board", "kind": "html", "html": "<p>board</p>", "databases": []map[string]any{{"id": db.ID, "write": true}}}, http.StatusCreated, &p)
+	var doc struct {
+		Rev       int64                `json:"rev"`
+		Databases []model.DatabaseLink `json:"databases"`
+	}
+	alice.expect("GET", base+"/"+string(p.ID)+"/html", nil, http.StatusOK, &doc)
+	gt.Equal(t, doc.Databases, []model.DatabaseLink{{ID: db.ID, Write: true}})
+
+	// set_html with databases: [] removes them; a paper that is not a database is refused
+	alice.expect("POST", base+"/"+string(p.ID)+"/ops", map[string]any{"ops": []map[string]any{{"op": "set_html", "html": "<p>board</p>", "base_rev": doc.Rev, "databases": []any{}}}}, http.StatusOK, nil)
+	doc.Databases = nil
+	alice.expect("GET", base+"/"+string(p.ID)+"/html", nil, http.StatusOK, &doc)
+	gt.Nil(t, doc.Databases)
+	alice.expect("POST", base, map[string]any{"title": "Board", "kind": "html", "html": "<p>board</p>", "databases": []map[string]any{{"id": p.ID}}}, http.StatusBadRequest, nil)
+}

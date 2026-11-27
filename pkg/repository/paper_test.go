@@ -613,7 +613,7 @@ func TestBlockFields(t *testing.T) {
 		ws := p.WorkspaceID
 		b := blockIn(p, "", "a1", `<p>RTO <span data-field="rto">15m</span></p>`)
 		b.Type = model.BlockHTML
-		b.Props = model.BlockProps{Height: 240, Fields: map[string]string{"rto": "15m", "owner": "SRE チーム"}}
+		b.Props = model.BlockProps{Height: 240, Fields: map[string]string{"rto": "15m", "owner": "SRE チーム"}, Databases: []model.DatabaseLink{{ID: model.NewPaperID(), Write: true}, {ID: model.NewPaperID()}}}
 		plain := blockIn(p, "", "a2", "no fields")
 		gt.NoError(t, repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
 			if err := tx.PutBlock(b); err != nil {

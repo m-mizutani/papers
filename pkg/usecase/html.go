@@ -32,6 +32,10 @@ type stagedHTML struct {
 	fresh bool
 	// text is the document's text nodes, the html_page block's content.
 	text string
+	// databases are the html_page block's database connections; keep
+	// (set_html without databases) leaves the block's current ones.
+	databases []model.DatabaseLink
+	keep      bool
 }
 
 // checkHTML validates a document before anything is stored.
@@ -97,7 +101,7 @@ func newHTMLPage(tx interfaces.Tx, paper *model.Paper, s *stagedHTML, actor mode
 	b := &model.Block{
 		ID: model.NewBlockID(), WorkspaceID: paper.WorkspaceID, PaperID: paper.ID,
 		Order: order, Type: model.BlockHTMLPage, Content: s.text,
-		Props: model.BlockProps{AttachmentID: s.attachment.ID}, Rev: 1,
+		Props: model.BlockProps{AttachmentID: s.attachment.ID, Databases: s.databases}.Normalize(model.BlockHTMLPage), Rev: 1,
 		CreatedBy: actor, CreatedAt: paper.CreatedAt, UpdatedBy: actor, UpdatedAt: paper.CreatedAt,
 	}
 	if err := s.writeMeta(tx); err != nil {
@@ -146,7 +150,11 @@ func (a *applier) setHTML(op Op) error {
 	}
 	b := before.Clone()
 	b.Content = s.text
-	b.Props = model.BlockProps{AttachmentID: s.attachment.ID}
+	databases := s.databases
+	if s.keep {
+		databases = before.Props.Databases
+	}
+	b.Props = model.BlockProps{AttachmentID: s.attachment.ID, Databases: databases}.Normalize(model.BlockHTMLPage)
 	if model.SameContents(b, before) {
 		return nil
 	}
@@ -164,6 +172,8 @@ type HTMLView struct {
 	AttachmentID model.AttachmentID `json:"attachment_id"`
 	Size         int64              `json:"size"`
 	HTML         string             `json:"html"`
+	// Databases are the databases the document is connected to.
+	Databases []model.DatabaseLink `json:"databases,omitempty"`
 }
 
 // ReadHTML reads an HTML paper's document: the current state, or a version
@@ -209,7 +219,7 @@ func (u *UseCases) ReadHTML(ctx context.Context, p *model.Principal, ws model.Wo
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to read the HTML document")
 	}
-	return &HTMLView{BlockID: page.ID, Rev: page.Rev, AttachmentID: a.ID, Size: a.Size, HTML: string(data)}, nil
+	return &HTMLView{BlockID: page.ID, Rev: page.Rev, AttachmentID: a.ID, Size: a.Size, HTML: string(data), Databases: page.Props.Databases}, nil
 }
 
 // HTMLContent is an HTML document to serve, with whether the workspace lets

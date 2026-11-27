@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Café order app mock</title>
+<style>
+  :root { --bg: #f6f3ee; --fg: #2a211b; --soft: #74675c; --card: #ffffff; --line: #e4dcd2; --accent: #a0522d; --accent-fg: #ffffff; --ok: #2f7d4f; --bad: #b83a3a; --phone: #1f1a16; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #17130f; --fg: #efe7de; --soft: #a99b8d; --card: #221c17; --line: #3a3029; --accent: #e08a5a; --accent-fg: #1a120c; --ok: #6fcf97; --bad: #ef7a7a; --phone: #000000; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px; }
+  h1 { margin: 0; font-size: 1.5rem; }
+  .lead { margin: 2px 0 0; color: var(--soft); font-size: 14px; }
+  .apps { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 720px) { .apps { grid-template-columns: minmax(0, 1fr); } }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--soft); margin: 0 0 6px; }
+  .phone { background: var(--phone); border-radius: 28px; padding: 12px; }
+  .screen { background: var(--card); border-radius: 18px; padding: 16px; display: grid; gap: 12px; }
+  .screen h2 { margin: 0; font-size: 1.1rem; }
+  .menu { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .choice { font: inherit; padding: 10px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; text-align: center; }
+  .choice[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+  .sizes { display: flex; gap: 8px; }
+  .sizes .choice { flex: 1; padding: 6px; }
+  .screen input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--fg); width: 100%; }
+  .order { font: inherit; font-weight: 600; padding: 10px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+  .order:disabled { opacity: .5; cursor: default; }
+  .placed { font-size: 13px; color: var(--ok); min-height: 1.5em; margin: 0; }
+  .counter { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 520px) { .counter { grid-template-columns: minmax(0, 1fr); } }
+  .lane { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; min-height: 140px; }
+  .lane h3 { margin: 0 0 8px; font-size: 13px; color: var(--soft); display: flex; justify-content: space-between; }
+  .ticket { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+  .ticket .who { font-weight: 600; }
+  .ticket .what, .ticket .note { font-size: 13px; color: var(--soft); }
+  .ticket button { margin-top: 6px; font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  .ticket button:hover { border-color: var(--accent); color: var(--accent); }
+  .done { font-size: 13px; color: var(--soft); margin: 8px 0 0; }
+  .note-line { font-size: 13px; color: var(--soft); }
+  .error { color: var(--bad); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Café order app mock</h1>
+    <p class="lead">A mock of an ordering app, connected to the "Café orders" database. Orders placed on the phone appear at the counter for everyone viewing this page, and stay after a reload.</p>
+  </header>
+  <p class="error" id="error" hidden></p>
+  <div class="apps">
+    <section aria-label="Customer app">
+      <p class="label">Customer app</p>
+      <div class="phone">
+        <div class="screen" id="form">
+          <h2>What would you like?</h2>
+          <div class="menu" id="drinks" role="group" aria-label="Drink"></div>
+          <div class="sizes" id="sizes" role="group" aria-label="Size"></div>
+          <input id="name" placeholder="Your name" aria-label="Your name" autocomplete="off">
+          <input id="note" placeholder="Anything else? (optional)" aria-label="Note" autocomplete="off">
+          <button class="order" id="order" type="button" disabled>Place order</button>
+          <p class="placed" id="placed" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+    <section aria-label="Counter">
+      <p class="label">Counter</p>
+      <div class="counter" id="counter"></div>
+      <p class="done" id="done"></p>
+    </section>
+  </div>
+  <p class="note-line" id="info"></p>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+  const fail = (err) => { $('error').hidden = false; $('error').textContent = 'Could not reach the database (' + (err && err.code || 'error') + ').' }
+  if (!window.papers) { $('info').textContent = 'Open this page in papers to use the app.'; return }
+
+  let db, prop = {}, drink = '', size = ''
+  const byName = (name) => db.paper.properties.find((p) => p.name === name)
+  const valueOf = (row, p) => (row.values.find((v) => v.property_id === p.id) || {}).value
+  const element = (p, id) => (p.elements.find((e) => e.id === id) || {}).value || ''
+
+  function choices(box, p, current, pick) {
+    box.replaceChildren()
+    for (const e of p.elements) {
+      const b = el('button', 'choice', e.value)
+      b.type = 'button'
+      b.setAttribute('aria-pressed', String(e.id === current))
+      b.onclick = () => pick(e.id)
+      box.append(b)
+    }
+  }
+  function drawForm() {
+    choices($('drinks'), prop.drink, drink, (id) => { drink = id; drawForm() })
+    choices($('sizes'), prop.size, size, (id) => { size = id; drawForm() })
+    $('order').disabled = !db.write || !drink || !size
+  }
+
+  async function drawCounter() {
+    const rows = []
+    let after = ''
+    do {
+      const page = await papers.db.items(db.id, { limit: 100, after, sort: 'created:desc' })
+      rows.push(...page.items)
+      after = page.next_cursor
+    } while (after)
+    rows.reverse() // oldest order first
+    const lanes = prop.status.elements.slice(0, 3)
+    const counter = $('counter')
+    counter.replaceChildren()
+    lanes.forEach((lane, i) => {
+      const box = el('div', 'lane')
+      const mine = rows.filter((r) => valueOf(r, prop.status) === lane.id)
+      const head = el('h3'); head.append(el('span', '', lane.value), el('span', '', String(mine.length)))
+      box.append(head)
+      for (const r of mine) {
+        const t = el('div', 'ticket')
+        t.append(el('div', 'who', r.item.title || 'Guest'), el('div', 'what', element(prop.size, valueOf(r, prop.size)) + ' ' + element(prop.drink, valueOf(r, prop.drink))))
+        const note = valueOf(r, prop.note)
+        if (note) t.append(el('div', 'note', note))
+        const next = prop.status.elements[i + 1]
+        if (db.write && next) {
+          const b = el('button', '', i === lanes.length - 1 ? 'Hand over' : 'Mark ' + next.value.toLowerCase())
+          b.onclick = () => papers.db.setValues(db.id, r.item.id, { [prop.status.id]: next.id }).catch(fail)
+          t.append(b)
+        }
+        box.append(t)
+      }
+      counter.append(box)
+    })
+    const picked = prop.status.elements[3]
+    const n = picked ? rows.filter((r) => valueOf(r, prop.status) === picked.id).length : 0
+    $('done').textContent = n + ' order' + (n === 1 ? '' : 's') + ' handed over.'
+  }
+
+  // Buttons, not a form: the sandbox does not let a form submit.
+  $('order').onclick = () => {
+    if (!drink || !size) return
+    const name = $('name').value.trim() || 'Guest'
+    const note = $('note').value.trim()
+    const values = { [prop.drink.id]: drink, [prop.size.id]: size, [prop.status.id]: prop.status.elements[0].id }
+    if (note) values[prop.note.id] = note
+    papers.db.addItem(db.id, { title: name, values }).then(() => {
+      $('placed').textContent = 'Thanks, ' + name + '! Your order is in.'
+      $('name').value = ''; $('note').value = ''; drink = ''; size = ''
+      drawForm()
+    }).catch(fail)
+  }
+
+  for (const id of ['name', 'note']) $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('order').click() } })
+
+  papers.db.databases().then(async (list) => {
+    db = list.find((d) => d.available)
+    if (!db) { $('info').textContent = 'The orders database is not available.'; return }
+    prop = { drink: byName('Drink'), size: byName('Size'), status: byName('Status'), note: byName('Note') }
+    if (!prop.drink || !prop.size || !prop.status || !prop.note) { $('info').textContent = 'The orders database needs Drink, Size, Status and Note.'; return }
+    $('info').textContent = db.write ? 'Orders are saved to "' + db.paper.title + '" as you.' : 'Read only: orders cannot be placed.'
+    drawForm()
+    papers.db.subscribe(db.id, () => { drawCounter().catch(fail) })
+    await drawCounter()
+  }).catch(fail)
+})()
+</script>
+</body>
+</html>

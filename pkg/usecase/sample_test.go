@@ -55,17 +55,17 @@ func TestSeedSamplesWritesTheSamplesIntoAnEmptyWorkspace(t *testing.T) {
 	e := newEnv(t)
 	res := seed(t, e)
 	gt.True(t, res[wsA].Seeded)
-	gt.Equal(t, res[wsA].Papers, 10) // five papers and the database's five items
+	gt.Equal(t, res[wsA].Papers, 16) // eight papers and the databases' eight items
 
 	ctx := context.Background()
 	home := e.home(t, wsA)
 	blocks := gt.R1(e.repo.ListBlocks(ctx, wsA, home)).NoError(t)
-	gt.A(t, blocks).Length(5)
+	gt.A(t, blocks).Length(8)
 	gt.Equal(t, blocks[0].Type, model.BlockParagraph)
 	gt.True(t, strings.Contains(blocks[0].Content, "papers firestore reset --demo"))
 
 	papers := allPapers(t, e, wsA)
-	gt.A(t, papers).Length(11) // the home, five samples and five items
+	gt.A(t, papers).Length(17) // the home, eight samples and eight items
 	titles := byTitle(papers)
 	var order []string
 	for _, b := range blocks[1:] {
@@ -76,7 +76,7 @@ func TestSeedSamplesWritesTheSamplesIntoAnEmptyWorkspace(t *testing.T) {
 			}
 		}
 	}
-	gt.Equal(t, order, []string{"Welcome to papers", "Diagrams and rich blocks", "Release dashboard", "Product roadmap"})
+	gt.Equal(t, order, []string{"Welcome to papers", "Diagrams and rich blocks", "Release dashboard", "Product roadmap", "Roadmap board", "Café orders", "Café order app mock"})
 	gt.Equal(t, titles["Alpha"].ID, home) // the home keeps its title
 	// samples show icons, and papers without one (the dashboard, the roadmap) show the default
 	gt.Equal(t, titles["Welcome to papers"].Icon, "👋")
@@ -122,7 +122,7 @@ func TestSeedSamplesOnlyWritesTheEmptyWorkspaces(t *testing.T) {
 	res := seed(t, e)
 	gt.True(t, res[wsA].Seeded)
 	gt.False(t, res[wsB].Seeded)
-	gt.A(t, allPapers(t, e, wsA)).Length(11)
+	gt.A(t, allPapers(t, e, wsA)).Length(17)
 	gt.A(t, allPapers(t, e, wsB)).Length(2)
 }
 
@@ -174,8 +174,8 @@ func TestSeedSamplesTwiceAtOnceWritesOneSet(t *testing.T) {
 	wg.Wait()
 	gt.NoError(t, errors.Join(errs...))
 
-	gt.A(t, allPapers(t, e, wsA)).Length(11)
-	gt.A(t, gt.R1(e.repo.ListBlocks(ctx, wsA, e.home(t, wsA))).NoError(t)).Length(5)
+	gt.A(t, allPapers(t, e, wsA)).Length(17)
+	gt.A(t, gt.R1(e.repo.ListBlocks(ctx, wsA, e.home(t, wsA))).NoError(t)).Length(8)
 }
 
 // TestSamplesCoverBlockTypes keeps the sample papers showing every block type and
@@ -217,6 +217,20 @@ func TestSeedSamplesNestsAndStoresTheHTMLDocument(t *testing.T) {
 	alice := e.user(t, "alice")
 	view := gt.R1(e.uc.ReadHTML(context.Background(), alice, wsA, dash.ID, "")).NoError(t)
 	want := gt.R1(sample.Read("dashboard.html")).NoError(t)
+	gt.Equal(t, view.HTML, string(want))
+	gt.Nil(t, view.Databases)
+}
+
+func TestSeedSamplesConnectsTheBoardToTheRoadmap(t *testing.T) { // T24
+	e := newEnv(t)
+	seed(t, e)
+	titles := byTitle(allPapers(t, e, wsA))
+	board := titles["Roadmap board"]
+	gt.Equal(t, board.Kind, model.PaperKindHTML)
+	gt.Equal(t, board.VersionNumber, 0)
+	view := gt.R1(e.uc.ReadHTML(context.Background(), e.user(t, "alice"), wsA, board.ID, "")).NoError(t)
+	gt.Equal(t, view.Databases, []model.DatabaseLink{{ID: titles["Product roadmap"].ID, Write: true}})
+	want := gt.R1(sample.Read("board.html")).NoError(t)
 	gt.Equal(t, view.HTML, string(want))
 }
 
@@ -386,4 +400,16 @@ func TestSamplesShowMentionsAndPeople(t *testing.T) {
 		}
 	}
 	gt.True(t, people > 0)
+}
+
+func TestSeedSamplesConnectsTheAppMockToItsOrders(t *testing.T) {
+	e := newEnv(t)
+	seed(t, e)
+	titles := byTitle(allPapers(t, e, wsA))
+	app := titles["Café order app mock"]
+	gt.Equal(t, app.Kind, model.PaperKindHTML)
+	gt.Equal(t, app.VersionNumber, 0)
+	view := gt.R1(e.uc.ReadHTML(context.Background(), e.user(t, "alice"), wsA, app.ID, "")).NoError(t)
+	gt.Equal(t, view.Databases, []model.DatabaseLink{{ID: titles["Café orders"].ID, Write: true}})
+	gt.Equal(t, titles["Mika"].DatabaseID, titles["Café orders"].ID)
 }

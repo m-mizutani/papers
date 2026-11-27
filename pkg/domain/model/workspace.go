@@ -31,7 +31,7 @@ type Workspace struct {
 type Sandbox struct {
 	// ExternalResources lets the HTML load scripts, styles, images, fonts
 	// and connections from other hosts. Without it only what the HTML
-	// embeds runs. The configuration defaults it to true.
+	// embeds runs. The configuration defaults it to false.
 	ExternalResources bool `json:"external_resources"`
 }
 

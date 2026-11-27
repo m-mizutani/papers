@@ -5,3 +5,6 @@ id = "product"
 name = "Product Notes"
 description = "Ideas, decisions and their reasons."
 color = "#2350c8"
+
+[sandbox]                 # what AI-authored HTML (HTML papers, html and svg blocks) may do
+external_resources = true # may load from other hosts; omit or false to allow only what the HTML embeds

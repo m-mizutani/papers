@@ -1,0 +1,25 @@
+{
+  "ops": [
+    {"op": "add_property", "ref": "drink", "name": "Drink", "property_type": "select"},
+    {"op": "add_element", "ref": "latte", "property": "ref:drink", "value": "Latte", "color": "orange"},
+    {"op": "add_element", "ref": "americano", "property": "ref:drink", "value": "Americano", "color": "brown"},
+    {"op": "add_element", "ref": "matcha", "property": "ref:drink", "value": "Matcha", "color": "green"},
+    {"op": "add_element", "ref": "cocoa", "property": "ref:drink", "value": "Cocoa", "color": "red"},
+    {"op": "add_property", "ref": "size", "name": "Size", "property_type": "select"},
+    {"op": "add_element", "ref": "small", "property": "ref:size", "value": "Small", "color": "gray"},
+    {"op": "add_element", "ref": "large", "property": "ref:size", "value": "Large", "color": "gray"},
+    {"op": "add_property", "ref": "status", "name": "Status", "property_type": "select"},
+    {"op": "add_element", "ref": "ordered", "property": "ref:status", "value": "Ordered", "color": "gray"},
+    {"op": "add_element", "ref": "making", "property": "ref:status", "value": "Making", "color": "blue"},
+    {"op": "add_element", "ref": "ready", "property": "ref:status", "value": "Ready", "color": "green"},
+    {"op": "add_element", "ref": "picked", "property": "ref:status", "value": "Picked up", "color": "purple"},
+    {"op": "add_property", "ref": "note", "name": "Note", "property_type": "text"},
+    {"op": "insert_item", "ref": "o1", "title": "Mika",
+      "set": {"ref:drink": "ref:latte", "ref:size": "ref:large", "ref:status": "ref:making", "ref:note": "Oat milk"}},
+    {"op": "insert_item", "ref": "o2", "title": "Sam",
+      "set": {"ref:drink": "ref:matcha", "ref:size": "ref:small", "ref:status": "ref:ordered"}},
+    {"op": "insert_item", "ref": "o3", "title": "Jordan",
+      "set": {"ref:drink": "ref:americano", "ref:size": "ref:large", "ref:status": "ref:ready", "ref:note": "No sugar"}}
+  ],
+  "bodies": {}
+}

@@ -140,7 +140,51 @@ func (u *UseCases) seedWorkspace(ctx context.Context, ws model.WorkspaceID) (See
 		}
 		res.Papers += len(more)
 	}
+
+	// HTML papers are connected to their databases once both exist.
+	for _, e := range entries {
+		if len(e.Databases) == 0 {
+			continue
+		}
+		if err := u.connectSample(ctx, created, e); err != nil {
+			return res, err
+		}
+	}
 	return res, nil
+}
+
+// connectSample writes an HTML sample's database connections: its document
+// again with databases, through the normal write path.
+func (u *UseCases) connectSample(ctx context.Context, created map[string]*model.Paper, e sample.Entry) error {
+	paper, ok := created[e.Key]
+	if !ok {
+		return goerr.New("a sample paper was not created", goerr.V("key", e.Key))
+	}
+	var links []model.DatabaseLink
+	for _, l := range e.Databases {
+		db, ok := created[l.Key]
+		if !ok {
+			return goerr.New("a sample database was not created", goerr.V("key", l.Key))
+		}
+		links = append(links, model.DatabaseLink{ID: db.ID, Write: l.Write})
+	}
+	doc, err := sample.Read(e.File)
+	if err != nil {
+		return err
+	}
+	blocks, err := u.repo.ListBlocks(ctx, paper.WorkspaceID, paper.ID)
+	if err != nil {
+		return goerr.Wrap(err, "failed to read the sample's html_page block")
+	}
+	page := pageOf(blocks)
+	if page == nil {
+		return goerr.New("the HTML sample has no html_page block", goerr.V("key", e.Key))
+	}
+	op := Op{Kind: OpSetHTML, HTML: ptr(string(doc)), BaseRev: page.Rev, Databases: &links}
+	if _, err := u.applyBatch(ctx, nil, systemActor, paper, BatchInput{Ops: []Op{op}}, nil); err != nil {
+		return goerr.Wrap(err, "failed to connect the sample to its databases", goerr.V("key", e.Key))
+	}
+	return nil
 }
 
 func childrenOf(entries []sample.Entry, parent string) []sample.Entry {

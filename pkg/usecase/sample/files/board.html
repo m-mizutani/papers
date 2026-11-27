@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap board</title>
+<style>
+  :root { --bg: #f7f8fa; --fg: #1a2230; --soft: #5b6475; --card: #ffffff; --line: #dde2e9; --col: #eef1f5; --accent: #2350c8; --bad: #c44444; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141821; --fg: #e4e8f0; --soft: #9aa3b5; --card: #1c2130; --line: #343b4a; --col: #191e2a; --accent: #7ea0ff; --bad: #ef7a7a; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px; }
+  h1 { margin: 0; font-size: 1.5rem; }
+  .lead { margin: 2px 0 0; color: var(--soft); font-size: 14px; }
+  .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; align-items: start; }
+  .col { background: var(--col); border-radius: 10px; padding: 10px; min-height: 120px; }
+  .col h2 { margin: 0 0 8px; font-size: 13px; color: var(--soft); display: flex; justify-content: space-between; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+  .card .title { background: none; border: 0; padding: 0; font: inherit; color: var(--fg); text-align: left; cursor: pointer; width: 100%; }
+  .card .title:hover { color: var(--accent); }
+  .card .meta { font-size: 12px; color: var(--soft); margin-top: 2px; }
+  .moves { display: flex; gap: 6px; margin-top: 6px; }
+  button.move, .add button, .detail button { font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  button.move:hover, .add button:hover, .detail button:hover { border-color: var(--accent); color: var(--accent); }
+  .add { display: flex; gap: 6px; }
+  .add input, .detail input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+  .detail { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .detail h3 { margin: 0 0 8px; font-size: 1.05rem; }
+  .detail ul { margin: 0 0 10px; padding-left: 18px; }
+  .detail .row { display: flex; gap: 6px; }
+  .note { font-size: 13px; color: var(--soft); }
+  .error { color: var(--bad); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Roadmap board</h1>
+    <p class="lead">A sample HTML paper connected to the "Product roadmap" database. Moving a card sets its Status, and notes are written into the item's own page, as you.</p>
+  </header>
+  <p class="error" id="error" hidden></p>
+  <section class="board" id="board" aria-label="Board"></section>
+  <section class="detail" id="detail" hidden aria-live="polite"></section>
+  <p class="note" id="note"></p>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+  const fail = (err) => { $('error').hidden = false; $('error').textContent = 'Could not reach the database (' + (err && err.code || 'error') + ').' }
+  // Buttons and Enter, not a form: the sandbox does not let a form submit.
+  // Enter while an IME is composing text is left to the IME.
+  const onEnter = (input, fn) => input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); fn() } })
+  if (!window.papers) { $('note').textContent = 'Open this page in papers to see the board.'; return }
+
+  let db, status, open = ''
+  const valueOf = (row, prop) => (row.values.find((v) => v.property_id === prop.id) || {}).value
+
+  async function draw() {
+    const rows = []
+    let after = ''
+    do {
+      const page = await papers.db.items(db.id, { limit: 100, after })
+      rows.push(...page.items)
+      after = page.next_cursor
+    } while (after)
+    const board = $('board')
+    board.replaceChildren()
+    status.elements.forEach((element, i) => {
+      const col = el('div', 'col')
+      const mine = rows.filter((r) => valueOf(r, status) === element.id)
+      const head = el('h2'); head.append(el('span', '', element.value), el('span', '', String(mine.length)))
+      col.append(head)
+      for (const r of mine) {
+        const card = el('div', 'card')
+        const title = el('button', 'title', r.item.title || 'Untitled')
+        title.onclick = () => showItem(r.item.id)
+        card.append(title)
+        const due = db.paper.properties.find((p) => p.type === 'date')
+        if (due && valueOf(r, due)) card.append(el('div', 'meta', 'Due ' + valueOf(r, due)))
+        if (db.write) {
+          const moves = el('div', 'moves')
+          const to = (j, label) => { const b = el('button', 'move', label); b.onclick = () => papers.db.setValues(db.id, r.item.id, { [status.id]: status.elements[j].id }).catch(fail); moves.append(b) }
+          if (i > 0) to(i - 1, '← ' + status.elements[i - 1].value)
+          if (i < status.elements.length - 1) to(i + 1, status.elements[i + 1].value + ' →')
+          card.append(moves)
+        }
+        col.append(card)
+      }
+      if (db.write && i === 0) {
+        const add = el('div', 'add')
+        const input = el('input'); input.placeholder = 'New item'; input.setAttribute('aria-label', 'New item title')
+        const button = el('button', '', 'Add')
+        add.append(input, button)
+        const submit = () => { const title = input.value.trim(); if (!title) return; input.value = ''; papers.db.addItem(db.id, { title, values: { [status.id]: element.id } }).catch(fail) }
+        button.onclick = submit
+        onEnter(input, submit)
+        col.append(add)
+      }
+      board.append(col)
+    })
+    if (open) await showItem(open)
+  }
+
+  async function showItem(id) {
+    open = id
+    const { paper, blocks } = await papers.db.item(id)
+    const detail = $('detail')
+    detail.hidden = false
+    detail.replaceChildren(el('h3', '', paper.title || 'Untitled'))
+    const text = blocks.filter((b) => b.content && !b.parent_id)
+    if (text.length) { const ul = el('ul'); text.forEach((b) => ul.append(el('li', '', b.content))); detail.append(ul) } else detail.append(el('p', 'note', 'No notes yet.'))
+    if (db.write) {
+      const row = el('div', 'row')
+      const input = el('input'); input.placeholder = 'Add a note to this item'; input.setAttribute('aria-label', 'Note')
+      const button = el('button', '', 'Add note')
+      row.append(input, button)
+      const submit = async () => { const note = input.value.trim(); if (!note) return; input.value = ''; await papers.db.writeItem(id, [{ op: 'insert', type: 'paragraph', content: note }]).catch(fail); await showItem(id) }
+      button.onclick = submit
+      onEnter(input, submit)
+      detail.append(row)
+    }
+  }
+
+  papers.db.databases().then(async (list) => {
+    db = list.find((d) => d.available)
+    if (!db) { $('note').textContent = 'The roadmap database is not available.'; return }
+    status = db.paper.properties.find((p) => p.type === 'select')
+    if (!status) { $('note').textContent = 'The roadmap has no Status property.'; return }
+    $('note').textContent = db.write ? 'Changes are saved to "' + db.paper.title + '" as you, and show up for everyone viewing it.' : 'Read only.'
+    papers.db.subscribe(db.id, () => { draw().catch(fail) })
+    await draw()
+  }).catch(fail)
+})()
+</script>
+</body>
+</html>

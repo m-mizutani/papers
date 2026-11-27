@@ -135,6 +135,18 @@ type BlockProps struct {
 	// with data-field="name". People change only these values; the markup
 	// itself stays as the agent wrote it.
 	Fields map[string]string `json:"fields,omitempty"`
+	// Databases are the databases the HTML of an html or html_page block
+	// may read and write through papers.db in its sandboxed frame, as the
+	// person viewing it. The agent writes them; the frame cannot.
+	Databases []DatabaseLink `json:"databases,omitempty"`
+}
+
+// DatabaseLink names one database an HTML document is connected to.
+type DatabaseLink struct {
+	ID PaperID `json:"id"`
+	// Write lets the document set values, add items and edit items' bodies;
+	// without it the document only reads.
+	Write bool `json:"write,omitempty"`
 }
 
 const (
@@ -149,10 +161,15 @@ const (
 	// MaxFieldValueLength the bytes of one value.
 	MaxFields           = 32
 	MaxFieldValueLength = 200
+	// MaxDatabaseLinks bounds the databases one HTML document connects to.
+	MaxDatabaseLinks = 10
 )
 
 // fieldName is the form of a field name (the data-field attribute).
 var fieldName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// HasDatabases reports whether the type keeps props.databases.
+func (t BlockType) HasDatabases() bool { return t == BlockHTML || t == BlockHTMLPage }
 
 // HasFields reports whether the type keeps props.fields.
 func (t BlockType) HasFields() bool { return t == BlockHTML || t == BlockSVG }
@@ -187,10 +204,16 @@ func (p BlockProps) Normalize(t BlockType) BlockProps {
 		if len(p.Fields) > 0 {
 			n.Fields = maps.Clone(p.Fields)
 		}
+		if t == BlockHTML && len(p.Databases) > 0 {
+			n.Databases = slices.Clone(p.Databases)
+		}
 	case BlockMermaid:
 		n.Height = p.Height
 	case BlockHTMLPage:
 		n.AttachmentID = p.AttachmentID
+		if len(p.Databases) > 0 {
+			n.Databases = slices.Clone(p.Databases)
+		}
 	}
 	return n
 }
@@ -202,7 +225,29 @@ func (p BlockProps) Equal(o BlockProps) bool {
 		p.AttachmentID == o.AttachmentID && slices.Equal(p.Rows, o.Rows) &&
 		slices.Equal(p.Cols, o.Cols) && p.HeaderRow == o.HeaderRow &&
 		p.RowID == o.RowID && p.ColID == o.ColID && p.PaperID == o.PaperID &&
-		p.Height == o.Height && maps.Equal(p.Fields, o.Fields)
+		p.Height == o.Height && maps.Equal(p.Fields, o.Fields) &&
+		slices.Equal(p.Databases, o.Databases)
+}
+
+// ValidateDatabaseLinks checks the shape of an HTML document's database
+// connections: valid IDs, at most MaxDatabaseLinks, each database once.
+// Whether each one is a database of the same workspace is checked by the
+// use case, which can read them.
+func ValidateDatabaseLinks(links []DatabaseLink) error {
+	if len(links) > MaxDatabaseLinks {
+		return goerr.Wrap(ErrInvalidArgument, "too many databases", goerr.V("count", len(links)), goerr.V("max", MaxDatabaseLinks))
+	}
+	seen := map[PaperID]bool{}
+	for _, l := range links {
+		if !ValidID(string(l.ID)) {
+			return goerr.Wrap(ErrInvalidArgument, "invalid database id", goerr.V("id", l.ID))
+		}
+		if seen[l.ID] {
+			return goerr.Wrap(ErrInvalidArgument, "a database is listed twice", goerr.V("id", l.ID))
+		}
+		seen[l.ID] = true
+	}
+	return nil
 }
 
 func validFields(fields map[string]string) error {
@@ -276,12 +321,18 @@ func (p BlockProps) validate(t BlockType) error {
 		if !ValidID(string(p.AttachmentID)) {
 			return goerr.Wrap(ErrInvalidArgument, "an html_page block needs an attachment id", goerr.V("attachment_id", p.AttachmentID))
 		}
+		return ValidateDatabaseLinks(p.Databases)
 	case BlockHTML, BlockSVG, BlockMermaid:
 		if p.Height < 0 || p.Height > MaxRichHeight {
 			return goerr.Wrap(ErrInvalidArgument, "height out of range", goerr.V("height", p.Height))
 		}
 		if t.HasFields() {
-			return validFields(p.Fields)
+			if err := validFields(p.Fields); err != nil {
+				return err
+			}
+		}
+		if t.HasDatabases() {
+			return ValidateDatabaseLinks(p.Databases)
 		}
 	}
 	return nil
@@ -351,6 +402,7 @@ func (b *Block) Clone() *Block {
 	c.Props.Rows = slices.Clone(b.Props.Rows)
 	c.Props.Cols = slices.Clone(b.Props.Cols)
 	c.Props.Fields = maps.Clone(b.Props.Fields)
+	c.Props.Databases = slices.Clone(b.Props.Databases)
 	return &c
 }
 

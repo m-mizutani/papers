@@ -165,7 +165,7 @@ func TestSandboxExternalResources(t *testing.T) {
 	gt.False(t, closed.Sandbox.ExternalResources)
 	open, ok := r.Get("open")
 	gt.True(t, ok)
-	gt.True(t, open.Sandbox.ExternalResources) // default
+	gt.False(t, open.Sandbox.ExternalResources) // T13: default is false
 	explicit, ok := r.Get("explicit")
 	gt.True(t, ok)
 	gt.True(t, explicit.Sandbox.ExternalResources)

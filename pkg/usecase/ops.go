@@ -89,6 +89,10 @@ type Op struct {
 	// PaperKind is the kind of the child paper an insert of a paper block
 	// creates (blocks when absent; html or database).
 	PaperKind *model.PaperKind `json:"paper_kind,omitempty"`
+	// Databases are the database connections of the html_page block that
+	// set_html writes (nil keeps the current ones, [] removes them) or that
+	// an insert of an HTML paper creates.
+	Databases *[]model.DatabaseLink `json:"databases,omitempty"`
 
 	// Cells fills a new table, row by row. Without cells, Rows and Cols
 	// give its size (default 2 x 2).
@@ -470,6 +474,11 @@ func (a *applier) insert(op Op) (model.BlockID, error) {
 			return "", err
 		}
 	}
+	if t == model.BlockHTML {
+		if err := a.u.checkDatabaseLinks(a.ctx, a.paper.WorkspaceID, props.Databases, nil); err != nil {
+			return "", err
+		}
+	}
 
 	var child *model.Paper
 	if t == model.BlockPaper {
@@ -730,6 +739,11 @@ func (a *applier) update(op Op) error {
 	}
 	if b.Type == model.BlockImage && b.Props.AttachmentID != before.Props.AttachmentID {
 		if err := a.checkImage(b.Props); err != nil {
+			return err
+		}
+	}
+	if b.Type == model.BlockHTML && !slices.Equal(b.Props.Databases, before.Props.Databases) {
+		if err := a.u.checkDatabaseLinks(a.ctx, a.paper.WorkspaceID, b.Props.Databases, before.Props.Databases); err != nil {
 			return err
 		}
 	}
@@ -1398,6 +1412,24 @@ func (u *UseCases) stageBatchHTML(ctx context.Context, actor model.Actor, paper 
 				return nil, nil, err
 			}
 		}
+		if op.Databases != nil {
+			if op.HTML == nil {
+				return nil, nil, goerr.Wrap(model.ErrInvalidArgument, "databases is only for set_html and for inserting an HTML paper; an html block takes props.databases", goerr.V("op", op.Kind))
+			}
+			var known []model.DatabaseLink
+			if op.Kind == OpSetHTML {
+				// Links the document already has stay valid when sent back,
+				// even to a database removed since (it reads as missing).
+				links, err := u.currentDatabaseLinks(ctx, paper)
+				if err != nil {
+					return nil, nil, err
+				}
+				known = links
+			}
+			if err := u.checkDatabaseLinks(ctx, paper.WorkspaceID, *op.Databases, known); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	for i, op := range ops {
 		switch {
@@ -1406,12 +1438,19 @@ func (u *UseCases) stageBatchHTML(ctx context.Context, actor model.Actor, paper 
 			if err != nil {
 				return nil, nil, err
 			}
+			s.keep = op.Databases == nil
+			if op.Databases != nil {
+				s.databases = *op.Databases
+			}
 			html = s
 		case op.Kind == OpInsert && op.HTML != nil:
 			id := model.NewPaperID()
 			s, err := u.stageHTML(ctx, actor, paper.WorkspaceID, id, *op.HTML)
 			if err != nil {
 				return nil, nil, err
+			}
+			if op.Databases != nil {
+				s.databases = *op.Databases
 			}
 			children[i] = &stagedChild{id: id, html: s}
 		}

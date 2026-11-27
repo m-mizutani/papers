@@ -190,6 +190,14 @@ export interface BlockProps {
   height?: number
   /** Values of an AI-made html / svg block that people may edit in place (data-field). */
   fields?: Record<string, string>
+  /** html and html_page: the databases the HTML may read and write through papers.db, as the viewer. */
+  databases?: DatabaseLink[]
+}
+
+/** A database an HTML document is connected to; write lets it change values, items and items' bodies. */
+export interface DatabaseLink {
+  id: string
+  write?: boolean
 }
 
 export interface Block {
