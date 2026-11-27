@@ -9,12 +9,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/m-mizutani/gt"
 
 	"github.com/m-mizutani/papers/pkg/service/google"
@@ -22,23 +23,53 @@ import (
 
 type fakeGoogle struct {
 	t      *testing.T
-	key    jwk.Key
 	server *httptest.Server
 	claims map[string]any
 	code   string
+
+	mu         sync.Mutex
+	key        jwk.Key
+	jwksServed int
+}
+
+func newSigningKey(t *testing.T, kid string) jwk.Key {
+	raw, err := rsa.GenerateKey(rand.Reader, 2048)
+	gt.NoError(t, err)
+	key := gt.R1(jwk.Import[jwk.Key](raw)).NoError(t)
+	gt.NoError(t, key.Set(jwk.KeyIDKey, kid))
+	gt.NoError(t, key.Set(jwk.AlgorithmKey, jwa.RS256()))
+	return key
+}
+
+// rotateKey replaces the signing key, as Google does from time to time.
+func (f *fakeGoogle) rotateKey(kid string) {
+	key := newSigningKey(f.t, kid)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.key = key
+}
+
+func (f *fakeGoogle) signingKey() jwk.Key {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.key
+}
+
+func (f *fakeGoogle) jwksRequests() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.jwksServed
 }
 
 func newFakeGoogle(t *testing.T) *fakeGoogle {
-	raw, err := rsa.GenerateKey(rand.Reader, 2048)
-	gt.NoError(t, err)
-	key := gt.R1(jwk.Import(raw)).NoError(t)
-	gt.NoError(t, key.Set(jwk.KeyIDKey, "k1"))
-	gt.NoError(t, key.Set(jwk.AlgorithmKey, jwa.RS256()))
-	f := &fakeGoogle{t: t, key: key, code: "good"}
+	f := &fakeGoogle{t: t, key: newSigningKey(t, "k1"), code: "good"}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/certs", func(w http.ResponseWriter, _ *http.Request) {
-		pub := gt.R1(jwk.PublicKeyOf(key)).NoError(t)
+		f.mu.Lock()
+		f.jwksServed++
+		f.mu.Unlock()
+		pub := gt.R1(jwk.PublicKeyOf(f.signingKey())).NoError(t)
 		set := jwk.NewSet()
 		gt.NoError(t, set.AddKey(pub))
 		gt.NoError(t, json.NewEncoder(w).Encode(set))
@@ -54,7 +85,7 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 		for k, v := range f.claims {
 			gt.NoError(t, tok.Set(k, v))
 		}
-		signed := gt.R1(jwt.Sign(tok, jwt.WithKey(jwa.RS256(), key))).NoError(t)
+		signed := gt.R1(jwt.Sign(tok, jwt.WithKey(jwa.RS256(), f.signingKey()))).NoError(t)
 		_ = json.NewEncoder(w).Encode(map[string]string{"id_token": string(signed)})
 	})
 	f.server = httptest.NewServer(mux)
@@ -118,6 +149,21 @@ func TestExchange(t *testing.T) {
 			gt.Error(t, err)
 		})
 	}
+
+	t.Run("rotated key is fetched again", func(t *testing.T) {
+		f := newFakeGoogle(t)
+		f.claims = f.validClaims()
+		p := f.provider(t)
+		gt.R1(p.Exchange(ctx, "good", "n1")).NoError(t)
+		gt.Equal(t, f.jwksRequests(), 1)
+
+		// The cached keys no longer verify the token, so the provider
+		// fetches the key set again once.
+		f.rotateKey("k2")
+		c := gt.R1(p.Exchange(ctx, "good", "n1")).NoError(t)
+		gt.Equal(t, c.Subject, "123")
+		gt.Equal(t, f.jwksRequests(), 2)
+	})
 
 	t.Run("rejected code", func(t *testing.T) {
 		f := newFakeGoogle(t)

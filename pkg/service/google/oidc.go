@@ -12,8 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/jwx-go/jwkfetch/v4"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/m-mizutani/goerr/v2"
 
 	"github.com/m-mizutani/papers/pkg/domain/interfaces"
@@ -46,6 +47,7 @@ type Provider struct {
 	tokenEndpoint string
 	jwksEndpoint  string
 	httpClient    *http.Client
+	jwksFetcher   *jwkfetch.Client
 	jwksTTL       time.Duration
 
 	// Google's signing keys are public and rotate slowly, so they are cached
@@ -86,6 +88,9 @@ func New(cfg Config, opts ...Option) (*Provider, error) {
 	for _, opt := range opts {
 		opt(p)
 	}
+	// The wrapper adds jwkfetch's redirect limit and HTTPS downgrade check
+	// to a copy of the client.
+	p.jwksFetcher = jwkfetch.NewClient(jwkfetch.WithHTTPClient(jwkfetch.WrapHTTPClientDefaults(p.httpClient)))
 	return p, nil
 }
 
@@ -112,7 +117,7 @@ func (p *Provider) keySet(ctx context.Context, refresh bool) (jwk.Set, error) {
 	if !refresh && p.keys != nil && time.Since(p.fetchedAt) < p.jwksTTL {
 		return p.keys, nil
 	}
-	set, err := jwk.Fetch(ctx, p.jwksEndpoint, jwk.WithHTTPClient(p.httpClient))
+	set, err := p.jwksFetcher.Fetch(ctx, p.jwksEndpoint)
 	if err != nil {
 		return nil, goerr.Wrap(err, "failed to fetch Google JWKS")
 	}
@@ -177,8 +182,8 @@ func (p *Provider) verify(ctx context.Context, idToken string, refresh bool) (jw
 }
 
 func claim[T any](tok jwt.Token, name string) T {
-	var v T
-	if err := tok.Get(name, &v); err != nil {
+	v, err := jwt.Get[T](tok, name)
+	if err != nil {
 		var zero T
 		return zero
 	}
