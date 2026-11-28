@@ -153,7 +153,7 @@ language    = "en"                  # optional
 policy = ["security.rego"]          # relative to this file
 
 [sandbox]                            # optional: what AI-authored HTML may do here
-external_resources = false           # default true
+external_resources = true            # default false
 ```
 
 - **id**: `^[a-z0-9]+(-[a-z0-9]+)*$`, up to 63 characters, unique across workspaces. **Must never change** (it becomes the storage path `workspaces/{id}/…`). To rename, change name.
@@ -162,7 +162,7 @@ external_resources = false           # default true
 - **emoji / color**: A mark on screen; one or the other.
 - **language**: The default language AI writes in (optional).
 - **authz**: The rule for who may use this workspace: Rego returning `allow` (true / false) ([Access](#access)).
-- **sandbox.external_resources**: Whether AI-authored HTML drawn in a sandboxed frame (HTML papers, `html` and `svg` blocks) may load anything from other hosts (scripts, styles, images, fonts, connections). Optional, true when absent. False keeps the HTML to what it embeds ([D20](#d20-html-papers-decided-2026-11-23)).
+- **sandbox.external_resources**: Whether AI-authored HTML drawn in a sandboxed frame (HTML papers, `html` and `svg` blocks) may load anything from other hosts (scripts, styles, images, fonts, connections). Optional, false when absent, which keeps the HTML to what it embeds ([D20](#d20-html-papers-decided-2026-11-23), [D24](#d24-html-reads-and-writes-the-databases-it-is-connected-to-decided-2026-11-27)).
 
 
 
@@ -411,14 +411,16 @@ The smallest unit of editing, conflicts and search entries. A block has **conten
 | `table_cell`                                | Inline Markdown                                                                                                 | `row_id`, `col_id` (row and column IDs of the parent table)                    | ✓           | text                                                 |
 | `mermaid`                                   | Mermaid source                                                                                                  | `height`                                                                       | AI only     | source                                               |
 | `svg`                                       | A complete `<svg>` element                                                                                      | `height`, `fields`                                                             | AI only (people edit `fields`) | text nodes, then the `fields` values |
-| `html`                                      | Self-contained HTML                                                                                             | `height`, `fields`                                                             | AI only (people edit `fields`) | text nodes, then the `fields` values |
-| `html_page`                                 | The text nodes of the HTML paper's document (up to 8 KiB), for search                                           | `attachment_id` (required: the paper's `text/html` attachment)                 | no one (the server writes it; `set_html` changes it) | the text |
+| `html`                                      | Self-contained HTML                                                                                             | `height`, `fields`, `databases`                                                | AI only (people edit `fields`) | text nodes, then the `fields` values |
+| `html_page`                                 | The text nodes of the HTML paper's document (up to 8 KiB), for search                                           | `attachment_id` (required: the paper's `text/html` attachment), `databases`   | no one (the server writes it; `set_html` changes it) | the text |
 
 **html_page** is the whole body of an [HTML paper](#d20-html-papers-decided-2026-11-23) and exists only there: the server creates it with the paper and changes it only through `set_html` and restoring a version. Its ID never changes for the life of the paper, and each document it has pointed to stays as an immutable attachment, so a later comment can name the block and the document it was written on.
 
 "AI only" is a limit of the UI, not of writing. The API and MCP accept them even with a person's token, but the web UI offers no way to edit them and only draws them in a sandboxed iframe.
 
 **Fields of html and svg blocks**: AI marks the elements whose value people may change with `data-field="name"` and keeps the values in `props.fields` (name → string). Names match `^[a-z][a-z0-9_]{0,31}$`, a block has at most 32 fields, and a value is at most 200 bytes of UTF-8 without line breaks. People change only these values, in place, through an ordinary `update` with the base revision; the HTML or SVG itself (the text) is never changed by people. The sandboxed frame hands the page only the name and the new value, and the page and the server both validate them. `fields` is part of the contents (it raises `Rev` when it changes) and is dropped from every other block type.
+
+**Databases of html and html_page blocks**: `props.databases` lists the databases the document may read and write through `papers.db` ([D24](#d24-html-reads-and-writes-the-databases-it-is-connected-to-decided-2026-11-27)): at most 10 entries of `{id, write}`, each id once, each a database paper of the same workspace when it is written (a link to a database removed later stays and reads as missing). It is part of the contents and is dropped from every other block type (including `svg`). `set_html` without `databases` keeps the current list; `[]` clears it. A move across workspaces keeps the entries whose database moves with the subtree (under its new ID) and drops the others.
 
 ### Life of a block
 
@@ -1023,7 +1025,7 @@ Agents produce whole pages (reports, dashboards, small tools) as one HTML docume
 >
 > - **Written through the API only**: the paper is created with its document (`html` is required, so no HTML paper is ever empty), and `set_html` replaces the document with the `html_page` block's base revision. Both are atomic with the rest of the request: the bytes are stored first, then the attachment's metadata and the block are written in the same transaction as everything else of the batch, so a failed request leaves only bytes nothing refers to. At most 5 MiB of UTF-8. The same bytes reuse the paper's existing attachment. Documents a newer one replaced stay (versions may point to them) until the paper is purged.
 > - **People view it** in a sandboxed frame (`allow-scripts` only: no popups, never same-origin): its scripts run but cannot reach papers, its API or the viewer's cookies, and cannot open windows. The Web UI offers no way to edit the body; the title and everything else work as usual. The document is served through the server with `Content-Security-Policy: sandbox …`, so opening it on its own is sandboxed too.
-> - **External resources are the workspace's choice** (`[sandbox] external_resources`, true by default), for HTML papers and `html` / `svg` blocks alike. Without them the frame's document gets a policy that loads nothing from other hosts. The setting governs loads only: a link or script may still navigate the frame itself to another page, which is accepted.
+> - **External resources are the workspace's choice** (`[sandbox] external_resources`, false by default since [D24](#d24-html-reads-and-writes-the-databases-it-is-connected-to-decided-2026-11-27)), for HTML papers and `html` / `svg` blocks alike. Without them the frame's document gets a policy that loads nothing from other hosts. The setting governs loads only: a link or script may still navigate the frame itself to another page, which is accepted.
 > - **Comments later**: the `html_page` block's ID never changes and each document is an immutable attachment, so comments can be attached to the block and the document they were written on.
 > - Serving the documents through signed Cloud Storage URLs may come later, for every attachment at once ([design](design.md#open-questions-and-next-tasks)).
 
@@ -1060,6 +1062,17 @@ A paper may have one emoji as its icon (`Paper.Icon`), shown before its title wh
 - **Versions**: the icon is **not** part of versions, like visibility and favorites (adding it would touch versions, the "changed" check, diffs and restore for little use).
 - **References**: `PaperRef` and the papers list's parent carry the icon, so lists show it without another read.
 
+### D24. HTML reads and writes the databases it is connected to (decided 2026-11-27)
+
+An HTML paper or an `html` block may be connected to databases of its workspace, so that a page an agent writes (a board, a form, a mock of an app) keeps its state in a database that everyone viewing it shares.
+
+- **What is stored**: `props.databases` on the `html_page` or `html` block: `[{id, write}]`, at most 10 (not a field of the paper record, which would make every change write it and leave blocks without a place). It is part of the contents, so it is versioned with the document and conflicts by revision.
+- **Who acts**: the viewer. The frame holds no token or other credential; it sends calls to the page around it, which checks them and sends them through the REST API as the viewer, so access, Rego rules and read-only tokens apply as for any write, and writes show the viewer as the writer.
+- **The bridge**: a script put before the document's own defines a frozen `papers.db` and sends a `MessageChannel` port to the page around it. The page takes one port per loaded document, never posts to the frame, and closes the port when the frame navigates. It accepts only calls on the listed databases and their items (`not_connected`), writes only where `write` is set (`read_only`), only the ops listed for `writeItem` (no paper blocks), and at most 4 calls at once and 100 waiting (`busy`). The page forwards the database's change events and `resync` after a reconnection.
+- **Shown to people**: a line under the paper's title, or under the block, names each database with "read and write" or "read only" and links to it. An earlier version is shown not connected.
+- **External resources**: connected documents follow `[sandbox] external_resources` like every other document, and its default becomes false, so that a document that reads data loads nothing from other hosts unless the workspace allows it.
+- **Telling agents**: MCP's instructions point to `papers_guide` with `topic: "html_database"`, which returns the guide for writing such a document (the API, errors and an example).
+
 ## What changes once decided
 
 | Decision                                      | Model                                                                                                                                         | Operations and API                                                                                                                                                                                                 | UI                                                                                 |
@@ -1093,4 +1106,5 @@ A paper may have one emoji as its icon (`Paper.Icon`), shown before its title wh
 | D13-A removed workspaces (decided)            | none                                                                                                                                          | Warning at startup                                                                                                                                                                                                 | none                                                                               |
 | D14 no groups (decided)                       | `Group` removed; groups removed from the Rego input                                                                                           | Group management APIs removed                                                                                                                                                                                      | Group management screens removed                                                   |
 | No system administrators (decided)            | `Principal.SystemAdmin` removed                                                                                                               | Administrator-only APIs and checks removed; the startup setting naming administrator emails (`AdminEmails`) removed                                                                                                | Administrator screens removed                                                      |
+| D24 HTML connected to databases (decided 2026-11-27) | `BlockProps.Databases` (`[{id, write}]`) on `html` and `html_page` | `databases` on creating an HTML paper, `set_html` and html block props; checked against the workspace's databases; mapped on moves across workspaces; `papers_guide` topic `html_database`; `external_resources` false by default | `papers.db` in the frame through the page as the viewer; the line naming the connected databases |
 | D22 people as mentions (decided 2026-11-25)   | The `mention` markup node; the `person` property type and `PersonRef`                                                                          | `GET …/users` (by `q` or `ids`) and MCP `papers_find_users`; the papers list filtered by a user ID; the person filter `contains` with `users`                                                                       | "@name" with a card for mentions, person values and writers; `@` in the editor; choosing people |

@@ -38,6 +38,15 @@ type Entry struct {
 	File string
 	// Parent is the key of the parent entry, or "" for the home.
 	Parent string
+	// Databases are the sample databases an HTML paper is connected to,
+	// by their keys.
+	Databases []DatabaseLink
+}
+
+// DatabaseLink connects an HTML sample to a sample database.
+type DatabaseLink struct {
+	Key   string
+	Write bool
 }
 
 // Entries lists the sample papers. A parent comes before its children, and
@@ -49,6 +58,9 @@ func Entries() []Entry {
 		{Key: "rich", Title: "Diagrams and rich blocks", Icon: "🎨", Kind: model.PaperKindBlocks, File: "rich.md"},
 		{Key: "dashboard", Title: "Release dashboard", Kind: model.PaperKindHTML, File: "dashboard.html"},
 		{Key: "roadmap", Title: "Product roadmap", Kind: model.PaperKindDatabase, File: "roadmap.json"},
+		{Key: "board", Title: "Roadmap board", Kind: model.PaperKindHTML, File: "board.html", Databases: []DatabaseLink{{Key: "roadmap", Write: true}}},
+		{Key: "orders", Title: "Café orders", Icon: "☕", Kind: model.PaperKindDatabase, File: "orders.json"},
+		{Key: "cafe", Title: "Café order app mock", Icon: "📱", Kind: model.PaperKindHTML, File: "cafe.html", Databases: []DatabaseLink{{Key: "orders", Write: true}}},
 	}
 }
 

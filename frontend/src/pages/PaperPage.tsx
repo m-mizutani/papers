@@ -16,6 +16,7 @@ import { PropertyPanel } from '../components/PropertyPanel'
 import { applyItemValueEvent, type ItemValues } from '../api/databaseState'
 import { rememberKind } from '../api/kinds'
 import { HistoryDrawer, totalOf, type ChangeCounts } from '../components/HistoryDrawer'
+import { DatabaseLine } from '../components/DatabaseLine'
 import { HtmlPage } from '../components/HtmlPage'
 import { MoveDialog } from '../components/MoveDialog'
 import type { Caret, Slash } from '../components/RichEditor'
@@ -1359,7 +1360,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   // HTML papers show their one document; nothing in the body is edited here.
   const isHTML = paper?.kind === 'html'
   const htmlPage = isHTML ? live.find((b) => b.type === 'html_page') : undefined
-  const external = workspace?.sandbox?.external_resources ?? true
+  const external = workspace?.sandbox?.external_resources ?? false
 
   // The add line and everything below it continue the paper: an empty last paragraph is reused.
   const addRef = useRef<HTMLDivElement>(null)
@@ -1635,7 +1636,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const marks = readOnlyVersion || (showChanges && !readOnlyVersion) ? diffMarks?.marks : undefined
 
   const ctx: BlockContext | null = state ? {
-    ws, state, canEdit, editing, conflict, recent, numbers, selected: selSet, menuFor: blockMenu?.block.id ?? null, marks, slashOpen: !!slash && slash.mode === 'type', external,
+    ws, state, canEdit, editing, conflict, recent, numbers, selected: selSet, menuFor: blockMenu?.block.id ?? null, marks, slashOpen: !!slash && slash.mode === 'type', external, version: readOnlyVersion,
     actions: {
       startEdit, setDraft, setDraftProps, finishEdit, split, join, arrowOut, indent, pasteLines, pasteImage, pickImage, run: runOk,
       openBlockMenu: (b, anchor) => setBlockMenu({ block: b, anchor }), startDrag, resolveConflict,
@@ -1803,6 +1804,9 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                       return { ...iv, values }
                     })} />
                 )}
+                {isHTML && !!htmlPage?.props.databases?.length && (
+                  <DatabaseLine ws={ws} links={htmlPage.props.databases} of="page" connected={canEdit} version={readOnlyVersion} />
+                )}
                 {!isHTML && (
                   <div className="blocks">
                     {shownList.map((b, i) => (
@@ -1820,7 +1824,8 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
             )}
           </div>
           {state && paper && isHTML && (
-            <HtmlPage ws={ws} paperId={paperId} attachmentId={htmlPage?.props.attachment_id} title={paper.title || t('untitled')} external={external} />
+            <HtmlPage ws={ws} paperId={paperId} attachmentId={htmlPage?.props.attachment_id} title={paper.title || t('untitled')} external={external}
+              databases={htmlPage?.props.databases} connect={canEdit} />
           )}
         </div>
       </section>

@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -43,6 +44,7 @@ Block types (type: props)
 - table: props.rows / props.cols are (id, order) lists, props.header_row. Cells are table_cell blocks with props.row_id / col_id. Insert with "cells" (rows of strings); then use insert_row / delete_row / move_row / insert_col / delete_col / move_col (block_id = the table, line_id = the row or column, values = new cell contents). Update a cell by its block id.
 - mermaid, svg (a complete <svg> with a viewBox), html (self-contained, rendered in a sandboxed iframe): only AI writes these; props.height sets the frame height.
 - HTML papers: a paper whose whole body is one HTML document you write; people only view it (in a sandboxed frame where its scripts run) and cannot edit it. Create one with papers_create_paper kind:"html" and its html (required; the paper and its HTML are written together or not at all), or with {"op":"insert","type":"paper","title":"...","paper_kind":"html","html":"..."} in its parent's batch. Replace the whole document with {"op":"set_html","html":"...","base_rev":N}: N is the rev of its one block (type html_page) from papers_read, which also returns the current html; it can go in the same batch as set_title and set_icon. No other block op works on an HTML paper, and it cannot have child papers. Its title, place, visibility, versions, archive and trash work as for any paper. The document is at most 5 MiB of UTF-8; make it self-contained or use absolute URLs (relative URLs do not resolve). Its scripts cannot reach papers, its API or the viewer's cookies, and cannot open new windows. Whether it may load anything from other hosts (CDN scripts, images, fetch) is up to the workspace: see sandbox in papers_guide with workspace_id.
+- HTML that reads and writes databases: an HTML paper or an html block may list databases of its workspace in databases ([{"id":"<database id>","write":true}], at most 10; on papers_create_paper, set_html, an insert of an HTML paper, or props.databases of an html block). Its scripts then call papers.db (read items, set values, add items, edit items' bodies), which the page runs as the person viewing it; the HTML holds no credentials and reaches only the listed databases. Before writing such HTML, call papers_guide with topic:"html_database" for the API.
 - In svg and html, mark each value people may change with data-field="name" on its element and put the value in props.fields ({"rto":"15m"}); people then edit just those values in place. Names: lowercase letter first, then lowercase letters, digits or _ (at most 32 characters); at most 32 fields; each value one line, at most 200 bytes. Field values are searchable.
 
 Ops (papers_write; one batch is atomic, at most 240 blocks / 3 MiB)
@@ -125,6 +127,12 @@ type mcpEmpty struct{}
 
 type mcpGuideIn struct {
 	WorkspaceID model.WorkspaceID `json:"workspace_id,omitempty" jsonschema:"optional: also return this workspace's rules and its home paper"`
+	Topic       string            `json:"topic,omitempty" jsonschema:"optional: html_database returns the full guide to HTML that reads and writes databases (papers.db) instead of the general guide"`
+}
+
+// guideTopics are the detailed guides papers_guide returns by topic.
+var guideTopics = map[string]string{
+	"html_database": htmlDatabaseGuide,
 }
 
 type mcpGuideOut struct {
@@ -272,9 +280,11 @@ type mcpReadOut struct {
 	Blocks   []mcpBlock        `json:"blocks"`
 	Children []mcpPaperRef     `json:"children,omitempty"`
 	Next     string            `json:"next,omitempty"`
-	// HTML is the document of an HTML paper at the state read.
-	HTML           string `json:"html,omitempty"`
-	WorkspaceRules string `json:"workspace_rules,omitempty"`
+	// HTML is the document of an HTML paper at the state read, and
+	// Databases the databases it is connected to.
+	HTML           string               `json:"html,omitempty"`
+	Databases      []model.DatabaseLink `json:"databases,omitempty"`
+	WorkspaceRules string               `json:"workspace_rules,omitempty"`
 	// DatabaseID is the database an item belongs to.
 	DatabaseID model.PaperID `json:"database_id,omitempty"`
 	// Properties are a database's (or an item's database's) definitions.
@@ -285,14 +295,15 @@ type mcpReadOut struct {
 }
 
 type mcpCreateIn struct {
-	WorkspaceID model.WorkspaceID `json:"workspace_id" jsonschema:"workspace id"`
-	Title       string            `json:"title" jsonschema:"paper title (single line)"`
-	Icon        string            `json:"icon,omitempty" jsonschema:"optional icon: one emoji shown before the title"`
-	Parent      string            `json:"parent,omitempty" jsonschema:"parent paper id or path; omit to create an unfiled paper"`
-	Private     bool              `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
-	Markdown    string            `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown (not for an HTML paper)"`
-	Kind        model.PaperKind   `json:"kind,omitempty" jsonschema:"blocks (default); html: an HTML paper whose whole body is the html you give; database: a table whose rows are items (then use papers_write with database ops)"`
-	HTML        string            `json:"html,omitempty" jsonschema:"the document of an HTML paper (required with kind html; UTF-8, at most 5 MiB)"`
+	WorkspaceID model.WorkspaceID    `json:"workspace_id" jsonschema:"workspace id"`
+	Title       string               `json:"title" jsonschema:"paper title (single line)"`
+	Icon        string               `json:"icon,omitempty" jsonschema:"optional icon: one emoji shown before the title"`
+	Parent      string               `json:"parent,omitempty" jsonschema:"parent paper id or path; omit to create an unfiled paper"`
+	Private     bool                 `json:"private,omitempty" jsonschema:"true for a paper only the user can see (outside the tree)"`
+	Markdown    string               `json:"markdown,omitempty" jsonschema:"optional initial content as Markdown (not for an HTML paper)"`
+	Kind        model.PaperKind      `json:"kind,omitempty" jsonschema:"blocks (default); html: an HTML paper whose whole body is the html you give; database: a table whose rows are items (then use papers_write with database ops)"`
+	HTML        string               `json:"html,omitempty" jsonschema:"the document of an HTML paper (required with kind html; UTF-8, at most 5 MiB)"`
+	Databases   []model.DatabaseLink `json:"databases,omitempty" jsonschema:"HTML paper only: databases of the workspace its scripts may read (and with write:true, write) through papers.db, as the person viewing it, e.g. [{\"id\":\"<database id>\",\"write\":true}]; call papers_guide with topic html_database first"`
 }
 
 // mcpCreateOut is the paper papers_create_paper created, with the URL
@@ -446,9 +457,16 @@ func toMCPBlocks(blocks []*model.Block) []mcpBlock {
 }
 
 func (s *Server) registerMCPTools(server *mcp.Server) {
-	addTool(server, "papers_guide", "Explain papers, block types, ops and the workspace's rules. Call once before writing.",
+	addTool(server, "papers_guide", "Explain papers, block types, ops and the workspace's rules. Call once before writing. With topic html_database, the guide to HTML that reads and writes databases (papers.db).",
 		func(ctx context.Context, p *model.Principal, in mcpGuideIn) (mcpGuideOut, error) {
 			out := mcpGuideOut{Guide: mcpInstructions, BlockTypes: blockTypeInfos(), Palette: markup.Palette}
+			if in.Topic != "" {
+				guide, ok := guideTopics[in.Topic]
+				if !ok {
+					return mcpGuideOut{}, goerr.Wrap(model.ErrInvalidArgument, "unknown topic; the topics are: html_database", goerr.V("topic", in.Topic))
+				}
+				out = mcpGuideOut{Guide: guide}
+			}
 			if in.WorkspaceID == "" {
 				return out, nil
 			}
@@ -523,7 +541,7 @@ func (s *Server) registerMCPTools(server *mcp.Server) {
 			if in.Private {
 				vis = model.VisibilityPrivate
 			}
-			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Icon: in.Icon, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown, Kind: in.Kind, HTML: in.HTML})
+			q, err := s.uc.CreatePaper(ctx, p, in.WorkspaceID, usecase.CreateInput{Title: in.Title, Icon: in.Icon, Visibility: vis, Parent: in.Parent, Markdown: in.Markdown, Kind: in.Kind, HTML: in.HTML, Databases: in.Databases})
 			if err != nil {
 				return mcpCreateOut{}, err
 			}
@@ -696,7 +714,7 @@ func (s *Server) mcpRead(ctx context.Context, p *model.Principal, in mcpReadIn) 
 		if err != nil {
 			return mcpReadOut{}, err
 		}
-		out.HTML = doc.HTML
+		out.HTML, out.Databases = doc.HTML, doc.Databases
 	}
 	out.Blocks = toMCPBlocks(blocks)
 	for _, b := range blocks {
@@ -738,3 +756,9 @@ func mcpConflictError(c *usecase.ConflictError) error {
 		"or resend with force:true only if the user wants to overwrite. Deleted blocks must be inserted again. "+
 		"For an HTML paper (html_page block), read its current html with papers_read. "+string(body))
 }
+
+// htmlDatabaseGuide is the guide to HTML connected to databases
+// (papers.db), returned by papers_guide with topic html_database.
+//
+//go:embed guide/html_database.md
+var htmlDatabaseGuide string

@@ -37,6 +37,9 @@ type CreateInput struct {
 	// no properties and no items.
 	Kind model.PaperKind
 	HTML string
+	// Databases are an HTML paper's database connections (its html_page
+	// block's props.databases).
+	Databases []model.DatabaseLink
 }
 
 // CreatePaper creates a paper. For a public paper with a parent this is the
@@ -70,6 +73,8 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		}
 	} else if in.HTML != "" {
 		return nil, goerr.Wrap(model.ErrInvalidArgument, "html is only for an HTML paper (kind html)")
+	} else if len(in.Databases) > 0 {
+		return nil, goerr.Wrap(model.ErrInvalidArgument, "databases is only for an HTML paper (kind html)")
 	}
 	if kind == model.PaperKindDatabase {
 		if in.Visibility == model.VisibilityPrivate {
@@ -97,9 +102,13 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		var html *stagedHTML
 		if kind == model.PaperKindHTML {
 			var err error
+			if err := u.checkDatabaseLinks(ctx, ws, in.Databases, nil); err != nil {
+				return nil, err
+			}
 			if html, err = u.stageHTML(ctx, actor, ws, paper.ID, in.HTML); err != nil {
 				return nil, err
 			}
+			html.databases = in.Databases
 		}
 		if err := u.repo.RunTx(ctx, ws, func(tx interfaces.Tx) error {
 			if err := tx.PutPaper(paper); err != nil {
@@ -123,6 +132,9 @@ func (u *UseCases) CreatePaper(ctx context.Context, p *model.Principal, ws model
 		switch kind {
 		case model.PaperKindHTML:
 			op.PaperKind, op.HTML = ptr(kind), ptr(in.HTML)
+			if len(in.Databases) > 0 {
+				op.Databases = ptr(in.Databases)
+			}
 		case model.PaperKindDatabase:
 			op.PaperKind = ptr(kind)
 		}

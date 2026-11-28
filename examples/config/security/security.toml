@@ -13,4 +13,4 @@ language = "ja"
 policy = ["security.rego"]
 
 [sandbox]                 # what AI-authored HTML (HTML papers, html and svg blocks) may do
-external_resources = false  # only what the HTML embeds runs; omit or true to allow other hosts
+external_resources = false  # only what the HTML embeds runs (also the default); true allows other hosts

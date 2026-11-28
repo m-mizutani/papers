@@ -72,7 +72,7 @@ type fileConfig struct {
 		Policy []string `toml:"policy"`
 	} `toml:"authz"`
 	Sandbox struct {
-		// ExternalResources defaults to true when absent.
+		// ExternalResources defaults to false when absent.
 		ExternalResources *bool `toml:"external_resources"`
 	} `toml:"sandbox"`
 }
@@ -214,7 +214,7 @@ func loadFile(ctx context.Context, path string) (*entry, error) {
 	ws := &model.Workspace{
 		ID: model.WorkspaceID(w.ID), Name: strings.TrimSpace(w.Name), Description: strings.TrimSpace(w.Description),
 		Emoji: w.Emoji, Color: w.Color, Language: w.Language,
-		Sandbox: model.Sandbox{ExternalResources: true},
+		Sandbox: model.Sandbox{},
 	}
 	if v := fc.Sandbox.ExternalResources; v != nil {
 		ws.Sandbox.ExternalResources = *v

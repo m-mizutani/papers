@@ -34,6 +34,8 @@ A paper is an ordered list of **blocks**, with a title and an optional emoji ico
 | Paragraph, list, table | People and AI | This paper |
 | Mermaid, SVG, HTML | AI only | Diagrams and rich blocks |
 | HTML paper | AI only | Release dashboard |
+| HTML connected to a database | AI writes the HTML; people move cards and add notes | Roadmap board |
+| An app mock that keeps its state | AI writes the mock; people place and handle orders, which stay in a database | Café order app mock |
 
 ```bash
 # Replace the data of a Firestore database with these samples

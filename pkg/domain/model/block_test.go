@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -212,4 +213,62 @@ func TestHTMLPageBlock(t *testing.T) { // T37
 	att := model.NewAttachmentID()
 	n := model.BlockProps{AttachmentID: att, Height: 30, URL: "https://x", Fields: map[string]string{"a": "b"}, Level: 2}.Normalize(model.BlockHTMLPage)
 	gt.Equal(t, n, model.BlockProps{AttachmentID: att})
+}
+
+func TestBlockPropsDatabasesNormalize(t *testing.T) {
+	// T1: databases stay on html and html_page, are dropped elsewhere, and
+	// order and write are part of the contents
+	links := []model.DatabaseLink{{ID: model.NewPaperID(), Write: true}, {ID: model.NewPaperID()}}
+	p := model.BlockProps{Height: 200, AttachmentID: model.NewAttachmentID(), Databases: links}
+	for _, bt := range []model.BlockType{model.BlockHTML, model.BlockHTMLPage} {
+		gt.True(t, bt.HasDatabases())
+		gt.Equal(t, p.Normalize(bt).Databases, links)
+	}
+	for _, bt := range model.BlockTypes() {
+		if bt.HasDatabases() {
+			continue
+		}
+		gt.Nil(t, p.Normalize(bt).Databases)
+	}
+	gt.Nil(t, model.BlockProps{Databases: []model.DatabaseLink{}}.Normalize(model.BlockHTML).Databases)
+
+	n := p.Normalize(model.BlockHTML)
+	n.Databases[0].Write = false
+	gt.True(t, p.Databases[0].Write)
+	gt.False(t, n.Equal(p.Normalize(model.BlockHTML)))
+	swapped := p.Normalize(model.BlockHTML)
+	swapped.Databases = []model.DatabaseLink{links[1], links[0]}
+	gt.False(t, swapped.Equal(p.Normalize(model.BlockHTML)))
+
+	b := validBlock()
+	b.Type, b.Content, b.Props = model.BlockHTML, "<p>x</p>", p.Normalize(model.BlockHTML)
+	c := b.Clone()
+	c.Props.Databases[0].Write = false
+	gt.True(t, b.Props.Databases[0].Write)
+	gt.False(t, model.SameContents(b, c))
+}
+
+func TestBlockPropsDatabasesValidate(t *testing.T) {
+	// T2: at most ten, each once, valid ids
+	block := func(bt model.BlockType, links []model.DatabaseLink) *model.Block {
+		b := validBlock()
+		b.Type, b.Content, b.Props = bt, "<p>x</p>", model.BlockProps{Databases: links}
+		if bt == model.BlockHTMLPage {
+			b.Props.AttachmentID = model.NewAttachmentID()
+		}
+		return b
+	}
+	ten := make([]model.DatabaseLink, model.MaxDatabaseLinks)
+	for i := range ten {
+		ten[i] = model.DatabaseLink{ID: model.NewPaperID(), Write: i%2 == 0}
+	}
+	for _, bt := range []model.BlockType{model.BlockHTML, model.BlockHTMLPage} {
+		gt.NoError(t, block(bt, ten).Validate())
+		gt.NoError(t, block(bt, nil).Validate())
+		eleven := append(slices.Clone(ten), model.DatabaseLink{ID: model.NewPaperID()})
+		gt.True(t, errors.Is(block(bt, eleven).Validate(), model.ErrInvalidArgument))
+		twice := []model.DatabaseLink{ten[0], {ID: ten[0].ID, Write: !ten[0].Write}}
+		gt.True(t, errors.Is(block(bt, twice).Validate(), model.ErrInvalidArgument))
+		gt.True(t, errors.Is(block(bt, []model.DatabaseLink{{ID: "not a valid id"}}).Validate(), model.ErrInvalidArgument))
+	}
 }

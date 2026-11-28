@@ -14,6 +14,7 @@ import { ConflictPanel, type ConflictChoice, type ConflictState } from './Confli
 import { Editor } from './Editor'
 import { Mermaid } from './Mermaid'
 import { RichEditor, type Caret, type Slash } from './RichEditor'
+import { DatabaseLine } from './DatabaseLine'
 import { RichFrame, frameTitle } from './RichFrame'
 import { gapBetween } from './spacing'
 import { TableBlock } from './TableBlock'
@@ -81,6 +82,8 @@ export interface BlockContext {
   slashOpen: boolean
   /** Whether the workspace lets AI-authored HTML load from other hosts. */
   external: boolean
+  /** An earlier version is shown: HTML is not connected to its databases. */
+  version?: boolean
   actions: BlockActions
 }
 
@@ -234,7 +237,11 @@ function Body({ block, ctx }: { block: Block; ctx: BlockContext }) {
         <div className="rich">
           {title && <div className="bar">{title}</div>}
           <RichFrame kind={block.type} content={block.content} height={block.props.height} title={title ?? actorName(block.created_by)}
-            fields={block.props.fields} onField={ctx.canEdit ? (name, value) => ctx.actions.setField(block, name, value) : undefined} external={ctx.external} />
+            fields={block.props.fields} onField={ctx.canEdit ? (name, value) => ctx.actions.setField(block, name, value) : undefined} external={ctx.external}
+            ws={ctx.ws} databases={block.type === 'html' ? block.props.databases : undefined} connect={ctx.canEdit} />
+          {block.type === 'html' && !!block.props.databases?.length && (
+            <DatabaseLine ws={ctx.ws} links={block.props.databases} of="block" connected={ctx.canEdit} version={ctx.version} />
+          )}
         </div>
       )
     }
