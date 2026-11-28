@@ -7,7 +7,7 @@ type MermaidModule = { default: typeof import('mermaid').default }
 
 // The demo is a single static page, so it loads Mermaid from a CDN instead
 // of shipping it.
-const MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs'
+const MERMAID_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs'
 
 let mermaidPromise: Promise<typeof import('mermaid').default> | undefined
 

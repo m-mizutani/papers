@@ -13,10 +13,10 @@ There are three ways in and one destination: the browser and the AI both end up 
 | Web UI            | People                         | `frontend/` → `api.go`, `live.go` | A React SPA embedded in the server binary                                            |
 | REST `/api/v1`    | People (through the UI) and AI | `controller/http/api.go`          | Workspaces (read only), papers, batches, versions, tree, search, attachments, tokens |
 | WebSocket `/live` | Pages with a paper open        | `controller/http/live.go`         | Receives others' changes only (server to client)                                     |
-| MCP `/mcp`        | AI agents                      | `controller/http/mcp.go`          | Nine tools such as `papers_read`, `papers_write` and `papers_save_version`           |
+| MCP `/mcp`        | AI agents                      | `controller/http/mcp.go`          | Ten tools such as `papers_read`, `papers_write` and `papers_save_version`           |
 | OAuth `/oauth/*`, `/.well-known/*` | MCP clients                    | `controller/http/oauth.go`        | Metadata, client registration and the token exchange that give an MCP client a token |
 
-Roughly 14,000 lines of Go (about 5,500 of them tests) and 6,000 of frontend. Configuration is the `--config` directory (TOML and Rego per workspace, read with its subdirectories); examples are in `examples/`.
+Roughly 35,000 lines of Go (about 13,000 of them tests) and 12,700 of frontend. Configuration is the `--config` directory (TOML and Rego per workspace, read with its subdirectories); examples are in `examples/`. The screenshots in `README.md` are `docs/images/readme-*.png`, taken from the sample papers.
 
 ## Layers and packages
 

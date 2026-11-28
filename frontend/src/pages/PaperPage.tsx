@@ -38,6 +38,7 @@ import { isEnter, isNativeEnter, MOD_LABEL, modKey } from '../utils/keyboard'
 import { keyBetween } from '../utils/order'
 import type { Layout } from '../App'
 import { NO_AUTOFILL } from '../utils/autofill'
+import { useAutoHeight } from '../utils/autoHeight'
 
 const RECENT_MS = 1400
 const PRESENCE_REFRESH_MS = 30000
@@ -251,6 +252,7 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
   const saveTimer = useRef<number | undefined>(undefined)
   const editorRef = useRef<TiptapEditor | null>(null)
   const titleRef = useRef<HTMLTextAreaElement>(null)
+  useAutoHeight(titleRef, title)
   const iconRef = useRef<HTMLButtonElement>(null)
   const titleTimer = useRef<number | undefined>(undefined)
   const titleSession = useRef(sessionId())
@@ -1778,8 +1780,6 @@ export function PaperPage({ ws, paperId, version, me, workspaces, sidebar, onCha
                   onChange={(e) => {
                     const next = e.target.value.replace(/\n/g, '')
                     setTitle(next)
-                    e.target.style.height = '0px'
-                    e.target.style.height = `${e.target.scrollHeight}px`
                     scheduleTitle(next)
                   }}
                   onFocus={() => { titleSession.current = sessionId() }}

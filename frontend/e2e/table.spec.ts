@@ -40,7 +40,7 @@ test('T7 the bottom strip, the right strip and Tab in the last cell add a row, a
   await page.getByRole('button', { name: msg('addColumn') }).click()
   await expect(rowsOf(page).first().locator('td')).toHaveCount(3)
   await synced(page)
-  let g = await eventually(() => grid(request, paper.id), (x) => x.rows.length === 3 && x.rows[0]?.length === 3, 'row and column added')
+  await eventually(() => grid(request, paper.id), (x) => x.rows.length === 3 && x.rows[0]?.length === 3, 'row and column added')
 
   // Tab in the last cell adds a row and goes on in its first cell
   await rowsOf(page).nth(2).locator('td').nth(2).locator('.cell').click()
@@ -51,7 +51,7 @@ test('T7 the bottom strip, the right strip and Tab in the last cell add a row, a
   await page.keyboard.type('new')
   await page.keyboard.press('Escape')
   await synced(page)
-  g = await eventually(() => grid(request, paper.id), (x) => x.rows.length === 4 && x.rows[3]?.[0] === 'new', 'tab row added')
+  const g = await eventually(() => grid(request, paper.id), (x) => x.rows.length === 4 && x.rows[3]?.[0] === 'new', 'tab row added')
   expect(g.rows).toEqual([['a', 'b', ''], ['c', 'd', ''], ['', '', ''], ['new', '', '']])
 })
 
